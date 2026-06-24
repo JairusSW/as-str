@@ -91,7 +91,7 @@ freely.
 
 Full documentation lives at:
 
-<https://docs.jairus.dev/str>
+<https://docs.jairus.dev/str-as>
 
 ## Usage
 
