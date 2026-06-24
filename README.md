@@ -229,20 +229,20 @@ end)` from explicit bounds).
 
 ## Performance
 
-📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/str-as/tree/docs/charts/v0.1.0)**
+📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/str-as/tree/docs/charts/v0.1.1)**
 
 ### Per-Operation Speedup
 
 Every native `String` operation vs its `str` counterpart - native (red) is
 the `1×` baseline, `str` (blue) is its speedup:
 
-<img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.0/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
+<img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.1/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
 
 ### Throughput
 
 Native vs `str` SWAR vs `str` SIMD, in millions of ops/sec:
 
-<img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.0/throughput.svg" alt="String operation throughput: native vs SWAR vs SIMD">
+<img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.1/throughput.svg" alt="String operation throughput: native vs SWAR vs SIMD">
 
 ### SWAR and SIMD
 
