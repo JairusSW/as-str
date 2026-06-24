@@ -10,11 +10,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- chore: update charts
+- chore: update charts. rename to as-str
 
 ## [0.1.0] - 2026-06-23
 
-Initial release - `str-as`, virtual (zero-copy) strings for AssemblyScript.
+Initial release - `as-str`, virtual (zero-copy) strings for AssemblyScript.
 
 ### Added
 
@@ -47,9 +47,9 @@ Initial release - `str-as`, virtual (zero-copy) strings for AssemblyScript.
 - **UTF-8 / UTF-16** via `str.UTF8` / `str.UTF16` (mirrors `String.UTF8` /
   `String.UTF16`), powered by [`utf-as`](https://github.com/JairusSW/utf-as),
   operating straight off the view's range.
-- Optional **global mode**: `--transform str-as/transform` injects
+- Optional **global mode**: `--transform as-str/transform` injects
   `import { str }` into any source that uses `str` without importing it (so no
-  per-file import is needed), with editor typings via the `str-as/globals.json`
+  per-file import is needed), with editor typings via the `as-str/globals.json`
   `extends` preset (or a dropped-in `globals/index.d.ts`). Detection is
   deliberately conservative because `str` is a common identifier.
 - Spec suite (run under `simd` and `nosimd` modes), differential fuzzing against

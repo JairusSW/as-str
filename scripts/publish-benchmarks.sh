@@ -106,8 +106,8 @@ cp -R "$TMP_CHARTS_DIR/." "$TMP_DOCS_DIR/charts/${DEST}/"
     exit 0
   fi
 
-  git config user.name "${GIT_AUTHOR_NAME:-$(git config --get user.name || echo str-as)}"
-  git config user.email "${GIT_AUTHOR_EMAIL:-$(git config --get user.email || echo str-as@example.com)}"
+  git config user.name "${GIT_AUTHOR_NAME:-$(git config --get user.name || echo as-str)}"
+  git config user.email "${GIT_AUTHOR_EMAIL:-$(git config --get user.email || echo as-str@example.com)}"
   git commit -m "Update benchmark charts for ${DEST} [skip ci]" >/dev/null
   git push "$REMOTE_NAME" "$DOCS_BRANCH"
 )
@@ -122,4 +122,4 @@ sed -i -E "s#(/refs/heads/${DOCS_BRANCH}/charts/)([^\"']*/)?([^/\"']+\.(svg|png)
 sed -i -E "s#(/tree/${DOCS_BRANCH}/charts/)v[0-9][0-9.]*#\1${DEST}#g" README.md
 
 echo "Benchmark charts published to ${REMOTE_NAME}/${DOCS_BRANCH}:charts/${DEST}/."
-echo "README pinned to https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/${DOCS_BRANCH}/charts/${DEST}/"
+echo "README pinned to https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/${DOCS_BRANCH}/charts/${DEST}/"

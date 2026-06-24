@@ -1,6 +1,6 @@
-<h1 align="center"><pre>╔═╗╔╦╗╦═╗  ╔═╗╔═╗
-╚═╗ ║ ╠╦╝══╠═╣╚═╗
-╚═╝ ╩ ╩╚═  ╩ ╩╚═╝</pre></h1>
+<h1 align="center"><pre>╔═╗╔═╗  ╔═╗╔╦╗╦═╗
+╠═╣╚═╗══╚═╗ ║ ╠╦╝
+╩ ╩╚═╝  ╚═╝ ╩ ╩╚═</pre></h1>
 
 <p align="center">Virtual, zero-copy strings for AssemblyScript - slice, search, and trim without allocating.</p>
 
@@ -33,7 +33,7 @@
 ## Installation
 
 ```bash
-npm install str-as
+npm install as-str
 ```
 
 Optionally, for additional performance, also add:
@@ -44,20 +44,20 @@ Optionally, for additional performance, also add:
 
 ## Global Mode (optional)
 
-By default you `import { str } from "str-as"` where you use it. If you'd
+By default you `import { str } from "as-str"` where you use it. If you'd
 rather use `str` **without an import in every file**, opt into the transform
 - it injects the import for you at compile time.
 
 1. Add the transform to your `asc` command:
 
    ```bash
-   --transform str-as/transform
+   --transform as-str/transform
    ```
 
    or in `asconfig.json`:
 
    ```json
-   { "options": { "transform": ["str-as/transform"] } }
+   { "options": { "transform": ["as-str/transform"] } }
    ```
 
 2. Add the ambient typings so your editor resolves the globals - extend
@@ -65,13 +65,13 @@ rather use `str` **without an import in every file**, opt into the transform
 
    ```json
    {
-     "extends": ["assemblyscript/std/assembly.json", "str-as/globals.json"],
+     "extends": ["assemblyscript/std/assembly.json", "as-str/globals.json"],
      "include": ["./**/*.ts"]
    }
    ```
 
    (For pnpm or other non-hoisted `node_modules` layouts, drop a copy of
-   `node_modules/str-as/globals/index.d.ts` into your assembly directory
+   `node_modules/as-str/globals/index.d.ts` into your assembly directory
    instead - any `.d.ts` in the project is picked up automatically.)
 
 Now this compiles with no import:
@@ -84,14 +84,14 @@ export function method(line: string): string {
 
 The transform only injects names a file actually uses and doesn't already
 import, and never touches the library's own sources - so explicit
-`import { str } from "str-as"` keeps working, and you can mix the two
+`import { str } from "as-str"` keeps working, and you can mix the two
 freely.
 
 ## Docs
 
 Full documentation lives at:
 
-<https://docs.jairus.dev/str-as>
+<https://docs.jairus.dev/as-str>
 
 ## Usage
 
@@ -102,7 +102,7 @@ characters are copied** until you materialize a real `string` with
 `.toString()`.
 
 ```typescript
-import { str } from "str-as";
+import { str } from "as-str";
 
 const real: string = "GET /index.html 200 1043";
 
@@ -229,20 +229,20 @@ end)` from explicit bounds).
 
 ## Performance
 
-📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/str-as/tree/docs/charts/v0.1.1)**
+📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/as-str/tree/docs/charts/v0.1.1)**
 
 ### Per-Operation Speedup
 
 Every native `String` operation vs its `str` counterpart - native (red) is
 the `1×` baseline, `str` (blue) is its speedup:
 
-<img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.1/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
+<img src="https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/docs/charts/v0.1.1/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
 
 ### Throughput
 
 Native vs `str` SWAR vs `str` SIMD, in millions of ops/sec:
 
-<img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.1/throughput.svg" alt="String operation throughput: native vs SWAR vs SIMD">
+<img src="https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/docs/charts/v0.1.1/throughput.svg" alt="String operation throughput: native vs SWAR vs SIMD">
 
 ### SWAR and SIMD
 
@@ -313,10 +313,10 @@ You can view the full license here: [License](./LICENSE)
 
 ## Contact
 
-Please send all issues to [GitHub Issues](https://github.com/JairusSW/str-as/issues),
+Please send all issues to [GitHub Issues](https://github.com/JairusSW/as-str/issues),
 and to converse, send me an email at [me@jairus.dev](mailto:me@jairus.dev).
 
 - **Email:** Send me inquiries, questions, or requests at [me@jairus.dev](mailto:me@jairus.dev)
-- **GitHub:** Visit the official GitHub repository [Here](https://github.com/JairusSW/str-as)
+- **GitHub:** Visit the official GitHub repository [Here](https://github.com/JairusSW/as-str)
 - **Website:** Visit my official website at [jairus.dev](https://jairus.dev/)
 - **Discord:** Contact me at [My Discord](https://discord.com/users/600700584038760448) or on the [AssemblyScript Discord Server](https://discord.gg/assemblyscript/)

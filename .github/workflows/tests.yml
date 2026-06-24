@@ -21,6 +21,11 @@ jobs:
       - name: Install Dependencies
         run: bun install
 
+      - name: Install Wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+
       - name: Run Tests
         run: bun run test:ci
 

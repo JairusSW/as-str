@@ -1,7 +1,7 @@
 {
-  "//": "Editor preset for str-as's global mode. Add it to your assembly tsconfig's `extends` array so the TS language server loads str-as's ambient typings (`str`) with no import - e.g. { \"extends\": [\"assemblyscript/std/assembly.json\", \"str-as/globals.json\"], \"include\": [\"./**/*.ts\"] }. Pairs with `--transform str-as/transform`, which injects the runtime import at compile time. typeRoots is re-pointed (relative to this file in node_modules/str-as) because AssemblyScript's std config sets typeRoots:[\"types\"], which otherwise blocks resolving str-as/globals from node_modules. Assumes a hoisted node_modules (npm/yarn); for pnpm or unusual layouts, drop a copy of str-as/globals/index.d.ts into your assembly directory instead.",
+  "//": "Editor preset for as-str's global mode. Add it to your assembly tsconfig's `extends` array so the TS language server loads as-str's ambient typings (`str`) with no import - e.g. { \"extends\": [\"assemblyscript/std/assembly.json\", \"as-str/globals.json\"], \"include\": [\"./**/*.ts\"] }. Pairs with `--transform as-str/transform`, which injects the runtime import at compile time. typeRoots is re-pointed (relative to this file in node_modules/as-str) because AssemblyScript's std config sets typeRoots:[\"types\"], which otherwise blocks resolving as-str/globals from node_modules. Assumes a hoisted node_modules (npm/yarn); for pnpm or unusual layouts, drop a copy of as-str/globals/index.d.ts into your assembly directory instead.",
   "compilerOptions": {
     "typeRoots": ["../assemblyscript/std/types", ".."],
-    "types": ["assembly", "str-as/globals"]
+    "types": ["assembly", "as-str/globals"]
   }
 }
