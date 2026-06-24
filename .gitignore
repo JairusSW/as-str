@@ -1,0 +1,24 @@
+node_modules
+.codex
+.DS_Store
+*.lock
+pnpm-lock.yaml
+package-lock.json
+.vscode
+.vscode/
+logs
+as-tral
+*.lockb
+*.log
+*.wasm
+*.wat
+*.map
+build/
+*.tmp.ts
+# Include essential as-test artifacts
+!.as-test/
+.as-test/*
+!.as-test/runners/
+!.as-test/runners/**
+!.as-test/snapshots/
+!.as-test/snapshots/**

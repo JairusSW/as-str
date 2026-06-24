@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/as-bench/as-bench.config.schema.json",
+  "input": ["assembly/__benches__/**/*.ts"],
+  "buildOptions": {
+    "args": ["--enable", "simd", "--enable", "bulk-memory"]
+  },
+  "settings": {
+    "warmupTime": 250,
+    "measurementTime": 500,
+    "numResamples": 20000
+  },
+  "modes": {
+    "full": {
+      "settings": {
+        "warmupTime": 2000,
+        "measurementTime": 3000,
+        "numResamples": 100000
+      }
+    },
+    "nosimd": {
+      "buildOptions": {
+        "args": ["--enable", "bulk-memory", "--disable", "simd"]
+      }
+    }
+  }
+}

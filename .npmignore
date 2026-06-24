@@ -1,0 +1,15 @@
+.as-test/
+assembly/__tests__/
+assembly/__fuzz__/
+assembly/__benches__/
+build/
+scripts/
+bench/
+*.sh
+TODO.md
+CONTRIBUTING.md
+SECURITY.md
+ARCHITECTURE.md
+as-test.config.json
+as-bench.config.json
+asconfig.json

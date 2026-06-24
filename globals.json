@@ -1,0 +1,7 @@
+{
+  "//": "Editor preset for vstring's global mode. Add it to your assembly tsconfig's `extends` array so the TS language server loads vstring's ambient typings (VString / vstring) with no import - e.g. { \"extends\": [\"assemblyscript/std/assembly.json\", \"vstring/globals.json\"], \"include\": [\"./**/*.ts\"] }. Pairs with `--transform vstring/transform`, which injects the runtime import at compile time. typeRoots is re-pointed (relative to this file in node_modules/vstring) because AssemblyScript's std config sets typeRoots:[\"types\"], which otherwise blocks resolving vstring/globals from node_modules. Assumes a hoisted node_modules (npm/yarn); for pnpm or unusual layouts, drop a copy of vstring/globals/index.d.ts into your assembly directory instead.",
+  "compilerOptions": {
+    "typeRoots": ["../assemblyscript/std/types", ".."],
+    "types": ["assembly", "vstring/globals"]
+  }
+}

@@ -1,0 +1,6 @@
+# Build artifacts
+build/
+.as-test/
+
+# Markdown
+*.md
