@@ -88,6 +88,6 @@
     "@JairusSW:registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
-    "utf-as": "^0.3.0"
+    "utf-as": "^0.3.1"
   }
 }
