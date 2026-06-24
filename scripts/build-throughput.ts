@@ -1,5 +1,5 @@
-// chart01 - ported from json-as's scripts/build-chart01.ts and fed with str
-// data. Same grouped-bar throughput chart, same bench lib (createBarChart /
+// throughput chart - ported from json-as's scripts/build-chart01.ts and fed
+// with str data. Same grouped-bar throughput chart, same bench lib (createBarChart /
 // generateChart / BenchResult from ./lib/bench-utils, MODE_BARS from
 // ./lib/palette). Here each "payload" is a string operation and the series are
 // the three code paths (native String / str SWAR / str SIMD).
@@ -34,7 +34,7 @@ const SWAR = readLog("./build/logs/bench.nosimd.json");
 // Throughput in millions of ops/sec (higher is better) from the per-op time.
 function mops(log: AsBenchLog, suite: string, isLib: boolean): number {
   const hit = log.benches.find(
-    (b) => b.suite === suite && b.name.includes("str") === isLib,
+    (b) => b.suite === suite && b.name.startsWith("str.") === isLib,
   );
   if (!hit) throw new Error(`no bench in suite "${suite}" (isLib=${isLib})`);
   const ns = hit.result.point * 1e6;
@@ -85,5 +85,5 @@ const config = createBarChart(chartData, PAYLOADS, {
 });
 
 fs.mkdirSync("./build/charts", { recursive: true });
-generateChart(config, "./build/charts/chart01.svg");
-generateChart(config, "./build/charts/chart01.png");
+generateChart(config, "./build/charts/throughput.svg");
+generateChart(config, "./build/charts/throughput.png");

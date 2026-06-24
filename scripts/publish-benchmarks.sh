@@ -63,8 +63,8 @@ if [[ "$RUN_BENCHES" == "1" ]]; then
   ./scripts/build-charts.sh
 else
   echo "Reusing existing logs - rendering charts only..."
-  bun ./scripts/build-chart01.ts
-  bun ./scripts/build-chart-all.ts
+  bun ./scripts/build-throughput.ts
+  bun ./scripts/build-per-op.ts
 fi
 
 test -d ./build/charts

@@ -1,5 +1,5 @@
-// build-chart-all - every native String operation vs its str counterpart,
-// built from the chart01 template: the json-as `createBarChart` / `generateChart`
+// per-op speedup chart - every native String operation vs its str counterpart,
+// built from the throughput-chart template: the json-as `createBarChart` / `generateChart`
 // lib, grouped bars with native and str (SIMD) side by side per operation.
 //
 // Metric is speedup vs native (native = the 1× baseline bar, str = how many
@@ -27,7 +27,7 @@ const SIMD: { benches: AsBenchEntry[] } = JSON.parse(
 
 function ns(suite: string, isLib: boolean): number {
   const hit = SIMD.benches.find(
-    (b) => b.suite === suite && b.name.includes("str") === isLib,
+    (b) => b.suite === suite && b.name.startsWith("str.") === isLib,
   );
   if (!hit) throw new Error(`no bench in suite "${suite}" (isLib=${isLib})`);
   return hit.result.point * 1e6;
@@ -117,5 +117,5 @@ opts.scales!.y!.max = Math.ceil(maxV * 1.18);
 
 fs.mkdirSync("./build/charts", { recursive: true });
 const dims = { width: 1700, height: 820 };
-generateChart(config, "./build/charts/chart-all.svg", dims);
-generateChart(config, "./build/charts/chart-all.png", dims);
+generateChart(config, "./build/charts/per-op-speedup.svg", dims);
+generateChart(config, "./build/charts/per-op-speedup.png", dims);

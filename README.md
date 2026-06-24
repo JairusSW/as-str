@@ -229,19 +229,6 @@ end)` from explicit bounds).
 
 ## Performance
 
-`str` exists to delete allocations. A view-producing op (`slice`, `trim`,
-`substring`, …) is a couple of pointer moves and **one** small object - versus
-native `String`, which allocates a new string and memcpys the bytes every time.
-The scanning ops (`indexOf`, `includes`, `compare`) add SWAR/SIMD kernels on top,
-and `replace` / `padStart` / `padEnd` are built directly from the view in a
-single pass.
-
-> Figures are microbenchmarks via [`as-bench`](https://github.com/JairusSW/as-bench),
-> all over one ~2 kb string, on wasmtime. Charts are generated locally and pushed
-> to the [`docs`](https://github.com/JairusSW/str-as/tree/docs) branch, and
-> reflect the **latest release** (older versions may differ). Generate them
-> yourself with `npm run charts:build` (see [below](#running-benchmarks-locally)).
-
 📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/str-as/tree/docs/charts/v0.1.0)**
 
 ### Per-Operation Speedup
@@ -250,22 +237,6 @@ Every native `String` operation vs its `str` counterpart - native (red) is
 the `1×` baseline, `str` (blue) is its speedup:
 
 <img src="https://raw.githubusercontent.com/JairusSW/str-as/refs/heads/docs/charts/v0.1.0/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
-
-| Operation              | vs native `String` |
-| ---------------------- | ------------------ |
-| `replace`              | ~12× faster        |
-| `indexOf` / `includes` | ~8.5× faster       |
-| `replaceAll`           | ~3.7× faster       |
-| `lastIndexOf`          | ~2.6× faster       |
-| `padStart` / `padEnd`  | ~1.9× faster       |
-| `trim` / `trimStart`   | ~1.4–1.5× faster   |
-| `slice` / `substring`  | ~parity (no copy)  |
-| `toUpperCase` / `toLowerCase` | ~parity (defers to native) |
-
-View ops sit at parity on a tiny slice (the avoided copy is cheap there) and
-pull ahead as the slice grows, since `str` never copies. `replace` /
-`replaceAll` are also **correct** where this `asc` version's native
-`String#replaceAll` is not - they're fuzzed against a trusted reference.
 
 ### Throughput
 
