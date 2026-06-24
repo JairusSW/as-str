@@ -1,4 +1,4 @@
-// Low-level, allocation-free helpers shared by the vstring core. Everything
+// Low-level, allocation-free helpers shared by the str core. Everything
 // here works on raw byte pointers into UTF-16 string data (2 bytes per code
 // unit) so that views never copy until a real `string` is materialized.
 //

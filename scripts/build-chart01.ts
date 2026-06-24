@@ -1,8 +1,8 @@
-// chart01 - ported from json-as's scripts/build-chart01.ts and fed with vstring
+// chart01 - ported from json-as's scripts/build-chart01.ts and fed with str
 // data. Same grouped-bar throughput chart, same bench lib (createBarChart /
 // generateChart / BenchResult from ./lib/bench-utils, MODE_BARS from
 // ./lib/palette). Here each "payload" is a string operation and the series are
-// the three code paths (native String / vstring SWAR / vstring SIMD).
+// the three code paths (native String / str SWAR / str SIMD).
 //
 // Reads the two as-bench `--json` logs produced by scripts/build-charts.sh:
 //   build/logs/bench.simd.json    - default build (SIMD path)
@@ -34,7 +34,7 @@ const SWAR = readLog("./build/logs/bench.nosimd.json");
 // Throughput in millions of ops/sec (higher is better) from the per-op time.
 function mops(log: AsBenchLog, suite: string, isLib: boolean): number {
   const hit = log.benches.find(
-    (b) => b.suite === suite && b.name.includes("vstring") === isLib,
+    (b) => b.suite === suite && b.name.includes("str") === isLib,
   );
   if (!hit) throw new Error(`no bench in suite "${suite}" (isLib=${isLib})`);
   const ns = hit.result.point * 1e6;
@@ -69,16 +69,16 @@ const chartData: Record<string, BenchResult[]> = {};
 for (const suite of Object.keys(PAYLOADS)) {
   chartData[suite] = [
     bar(mops(SIMD, suite, false), "native String"), // native - same in both builds
-    bar(mops(SWAR, suite, true), "vstring (SWAR)"),
-    bar(mops(SIMD, suite, true), "vstring (SIMD)"),
+    bar(mops(SWAR, suite, true), "str (SWAR)"),
+    bar(mops(SIMD, suite, true), "str (SIMD)"),
   ];
 }
 
 const config = createBarChart(chartData, PAYLOADS, {
-  title: "vstring - String operation throughput (2 kb input)",
+  title: "str - String operation throughput (2 kb input)",
   yLabel: "Throughput (Mops/s)",
   xLabel: "",
-  datasetLabels: ["native String", "vstring (SWAR)", "vstring (SIMD)"],
+  datasetLabels: ["native String", "str (SWAR)", "str (SIMD)"],
   // native = strawberry red baseline, SWAR = jungle green, SIMD = pacific blue.
   colors: [MODE_BARS[0], MODE_BARS[2], MODE_BARS[3]],
   yStep: 5,

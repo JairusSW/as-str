@@ -1,8 +1,8 @@
-// Differential fuzzing: a materialized vstring view must agree, character for
+// Differential fuzzing: a materialized str view must agree, character for
 // character, with the equivalent native String operation across random inputs.
 
 import { expect, fuzz, FuzzSeed } from "as-test";
-import { vstring } from "../index";
+import { str } from "../index";
 
 // A fixed corpus of backing strings; the fuzzer picks one plus random indices.
 // Several entries are long enough to drive the SWAR (4-unit) and SIMD (8-unit)
@@ -45,7 +45,7 @@ fuzz("slice matches native String#slice", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const start = idx(b, s.length);
   const end = idx(c, s.length);
-  expect(vstring.slice(s, start, end).toString()).toBe(s.slice(start, end));
+  expect(str.slice(s, start, end).toString()).toBe(s.slice(start, end));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
@@ -55,9 +55,7 @@ fuzz("substring matches native", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const start = idx(b, s.length);
   const end = idx(c, s.length);
-  expect(vstring.substring(s, start, end).toString()).toBe(
-    s.substring(start, end),
-  );
+  expect(str.substring(s, start, end).toString()).toBe(s.substring(start, end));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
@@ -65,9 +63,9 @@ fuzz("substring matches native", (a: u32, b: u32, c: u32): bool => {
 
 fuzz("trim matches native", (a: u32): bool => {
   const s = pick(a);
-  expect(vstring.trim(s).toString()).toBe(s.trim());
-  expect(vstring.trimStart(s).toString()).toBe(s.trimStart());
-  expect(vstring.trimEnd(s).toString()).toBe(s.trimEnd());
+  expect(str.trim(s).toString()).toBe(s.trim());
+  expect(str.trimStart(s).toString()).toBe(s.trimStart());
+  expect(str.trimEnd(s).toString()).toBe(s.trimEnd());
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32) => bool): void => {
   run(<u32>seed.u64());
@@ -77,7 +75,7 @@ fuzz("indexOf matches native", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const needle = pick(b);
   const from = idx(c, s.length);
-  expect(vstring.indexOf(s, needle, from)).toBe(s.indexOf(needle, from));
+  expect(str.indexOf(s, needle, from)).toBe(s.indexOf(needle, from));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
@@ -88,7 +86,7 @@ fuzz("indexOf(char) matches native", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const ch = pickNeedle(b);
   const from = idx(c, s.length);
-  expect(vstring.indexOf(s, ch, from)).toBe(s.indexOf(ch, from));
+  expect(str.indexOf(s, ch, from)).toBe(s.indexOf(ch, from));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
@@ -98,9 +96,7 @@ fuzz("lastIndexOf matches native", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const needle = pickNeedle(b);
   const from = idx(c, s.length);
-  expect(vstring.lastIndexOf(s, needle, from)).toBe(
-    s.lastIndexOf(needle, from),
-  );
+  expect(str.lastIndexOf(s, needle, from)).toBe(s.lastIndexOf(needle, from));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
@@ -111,7 +107,7 @@ fuzz("lastIndexOf matches native", (a: u32, b: u32, c: u32): bool => {
 fuzz("compare agrees in sign with native", (a: u32, b: u32): bool => {
   const x = pick(a);
   const y = pick(b);
-  const got = vstring.compare(x, y);
+  const got = str.compare(x, y);
   const gotSign = got < 0 ? -1 : got > 0 ? 1 : 0;
   const want = x < y ? -1 : x > y ? 1 : 0;
   expect(gotSign).toBe(want);
@@ -127,12 +123,10 @@ fuzz(
   (a: u32, b: u32, c: u32): bool => {
     const x = pick(a);
     const y = pick(b);
-    expect(vstring.concat(x, y)).toBe(x + y);
+    expect(str.concat(x, y)).toBe(x + y);
     // a view as the primary, a view as the secondary
     const k = idx(c, x.length);
-    expect(vstring.concat(vstring.slice(x, k), vstring.from(y))).toBe(
-      x.slice(k) + y,
-    );
+    expect(str.concat(str.slice(x, k), str.from(y))).toBe(x.slice(k) + y);
     return true;
   },
 ).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
@@ -142,7 +136,7 @@ fuzz(
 fuzz("repeat matches native", (a: u32, b: u32): bool => {
   const x = pick(a);
   const n = <i32>(b % 6); // 0..5
-  expect(vstring.repeat(x, n)).toBe(x.repeat(n));
+  expect(str.repeat(x, n)).toBe(x.repeat(n));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64());
@@ -152,8 +146,8 @@ fuzz("padStart/padEnd match native", (a: u32, b: u32, c: u32): bool => {
   const x = pick(a);
   const pad = pickNeedle(b); // always non-empty
   const len = <i32>(c % 40); // 0..39
-  expect(vstring.padStart(x, len, pad)).toBe(x.padStart(len, pad));
-  expect(vstring.padEnd(x, len, pad)).toBe(x.padEnd(len, pad));
+  expect(str.padStart(x, len, pad)).toBe(x.padStart(len, pad));
+  expect(str.padEnd(x, len, pad)).toBe(x.padEnd(len, pad));
   return true;
 }).generate((seed: FuzzSeed, run: (a: u32, b: u32, c: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
@@ -163,10 +157,10 @@ fuzz("startsWith/endsWith match native", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const probe = pick(b);
   const pos = idx(c, s.length);
-  expect(vstring.startsWith(s, probe, pos)).toBe(s.startsWith(probe, pos));
-  expect(vstring.endsWith(s, probe, pos)).toBe(s.endsWith(probe, pos));
-  // a vstring needle must agree with the string needle
-  expect(vstring.startsWith(s, vstring.from(probe), pos)).toBe(
+  expect(str.startsWith(s, probe, pos)).toBe(s.startsWith(probe, pos));
+  expect(str.endsWith(s, probe, pos)).toBe(s.endsWith(probe, pos));
+  // a str needle must agree with the string needle
+  expect(str.startsWith(s, str.from(probe), pos)).toBe(
     s.startsWith(probe, pos),
   );
   return true;
@@ -174,16 +168,13 @@ fuzz("startsWith/endsWith match native", (a: u32, b: u32, c: u32): bool => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
 });
 
-fuzz(
-  "indexOf with a vstring needle == string needle",
-  (a: u32, b: u32): bool => {
-    const s = pick(a);
-    const needle = pickNeedle(b);
-    expect(vstring.indexOf(s, vstring.from(needle))).toBe(s.indexOf(needle));
-    expect(vstring.includes(s, vstring.from(needle))).toBe(s.includes(needle));
-    return true;
-  },
-).generate((seed: FuzzSeed, run: (a: u32, b: u32) => bool): void => {
+fuzz("indexOf with a str needle == string needle", (a: u32, b: u32): bool => {
+  const s = pick(a);
+  const needle = pickNeedle(b);
+  expect(str.indexOf(s, str.from(needle))).toBe(s.indexOf(needle));
+  expect(str.includes(s, str.from(needle))).toBe(s.includes(needle));
+  return true;
+}).generate((seed: FuzzSeed, run: (a: u32, b: u32) => bool): void => {
   run(<u32>seed.u64(), <u32>seed.u64());
 });
 
@@ -214,8 +205,8 @@ fuzz(
     const s = pick(a);
     const search = pickNeedle(b);
     const repl = pick(c);
-    expect(vstring.replace(s, search, repl)).toBe(refReplace(s, search, repl));
-    expect(vstring.replaceAll(s, search, repl)).toBe(
+    expect(str.replace(s, search, repl)).toBe(refReplace(s, search, repl));
+    expect(str.replaceAll(s, search, repl)).toBe(
       refReplaceAll(s, search, repl),
     );
     return true;
@@ -226,7 +217,7 @@ fuzz(
 
 fuzz("[] operator matches charCodeAt", (a: u32, b: u32): bool => {
   const s = pick(a);
-  const v = vstring.from(s);
+  const v = str.from(s);
   const i = idx(b, s.length);
   const want = <u32>i < <u32>s.length ? s.charCodeAt(i) : -1;
   expect(v[i]).toBe(want);

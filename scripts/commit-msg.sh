@@ -17,9 +17,9 @@ Commit message must follow Conventional Commits:
   <type>(optional-scope): description
 
 Examples:
-  feat: add zero-copy split returning VString pieces
-  fix(vstring): clamp negative slice indices to range
-  chore!: rename VString.wrap to VString.from
+  feat: add zero-copy split returning str pieces
+  fix(str): clamp negative slice indices to range
+  chore!: rename str.wrap to str.from
 EOF
   exit 1
 fi

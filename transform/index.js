@@ -1,20 +1,34 @@
-// vstring transform - opt-in ergonomics: inject `import { VString, vstring }`
-// into any user source that references `VString`/`vstring` without importing
-// them, so consumers can use the API globally (no per-file import). Pair it
-// with the ambient typings (see `globals.d.ts`) for editor IntelliSense.
+// str-as transform - opt-in ergonomics: inject `import { str }` into any user
+// source that uses `str` without importing it, so consumers can use the API
+// globally (no per-file import). Pair it with the ambient typings (see
+// `globals/index.d.ts`) for editor IntelliSense.
 //
-// Enable with `--transform vstring/transform` (or in asconfig's
-// `options.transform`). The relative-path / bare-specifier logic is ported
-// from json-as's transform (`computeImportBaseRel` / `normalize*BaseRel`).
+// Enable with `--transform str-as/transform` (or in asconfig's
+// `options.transform`). The relative-path / bare-specifier logic is ported from
+// json-as's transform (`computeImportBaseRel` / `normalize*BaseRel`).
+//
+// NOTE: `str` is a very common local identifier, so detection is deliberately
+// conservative - it only injects when `str` is used as the class (member access
+// `str.`, a `: str` type, `new str`, `<str>`, or `str[]`) AND the file does not
+// locally bind a `str` of its own. For a name this short, prefer explicit
+// `import { str } from "str-as"` over global mode if you ever shadow it.
 import { Transform } from "assemblyscript/dist/transform.js";
 import { Node, ImportStatement } from "assemblyscript/dist/assemblyscript.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import { readFileSync, existsSync } from "fs";
 
-const PKG = "vstring";
-const NAMES = ["vstring", "VString"];
-const DEBUG = /^(1|true|on|yes)$/i.test(process.env["VSTRING_DEBUG"] ?? "");
+const PKG = "str-as";
+const NAME = "str";
+const DEBUG = /^(1|true|on|yes)$/i.test(process.env["STR_AS_DEBUG"] ?? "");
+
+// `str` is used *as the class* (not as a plain variable): static/member access,
+// a type annotation, construction, a cast/generic, or an array type.
+const USES =
+  /(?:\bstr\s*\.|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
+// The file declares its own `str` binding - never inject in that case.
+const BINDS =
+  /(?:\b(?:const|let|var|function|class|namespace|type)\s+str\b|\(\s*str\s*:|,\s*str\s*:)/;
 
 // Collapse a relative path whose leaf is the package dir to the bare specifier
 // (so a node_modules install resolves through the consumer's node_modules), and
@@ -54,7 +68,7 @@ function importedNames(source) {
   return names;
 }
 
-export default class VStringTransform extends Transform {
+export default class StrAsTransform extends Transform {
   afterParse(parser) {
     // Package root: this file is <pkg>/transform/index.js -> ../.. is <pkg>.
     const packageDir = path.resolve(fileURLToPath(import.meta.url), "..", "..");
@@ -64,21 +78,15 @@ export default class VStringTransform extends Transform {
     const specifiers = new Set();
 
     for (const source of parser.sources) {
-      // Skip stdlib + installed libraries (incl. vstring's own files when used
+      // Skip stdlib + installed libraries (incl. str-as's own files when used
       // as a dependency) and runtime internals.
       if (source.isLibrary) continue;
       if (source.internalPath.startsWith("~lib")) continue;
 
       const text = source.text;
-      // Belt-and-suspenders: never inject into a file that defines the class
-      // (e.g. dogfooding inside the vstring repo itself).
-      if (/\bclass\s+vstring\b/.test(text)) continue;
-
       const already = importedNames(source);
-      const missing = NAMES.filter(
-        (n) => new RegExp(`\\b${n}\\b`).test(text) && !already.has(n),
-      );
-      if (!missing.length) continue;
+      // Inject only when `str` is used as the class and not already in scope.
+      if (already.has(NAME) || !USES.test(text) || BINDS.test(text)) continue;
 
       let fromPath = source.normalizedPath.replaceAll("/", path.sep);
       fromPath = fromPath.startsWith("~lib")
@@ -90,16 +98,15 @@ export default class VStringTransform extends Transform {
       specifiers.add(specifier);
       const range = source.range;
 
-      const decls = missing.map((n) =>
-        Node.createImportDeclaration(
-          Node.createIdentifierExpression(n, range, false),
-          null,
-          range,
-        ),
-      );
       source.statements.unshift(
         Node.createImportStatement(
-          decls,
+          [
+            Node.createImportDeclaration(
+              Node.createIdentifierExpression(NAME, range, false),
+              null,
+              range,
+            ),
+          ],
           Node.createStringLiteralExpression(specifier, range),
           range,
         ),
@@ -107,15 +114,15 @@ export default class VStringTransform extends Transform {
 
       if (DEBUG) {
         console.log(
-          `[vstring] inject { ${missing.join(", ")} } from "${specifier}" -> ${source.normalizedPath}`,
+          `[str-as] inject { ${NAME} } from "${specifier}" -> ${source.normalizedPath}`,
         );
       }
     }
 
     // An import added here is too late for asc's normal parse loop, so if the
-    // vstring module isn't already in the program, force-parse its index. asc
+    // str-as module isn't already in the program, force-parse its index. asc
     // drains the parse backlog after afterParse, so this pulls in the whole
-    // dependency graph (./vstring, ./util, utf-as, …).
+    // dependency graph (./str, ./util, utf-as, …).
     for (const specifier of specifiers) {
       if (!specifier.startsWith(PKG + "/")) continue; // only the installed case
       const internal = "~lib/" + specifier;
@@ -123,7 +130,7 @@ export default class VStringTransform extends Transform {
       const file = path.join(packageDir, "assembly", "index.ts");
       if (!existsSync(file)) continue;
       parser.parseFile(readFileSync(file, "utf8"), internal + ".ts", false);
-      if (DEBUG) console.log(`[vstring] force-parsed ${internal}`);
+      if (DEBUG) console.log(`[str-as] force-parsed ${internal}`);
     }
   }
 }

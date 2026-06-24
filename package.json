@@ -1,5 +1,5 @@
 {
-  "name": "vstring",
+  "name": "str-as",
   "version": "0.1.0",
   "author": "Jairus Tanaka <me@jairus.dev>",
   "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without allocating",
@@ -7,19 +7,19 @@
   "main": "assembly/index.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JairusSW/vstring.git"
+    "url": "git+https://github.com/JairusSW/str-as.git"
   },
   "funding": "https://github.com/sponsors/JairusSW",
   "bugs": {
-    "url": "https://github.com/JairusSW/vstring/issues"
+    "url": "https://github.com/JairusSW/str-as/issues"
   },
-  "homepage": "https://github.com/JairusSW/vstring#readme",
+  "homepage": "https://github.com/JairusSW/str-as#readme",
   "license": "MIT",
   "type": "module",
   "keywords": [
     "assemblyscript",
     "string",
-    "vstring",
+    "str",
     "virtual",
     "zero-copy",
     "view",
@@ -31,7 +31,7 @@
   ],
   "files": [
     "assembly/index.ts",
-    "assembly/vstring.ts",
+    "assembly/str.ts",
     "assembly/util.ts",
     "assembly/tsconfig.json",
     "index.ts",

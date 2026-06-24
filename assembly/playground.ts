@@ -1,4 +1,4 @@
-import { vstring } from "./index";
+import { str } from "./index";
 
 function h(title: string): void {
   console.log("\n\x1b[1m== " + title + " ==\x1b[0m");
@@ -19,7 +19,7 @@ function showb(label: string, value: bool): void {
 const sentence = "  The quick brown fox jumps over the lazy dog.  ";
 
 h("converting a real string into a view");
-const v: vstring = vstring.from(sentence);
+const v: str = str.from(sentence);
 showi("length (incl. padding)", v.length);
 show("toString() round-trips", v.toString());
 
@@ -33,7 +33,7 @@ show("substring(10, 4)", trimmed.substring(10, 4).toString()); // swaps -> "quic
 show("substr(10, 5)", trimmed.substr(10, 5).toString()); // "brown"
 
 h("a view of a view stays anchored to the original backing string");
-const tail = vstring.from(sentence).trim().slice(-4); // "dog."
+const tail = str.from(sentence).trim().slice(-4); // "dog."
 show("trim().slice(-4)", tail.toString());
 show("  .slice(0, 3)", tail.slice(0, 3).toString()); // "dog"
 showb("  still backed by the original?", tail.data === sentence);
@@ -42,7 +42,7 @@ h("char access");
 show("charAt(4) on trimmed", trimmed.charAt(4).toString()); // "q"
 show("at(-1) on trimmed", trimmed.at(-1).toString()); // "."
 showi("charCodeAt(4)", trimmed.charCodeAt(4)); // 113 'q'
-showi('codePointAt(1) of "a😀"', vstring.from("a😀").codePointAt(1)); // 128512
+showi('codePointAt(1) of "a😀"', str.from("a😀").codePointAt(1)); // 128512
 
 h("searching");
 showi('indexOf("fox")', trimmed.indexOf("fox"));
@@ -52,26 +52,26 @@ showb('startsWith("The")', trimmed.startsWith("The"));
 showb('endsWith("dog.")', trimmed.endsWith("dog."));
 
 h("comparison operates on content, not identity");
-const a = vstring.slice("__world", 2); // "world"
-const b = vstring.slice("hello world", 6); // "world", different backing string
+const a = str.slice("__world", 2); // "world"
+const b = str.slice("hello world", 6); // "world", different backing string
 showb("a.equals(b)", a.equals(b));
 showb("a == b (operator)", a == b);
-showb('"apple" < "banana"', vstring.from("apple") < vstring.from("banana"));
+showb('"apple" < "banana"', str.from("apple") < str.from("banana"));
 
 h("free functions accept a real string OR a view");
-show("vstring.slice(string, 4, 9)", vstring.slice(sentence, 4, 9).toString());
-show("vstring.slice(view, 0, 3)", vstring.slice(trimmed, 0, 3).toString());
-showi("vstring.length(view)", vstring.length(trimmed));
+show("str.slice(string, 4, 9)", str.slice(sentence, 4, 9).toString());
+show("str.slice(view, 0, 3)", str.slice(trimmed, 0, 3).toString());
+showi("str.length(view)", str.length(trimmed));
 
 h("allocating helpers (these return a real string)");
-show("toUpperCase", vstring.toUpperCase(trimmed.slice(0, 3))); // "THE"
-show("repeat", vstring.repeat("ab", 4));
-show("padStart", vstring.padStart("7", 3, "0"));
-show("replaceAll", vstring.replaceAll("a-b-c-d", "-", "+"));
+show("toUpperCase", str.toUpperCase(trimmed.slice(0, 3))); // "THE"
+show("repeat", str.repeat("ab", 4));
+show("padStart", str.padStart("7", 3, "0"));
+show("replaceAll", str.replaceAll("a-b-c-d", "-", "+"));
 
 h("split into zero-copy pieces");
 const csv = "id,name,email,role";
-const cols = vstring.split(csv, ",");
+const cols = str.split(csv, ",");
 showi("field count", cols.length);
 for (let i = 0; i < cols.length; i++) {
   show("  field " + i.toString(), cols[i].toString());
@@ -79,7 +79,7 @@ for (let i = 0; i < cols.length; i++) {
 
 h("a practical tokenizer - walk words without copying until the end");
 const log = "GET /index.html 200 1043";
-const fields = vstring.split(log, " ");
+const fields = str.split(log, " ");
 show("method", fields[0].toString());
 show("path", fields[1].toString());
 showi("status", <i32>parseInt(fields[2].toString()));

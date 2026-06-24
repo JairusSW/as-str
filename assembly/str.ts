@@ -16,7 +16,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
  * A virtual (zero-copy) string: a lightweight view into an existing real
  * `string`.
  *
- * A `vstring` holds a backing `string` (the GC owner of the bytes) plus a
+ * A `str` holds a backing `string` (the GC owner of the bytes) plus a
  * `[start, end)` pair of raw byte pointers describing the slice of that string
  * it represents. View-producing operations (`slice`, `substring`, `charAt`,
  * `trim`, `split`, the `[]`/`+` operators, …) merely move pointers and copy no
@@ -28,12 +28,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
  *
  * The same class is both the type and the API surface. Instance methods operate
  * on a view (`v.slice(2)`), while the mirrored static free-functions accept a
- * `string` or a `vstring` as their first argument (`vstring.slice(s, 2)`).
- *
- * `VString` is exported as a PascalCase alias of this class.
+ * `string` or a `str` as their first argument (`str.slice(s, 2)`).
  */
 // @ts-ignore: decorator
-@final export class vstring {
+@final export class str {
   /**
    * Construct a view directly from a backing string and raw byte pointers.
    *
@@ -53,9 +51,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param s - backing string to view.
    * @returns A view covering all of `s` (no copy).
    */
-  static from(s: string): vstring {
+  static from(s: string): str {
     const ptr = changetype<usize>(s);
-    return new vstring(s, ptr, ptr + ((<usize>s.length) << 1));
+    return new str(s, ptr, ptr + ((<usize>s.length) << 1));
   }
 
   /**
@@ -66,13 +64,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param end   - exclusive end code-unit index.
    * @returns A view of `s` covering `[start, end)` (no copy).
    */
-  static fromRange(s: string, start: i32, end: i32): vstring {
+  static fromRange(s: string, start: i32, end: i32): str {
     const base = changetype<usize>(s);
-    return new vstring(
-      s,
-      base + ((<usize>start) << 1),
-      base + ((<usize>end) << 1),
-    );
+    return new str(s, base + ((<usize>start) << 1), base + ((<usize>end) << 1));
   }
 
   /** Maximum length of a backing string, mirroring `String.MAX_LENGTH`. */
@@ -88,8 +82,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param surr - optional low surrogate code unit, or -1 for none.
    * @returns A view over a freshly allocated string.
    */
-  static fromCharCode(unit: i32, surr: i32 = -1): vstring {
-    return vstring.from(String.fromCharCode(unit, surr));
+  static fromCharCode(unit: i32, surr: i32 = -1): str {
+    return str.from(String.fromCharCode(unit, surr));
   }
   /**
    * Build a string from an array of UTF-16 code units, then view it.
@@ -97,8 +91,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param units - code units to assemble.
    * @returns A view over a freshly allocated string.
    */
-  static fromCharCodes(units: Array<i32>): vstring {
-    return vstring.from(String.fromCharCodes(units));
+  static fromCharCodes(units: Array<i32>): str {
+    return str.from(String.fromCharCodes(units));
   }
   /**
    * Build a string from a single Unicode code point, then view it.
@@ -106,8 +100,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param code - Unicode code point.
    * @returns A view over a freshly allocated string.
    */
-  static fromCodePoint(code: i32): vstring {
-    return vstring.from(String.fromCodePoint(code));
+  static fromCodePoint(code: i32): str {
+    return str.from(String.fromCodePoint(code));
   }
 
   /** Length of the view in UTF-16 code units. */
@@ -138,12 +132,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     end: usize,
     lo0: i32,
     hi0: i32,
-  ): vstring {
+  ): str {
     const len = unitLength(start, end);
     let lo = lo0 < 0 ? max(len + lo0, 0) : min(lo0, len);
     let hi = hi0 < 0 ? max(len + hi0, 0) : min(hi0, len);
     if (hi < lo) hi = lo;
-    return new vstring(
+    return new str(
       data,
       start + ((<usize>lo) << 1),
       start + ((<usize>hi) << 1),
@@ -168,7 +162,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     end: usize,
     lo0: i32,
     hi0: i32,
-  ): vstring {
+  ): str {
     const len = unitLength(start, end);
     let lo = lo0 < 0 ? 0 : min(lo0, len);
     let hi = hi0 < 0 ? 0 : min(hi0, len);
@@ -177,7 +171,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
       lo = hi;
       hi = t;
     }
-    return new vstring(
+    return new str(
       data,
       start + ((<usize>lo) << 1),
       start + ((<usize>hi) << 1),
@@ -202,11 +196,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     end: usize,
     start0: i32,
     length: i32,
-  ): vstring {
+  ): str {
     const len = unitLength(start, end);
     let lo = start0 < 0 ? max(len + start0, 0) : min(start0, len);
     let count = length < 0 ? 0 : min(length, len - lo);
-    return new vstring(
+    return new str(
       data,
       start + ((<usize>lo) << 1),
       start + ((<usize>(lo + count)) << 1),
@@ -223,17 +217,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A single-code-unit view, or an empty view if out of range.
    * @internal
    */
-  static charAtRange(
-    data: string,
-    start: usize,
-    end: usize,
-    index: i32,
-  ): vstring {
+  static charAtRange(data: string, start: usize, end: usize, index: i32): str {
     if (<u32>index >= <u32>unitLength(start, end)) {
-      return new vstring(data, start, start);
+      return new str(data, start, start);
     }
     const at = start + ((<usize>index) << 1);
-    return new vstring(data, at, at + 2);
+    return new str(data, at, at + 2);
   }
 
   /**
@@ -246,14 +235,14 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A single-code-unit view, or an empty view if out of range.
    * @internal
    */
-  static atRange(data: string, start: usize, end: usize, index: i32): vstring {
+  static atRange(data: string, start: usize, end: usize, index: i32): str {
     const len = unitLength(start, end);
     if (index < 0) index += len;
     if (<u32>index >= <u32>len) {
-      return new vstring(data, start, start);
+      return new str(data, start, start);
     }
     const at = start + ((<usize>index) << 1);
-    return new vstring(data, at, at + 2);
+    return new str(data, at, at + 2);
   }
 
   /**
@@ -265,10 +254,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view with leading whitespace removed (no copy).
    * @internal
    */
-  static trimStartRange(data: string, start: usize, end: usize): vstring {
+  static trimStartRange(data: string, start: usize, end: usize): str {
     let p = start;
     while (p < end && isWhiteSpace(load<u16>(p))) p += 2;
-    return new vstring(data, p, end);
+    return new str(data, p, end);
   }
 
   /**
@@ -280,10 +269,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view with trailing whitespace removed (no copy).
    * @internal
    */
-  static trimEndRange(data: string, start: usize, end: usize): vstring {
+  static trimEndRange(data: string, start: usize, end: usize): str {
     let p = end;
     while (p > start && isWhiteSpace(load<u16>(p - 2))) p -= 2;
-    return new vstring(data, start, p);
+    return new str(data, start, p);
   }
 
   /**
@@ -296,12 +285,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view with surrounding whitespace removed (no copy).
    * @internal
    */
-  static trimRange(data: string, start: usize, end: usize): vstring {
+  static trimRange(data: string, start: usize, end: usize): str {
     let lo = start;
     let hi = end;
     while (lo < hi && isWhiteSpace(load<u16>(lo))) lo += 2;
     while (hi > lo && isWhiteSpace(load<u16>(hi - 2))) hi -= 2;
-    return new vstring(data, lo, hi);
+    return new str(data, lo, hi);
   }
 
   /**
@@ -393,7 +382,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     return equalsBytes(start + ((<usize>lo) << 1), nStart, nBytes);
   }
 
-  // ---- view-producing methods (return a vstring) ---------------------------
+  // ---- view-producing methods (return a str) ---------------------------
 
   /**
    * Return a section of the view. Negative indices count from the end.
@@ -402,8 +391,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param end   - end code-unit index, exclusive; defaults to the view's end.
    * @returns A view of the slice (no copy).
    */
-  slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): vstring {
-    return vstring.sliceRange(this.data, this.start, this.end, start, end);
+  slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
+    return str.sliceRange(this.data, this.start, this.end, start, end);
   }
 
   /**
@@ -415,8 +404,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *                end.
    * @returns A view of the substring (no copy).
    */
-  substring(start: i32 = 0, end: i32 = i32.MAX_VALUE): vstring {
-    return vstring.substringRange(this.data, this.start, this.end, start, end);
+  substring(start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
+    return str.substringRange(this.data, this.start, this.end, start, end);
   }
 
   /**
@@ -427,8 +416,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param length - number of code units to include.
    * @returns A view of the substring (no copy).
    */
-  substr(start: i32 = 0, length: i32 = i32.MAX_VALUE): vstring {
-    return vstring.substrRange(this.data, this.start, this.end, start, length);
+  substr(start: i32 = 0, length: i32 = i32.MAX_VALUE): str {
+    return str.substrRange(this.data, this.start, this.end, start, length);
   }
 
   /**
@@ -438,20 +427,20 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A single-code-unit view, or an empty view if `index` is out of
    *          range (no copy).
    */
-  charAt(index: i32): vstring {
-    return vstring.charAtRange(this.data, this.start, this.end, index);
+  charAt(index: i32): str {
+    return str.charAtRange(this.data, this.start, this.end, index);
   }
 
   /**
-   * Like {@link vstring#charAt} but supports negative indices counting from the
+   * Like {@link str#charAt} but supports negative indices counting from the
    * end.
    *
    * @param index - code-unit index (negative counts from the end).
    * @returns A single-code-unit view, or an empty view if out of range (no
    *          copy).
    */
-  at(index: i32): vstring {
-    return vstring.atRange(this.data, this.start, this.end, index);
+  at(index: i32): str {
+    return str.atRange(this.data, this.start, this.end, index);
   }
 
   /**
@@ -459,8 +448,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *
    * @returns A view with leading whitespace removed (no copy).
    */
-  trimStart(): vstring {
-    return vstring.trimStartRange(this.data, this.start, this.end);
+  trimStart(): str {
+    return str.trimStartRange(this.data, this.start, this.end);
   }
 
   /**
@@ -468,8 +457,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *
    * @returns A view with trailing whitespace removed (no copy).
    */
-  trimEnd(): vstring {
-    return vstring.trimEndRange(this.data, this.start, this.end);
+  trimEnd(): str {
+    return str.trimEndRange(this.data, this.start, this.end);
   }
 
   /**
@@ -477,26 +466,26 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *
    * @returns A view with surrounding whitespace removed (no copy).
    */
-  trim(): vstring {
-    return vstring.trimRange(this.data, this.start, this.end);
+  trim(): str {
+    return str.trimRange(this.data, this.start, this.end);
   }
 
   /**
-   * Alias of {@link vstring#trimStart}, matching native `String#trimLeft`.
+   * Alias of {@link str#trimStart}, matching native `String#trimLeft`.
    *
    * @returns A view with leading whitespace removed (no copy).
    */
-  trimLeft(): vstring {
-    return vstring.trimStartRange(this.data, this.start, this.end);
+  trimLeft(): str {
+    return str.trimStartRange(this.data, this.start, this.end);
   }
 
   /**
-   * Alias of {@link vstring#trimEnd}, matching native `String#trimRight`.
+   * Alias of {@link str#trimEnd}, matching native `String#trimRight`.
    *
    * @returns A view with trailing whitespace removed (no copy).
    */
-  trimRight(): vstring {
-    return vstring.trimEndRange(this.data, this.start, this.end);
+  trimRight(): str {
+    return str.trimEndRange(this.data, this.start, this.end);
   }
 
   // ---- query methods -------------------------------------------------------
@@ -508,7 +497,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns The code unit, or -1 if there is no code unit at `index`.
    */
   charCodeAt(index: i32): i32 {
-    return vstring.charCodeAtRange(this.start, this.end, index);
+    return str.charCodeAtRange(this.start, this.end, index);
   }
 
   /**
@@ -518,14 +507,14 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns The code point, or -1 if `index` is out of range.
    */
   codePointAt(index: i32): i32 {
-    return vstring.codePointAtRange(this.start, this.end, index);
+    return str.codePointAtRange(this.start, this.end, index);
   }
 
   /**
    * Return the index of the first occurrence of `search`, or -1 if absent.
    * Searching for an empty string returns 0.
    *
-   * @param search - substring to search for; a `string` or a `vstring`.
+   * @param search - substring to search for; a `string` or a `str`.
    * @param start  - code-unit index to begin searching from; negative clamps to
    *                 0.
    * @returns The first matching code-unit index, or -1.
@@ -544,7 +533,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * Return the index of the last occurrence of `search`, or -1 if absent.
    * Searching for an empty string returns the view's length.
    *
-   * @param search - substring to search for; a `string` or a `vstring`.
+   * @param search - substring to search for; a `string` or a `str`.
    * @param start  - code-unit index to begin searching backwards from.
    * @returns The last matching code-unit index, or -1.
    */
@@ -561,7 +550,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   /**
    * Whether the view contains `search`.
    *
-   * @param search - substring to look for; a `string` or a `vstring`.
+   * @param search - substring to look for; a `string` or a `str`.
    * @returns `true` if `search` occurs in the view.
    */
   includes<U>(search: U): bool {
@@ -571,12 +560,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   /**
    * Whether the view begins with `search` at the given offset.
    *
-   * @param search - prefix to test; a `string` or a `vstring`.
+   * @param search - prefix to test; a `string` or a `str`.
    * @param start  - code-unit offset to test at; defaults to 0.
    * @returns `true` if the view starts with `search` at `start`.
    */
   startsWith<U>(search: U, start: i32 = 0): bool {
-    return vstring.startsWithRange(
+    return str.startsWithRange(
       this.start,
       this.end,
       bStart(search),
@@ -588,13 +577,13 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   /**
    * Whether the view ends with `search` at the given position.
    *
-   * @param search - suffix to test; a `string` or a `vstring`.
+   * @param search - suffix to test; a `string` or a `str`.
    * @param end    - code-unit position the match must end at; defaults to the
    *                 view's length.
    * @returns `true` if the view ends with `search` at `end`.
    */
   endsWith<U>(search: U, end: i32 = i32.MAX_VALUE): bool {
-    return vstring.endsWithRange(
+    return str.endsWithRange(
       this.start,
       this.end,
       bStart(search),
@@ -609,7 +598,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param other - view to compare against.
    * @returns `true` if both views hold the same code units.
    */
-  equals(other: vstring): bool {
+  equals(other: str): bool {
     return rangeEquals(this.start, this.end, other.start, other.end);
   }
 
@@ -636,7 +625,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A negative, zero, or positive value if this view sorts before,
    *          equal to, or after `other`.
    */
-  compareTo(other: vstring): i32 {
+  compareTo(other: str): i32 {
     return rangeCompare(this.start, this.end, other.start, other.end);
   }
 
@@ -648,18 +637,18 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A negative, zero, or positive value if this view sorts before,
    *          equal to, or after `other`.
    */
-  localeCompare(other: vstring): i32 {
+  localeCompare(other: str): i32 {
     return rangeCompare(this.start, this.end, other.start, other.end);
   }
 
   /**
    * Concatenate `other` onto the end of the view.
    *
-   * @param other - value to append; a `string` or a `vstring`.
+   * @param other - value to append; a `string` or a `str`.
    * @returns A freshly allocated real `string`.
    */
   concat<U>(other: U): string {
-    return vstring.concat<vstring, U>(this, other);
+    return str.concat<str, U>(this, other);
   }
 
   /**
@@ -669,7 +658,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   repeat(count: i32 = 0): string {
-    return vstring.repeat<vstring>(this, count);
+    return str.repeat<str>(this, count);
   }
 
   /**
@@ -681,7 +670,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   padStart(length: i32, pad: string = " "): string {
-    return vstring.padStart<vstring>(this, length, pad);
+    return str.padStart<str>(this, length, pad);
   }
 
   /**
@@ -693,7 +682,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   padEnd(length: i32, pad: string = " "): string {
-    return vstring.padEnd<vstring>(this, length, pad);
+    return str.padEnd<str>(this, length, pad);
   }
 
   /**
@@ -704,7 +693,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   replace(search: string, replacement: string): string {
-    return vstring.replace<vstring>(this, search, replacement);
+    return str.replace<str>(this, search, replacement);
   }
 
   /**
@@ -715,7 +704,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   replaceAll(search: string, replacement: string): string {
-    return vstring.replaceAll<vstring>(this, search, replacement);
+    return str.replaceAll<str>(this, search, replacement);
   }
 
   /**
@@ -724,7 +713,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   toLowerCase(): string {
-    return vstring.toLowerCase<vstring>(this);
+    return str.toLowerCase<str>(this);
   }
 
   /**
@@ -733,7 +722,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   toUpperCase(): string {
-    return vstring.toUpperCase<vstring>(this);
+    return str.toUpperCase<str>(this);
   }
 
   /**
@@ -743,40 +732,40 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param separator - string to split on; an empty separator splits into
    *                    single code units.
    * @param limit     - maximum number of pieces to return.
-   * @returns An array of `vstring` views (no character copying).
+   * @returns An array of `str` views (no character copying).
    */
-  split(separator: string, limit: i32 = i32.MAX_VALUE): vstring[] {
-    return vstring.split<vstring>(this, separator, limit);
+  split(separator: string, limit: i32 = i32.MAX_VALUE): str[] {
+    return str.split<str>(this, separator, limit);
   }
 
   /** `a == b` - content equality of two views. */
   // @ts-ignore: decorator
-  @operator("==") static __eq(a: vstring, b: vstring): bool {
+  @operator("==") static __eq(a: str, b: str): bool {
     return a.equals(b);
   }
   /** `a != b` - content inequality of two views. */
   // @ts-ignore: decorator
-  @operator("!=") static __ne(a: vstring, b: vstring): bool {
+  @operator("!=") static __ne(a: str, b: str): bool {
     return !a.equals(b);
   }
   /** `a < b` - `true` if `a` sorts before `b` by code-unit ordering. */
   // @ts-ignore: decorator
-  @operator("<") static __lt(a: vstring, b: vstring): bool {
+  @operator("<") static __lt(a: str, b: str): bool {
     return a.compareTo(b) < 0;
   }
   /** `a <= b` - `true` if `a` sorts before or equal to `b` by code unit. */
   // @ts-ignore: decorator
-  @operator("<=") static __le(a: vstring, b: vstring): bool {
+  @operator("<=") static __le(a: str, b: str): bool {
     return a.compareTo(b) <= 0;
   }
   /** `a > b` - `true` if `a` sorts after `b` by code-unit ordering. */
   // @ts-ignore: decorator
-  @operator(">") static __gt(a: vstring, b: vstring): bool {
+  @operator(">") static __gt(a: str, b: str): bool {
     return a.compareTo(b) > 0;
   }
   /** `a >= b` - `true` if `a` sorts after or equal to `b` by code unit. */
   // @ts-ignore: decorator
-  @operator(">=") static __ge(a: vstring, b: vstring): bool {
+  @operator(">=") static __ge(a: str, b: str): bool {
     return a.compareTo(b) >= 0;
   }
 
@@ -788,8 +777,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view over the newly allocated concatenation.
    */
   // @ts-ignore: decorator
-  @operator("+") static __add(a: vstring, b: vstring): vstring {
-    return vstring.from(vstring.concat<vstring, vstring>(a, b));
+  @operator("+") static __add(a: str, b: str): str {
+    return str.from(str.concat<str, str>(a, b));
   }
 
   /**
@@ -800,7 +789,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    */
   // @ts-ignore: decorator
   @operator("[]") __get(index: i32): i32 {
-    return vstring.charCodeAtRange(this.start, this.end, index);
+    return str.charCodeAtRange(this.start, this.end, index);
   }
 
   /**
@@ -813,128 +802,124 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#slice}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#slice}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param start - start code-unit index (negative counts from the end).
    * @param end   - end code-unit index, exclusive.
    * @returns A view of the slice (no copy).
    */
-  static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): vstring {
-    return vstring.sliceRange(bData(s), bStart(s), bEnd(s), start, end);
+  static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
+    return str.sliceRange(bData(s), bStart(s), bEnd(s), start, end);
   }
 
   /**
-   * Free-function form of {@link vstring#substring}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#substring}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param start - first code-unit index.
    * @param end   - second code-unit index, exclusive.
    * @returns A view of the substring (no copy).
    */
-  static substring<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): vstring {
-    return vstring.substringRange(bData(s), bStart(s), bEnd(s), start, end);
+  static substring<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
+    return str.substringRange(bData(s), bStart(s), bEnd(s), start, end);
   }
 
   /**
-   * Free-function form of {@link vstring#substr}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#substr}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
    * @param start  - start code-unit index (negative counts from the end).
    * @param length - number of code units to include.
    * @returns A view of the substring (no copy).
    */
-  static substr<T>(s: T, start: i32 = 0, length: i32 = i32.MAX_VALUE): vstring {
-    return vstring.substrRange(bData(s), bStart(s), bEnd(s), start, length);
+  static substr<T>(s: T, start: i32 = 0, length: i32 = i32.MAX_VALUE): str {
+    return str.substrRange(bData(s), bStart(s), bEnd(s), start, length);
   }
 
   /**
-   * Free-function form of {@link vstring#charAt}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#charAt}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param index - zero-based code-unit index.
    * @returns A single-code-unit view, or an empty view if out of range.
    */
-  static charAt<T>(s: T, index: i32): vstring {
-    return vstring.charAtRange(bData(s), bStart(s), bEnd(s), index);
+  static charAt<T>(s: T, index: i32): str {
+    return str.charAtRange(bData(s), bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link vstring#at}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#at}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param index - code-unit index (negative counts from the end).
    * @returns A single-code-unit view, or an empty view if out of range.
    */
-  static at<T>(s: T, index: i32): vstring {
-    return vstring.atRange(bData(s), bStart(s), bEnd(s), index);
+  static at<T>(s: T, index: i32): str {
+    return str.atRange(bData(s), bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link vstring#trim}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#trim}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns A view with surrounding whitespace removed (no copy).
    */
-  static trim<T>(s: T): vstring {
-    return vstring.trimRange(bData(s), bStart(s), bEnd(s));
+  static trim<T>(s: T): str {
+    return str.trimRange(bData(s), bStart(s), bEnd(s));
   }
 
   /**
-   * Free-function form of {@link vstring#trimStart}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#trimStart}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns A view with leading whitespace removed (no copy).
    */
-  static trimStart<T>(s: T): vstring {
-    return vstring.trimStartRange(bData(s), bStart(s), bEnd(s));
+  static trimStart<T>(s: T): str {
+    return str.trimStartRange(bData(s), bStart(s), bEnd(s));
   }
 
   /**
-   * Free-function form of {@link vstring#trimEnd}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#trimEnd}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns A view with trailing whitespace removed (no copy).
    */
-  static trimEnd<T>(s: T): vstring {
-    return vstring.trimEndRange(bData(s), bStart(s), bEnd(s));
+  static trimEnd<T>(s: T): str {
+    return str.trimEndRange(bData(s), bStart(s), bEnd(s));
   }
 
   /**
-   * Free-function form of {@link vstring#split}; `s` may be a `string` or a
-   * `vstring`. Each piece is a zero-copy view.
+   * Free-function form of {@link str#split}; `s` may be a `string` or a
+   * `str`. Each piece is a zero-copy view.
    *
-   * @param s         - source; a `string` or a `vstring`.
+   * @param s         - source; a `string` or a `str`.
    * @param separator - string to split on; an empty separator splits into
    *                    single code units.
    * @param limit     - maximum number of pieces to return.
-   * @returns An array of `vstring` views (no character copying).
+   * @returns An array of `str` views (no character copying).
    */
-  static split<T>(
-    s: T,
-    separator: string,
-    limit: i32 = i32.MAX_VALUE,
-  ): vstring[] {
+  static split<T>(s: T, separator: string, limit: i32 = i32.MAX_VALUE): str[] {
     const data = bData(s);
     const start = bStart(s);
     const end = bEnd(s);
     const total = unitLength(start, end);
-    const out = new Array<vstring>();
+    const out = new Array<str>();
     if (limit <= 0) return out;
 
     const sepLen = separator.length;
     if (sepLen == 0) {
       const n = total < limit ? total : limit;
       for (let i = 0; i < n; i++) {
-        out.push(vstring.sliceRange(data, start, end, i, i + 1));
+        out.push(str.sliceRange(data, start, end, i, i + 1));
       }
       return out;
     }
@@ -945,21 +930,21 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     let idx = rangeIndexOf(start, end, sp, spEnd, from);
     while (idx != -1) {
       if (out.length >= limit) return out;
-      out.push(vstring.sliceRange(data, start, end, from, idx));
+      out.push(str.sliceRange(data, start, end, from, idx));
       from = idx + sepLen;
       idx = rangeIndexOf(start, end, sp, spEnd, from);
     }
     if (out.length < limit) {
-      out.push(vstring.sliceRange(data, start, end, from, total));
+      out.push(str.sliceRange(data, start, end, from, total));
     }
     return out;
   }
 
   /**
-   * Length in UTF-16 code units. Free-function form of {@link vstring#length};
-   * `s` may be a `string` or a `vstring`.
+   * Length in UTF-16 code units. Free-function form of {@link str#length};
+   * `s` may be a `string` or a `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns The code-unit length.
    */
   static length<T>(s: T): i32 {
@@ -967,10 +952,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#isEmpty}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#isEmpty}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns `true` if `s` has zero code units.
    */
   static isEmpty<T>(s: T): bool {
@@ -978,35 +963,35 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#charCodeAt}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#charCodeAt}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param index - zero-based code-unit index.
    * @returns The code unit, or -1 if out of range.
    */
   static charCodeAt<T>(s: T, index: i32): i32 {
-    return vstring.charCodeAtRange(bStart(s), bEnd(s), index);
+    return str.charCodeAtRange(bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link vstring#codePointAt}; `s` may be a `string` or
-   * a `vstring`.
+   * Free-function form of {@link str#codePointAt}; `s` may be a `string` or
+   * a `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param index - zero-based code-unit index.
    * @returns The code point, or -1 if out of range.
    */
   static codePointAt<T>(s: T, index: i32): i32 {
-    return vstring.codePointAtRange(bStart(s), bEnd(s), index);
+    return str.codePointAtRange(bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link vstring#indexOf}; `s` and `search` may each be
-   * a `string` or a `vstring`.
+   * Free-function form of {@link str#indexOf}; `s` and `search` may each be
+   * a `string` or a `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
-   * @param search - substring to search for; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
+   * @param search - substring to search for; a `string` or a `str`.
    * @param start  - code-unit index to begin searching from.
    * @returns The first matching code-unit index, or -1.
    */
@@ -1021,11 +1006,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#lastIndexOf}; `s` and `search` may each
-   * be a `string` or a `vstring`.
+   * Free-function form of {@link str#lastIndexOf}; `s` and `search` may each
+   * be a `string` or a `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
-   * @param search - substring to search for; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
+   * @param search - substring to search for; a `string` or a `str`.
    * @param start  - code-unit index to begin searching backwards from.
    * @returns The last matching code-unit index, or -1.
    */
@@ -1040,28 +1025,28 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#includes}; `s` and `search` may each be
-   * a `string` or a `vstring`.
+   * Free-function form of {@link str#includes}; `s` and `search` may each be
+   * a `string` or a `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
-   * @param search - substring to look for; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
+   * @param search - substring to look for; a `string` or a `str`.
    * @returns `true` if `search` occurs in `s`.
    */
   static includes<T, U>(s: T, search: U): bool {
-    return vstring.indexOf(s, search) != -1;
+    return str.indexOf(s, search) != -1;
   }
 
   /**
-   * Free-function form of {@link vstring#startsWith}; `s` and `search` may each
-   * be a `string` or a `vstring`.
+   * Free-function form of {@link str#startsWith}; `s` and `search` may each
+   * be a `string` or a `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
-   * @param search - prefix to test; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
+   * @param search - prefix to test; a `string` or a `str`.
    * @param start  - code-unit offset to test at.
    * @returns `true` if `s` starts with `search` at `start`.
    */
   static startsWith<T, U>(s: T, search: U, start: i32 = 0): bool {
-    return vstring.startsWithRange(
+    return str.startsWithRange(
       bStart(s),
       bEnd(s),
       bStart(search),
@@ -1071,16 +1056,16 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#endsWith}; `s` and `search` may each be
-   * a `string` or a `vstring`.
+   * Free-function form of {@link str#endsWith}; `s` and `search` may each be
+   * a `string` or a `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
-   * @param search - suffix to test; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
+   * @param search - suffix to test; a `string` or a `str`.
    * @param end    - code-unit position the match must end at.
    * @returns `true` if `s` ends with `search` at `end`.
    */
   static endsWith<T, U>(s: T, search: U, end: i32 = i32.MAX_VALUE): bool {
-    return vstring.endsWithRange(
+    return str.endsWithRange(
       bStart(s),
       bEnd(s),
       bStart(search),
@@ -1090,11 +1075,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Content equality. Free-function form of {@link vstring#equals}; both
-   * operands may each be a `string` or a `vstring`.
+   * Content equality. Free-function form of {@link str#equals}; both
+   * operands may each be a `string` or a `str`.
    *
-   * @param a - first operand; a `string` or a `vstring`.
-   * @param b - second operand; a `string` or a `vstring`.
+   * @param a - first operand; a `string` or a `str`.
+   * @param b - second operand; a `string` or a `str`.
    * @returns `true` if both hold the same code units.
    */
   static equals<T, U>(a: T, b: U): bool {
@@ -1102,11 +1087,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Code-unit ordering. Free-function form of {@link vstring#compareTo}; both
-   * operands may each be a `string` or a `vstring`.
+   * Code-unit ordering. Free-function form of {@link str#compareTo}; both
+   * operands may each be a `string` or a `str`.
    *
-   * @param a - first operand; a `string` or a `vstring`.
-   * @param b - second operand; a `string` or a `vstring`.
+   * @param a - first operand; a `string` or a `str`.
+   * @param b - second operand; a `string` or a `str`.
    * @returns A negative, zero, or positive value if `a` sorts before, equal to,
    *          or after `b`.
    */
@@ -1116,9 +1101,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Materialize into a real `string`. Free-function form of
-   * {@link vstring#toString}; `s` may be a `string` or a `vstring`.
+   * {@link str#toString}; `s` may be a `string` or a `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns A freshly allocated, owned `string`.
    */
   static toString<T>(s: T): string {
@@ -1126,10 +1111,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#toUpperCase}; `s` may be a `string` or
-   * a `vstring`.
+   * Free-function form of {@link str#toUpperCase}; `s` may be a `string` or
+   * a `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns A freshly allocated uppercased `string`.
    */
   static toUpperCase<T>(s: T): string {
@@ -1137,10 +1122,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#toLowerCase}; `s` may be a `string` or
-   * a `vstring`.
+   * Free-function form of {@link str#toLowerCase}; `s` may be a `string` or
+   * a `str`.
    *
-   * @param s - source; a `string` or a `vstring`.
+   * @param s - source; a `string` or a `str`.
    * @returns A freshly allocated lowercased `string`.
    */
   static toLowerCase<T>(s: T): string {
@@ -1148,10 +1133,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#repeat}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#repeat}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s     - source; a `string` or a `vstring`.
+   * @param s     - source; a `string` or a `str`.
    * @param count - number of copies; `0` (or less) yields the empty string.
    * @returns A freshly allocated real `string`.
    */
@@ -1169,10 +1154,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#padStart}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#padStart}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
    * @param length - target length; if not greater than the current length the
    *                 source is returned unchanged.
    * @param pad    - string to pad with; truncated to fit. Defaults to `" "`.
@@ -1191,10 +1176,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link vstring#padEnd}; `s` may be a `string` or a
-   * `vstring`.
+   * Free-function form of {@link str#padEnd}; `s` may be a `string` or a
+   * `str`.
    *
-   * @param s      - source; a `string` or a `vstring`.
+   * @param s      - source; a `string` or a `str`.
    * @param length - target length; if not greater than the current length the
    *                 source is returned unchanged.
    * @param pad    - string to pad with; truncated to fit. Defaults to `" "`.
@@ -1215,10 +1200,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Concatenate two values into a freshly owned string. Free-function form of
-   * {@link vstring#concat}; both operands may each be a `string` or a `vstring`.
+   * {@link str#concat}; both operands may each be a `string` or a `str`.
    *
-   * @param s     - left operand; a `string` or a `vstring`.
-   * @param other - right operand; a `string` or a `vstring`.
+   * @param s     - left operand; a `string` or a `str`.
+   * @param other - right operand; a `string` or a `str`.
    * @returns A freshly allocated real `string`.
    */
   static concat<T, U>(s: T, other: U): string {
@@ -1235,9 +1220,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Replace the first occurrence of `search`. Free-function form of
-   * {@link vstring#replace}; `s` may be a `string` or a `vstring`.
+   * {@link str#replace}; `s` may be a `string` or a `str`.
    *
-   * @param s           - source; a `string` or a `vstring`.
+   * @param s           - source; a `string` or a `str`.
    * @param search      - substring to search for.
    * @param replacement - text to substitute for the first match.
    * @returns A freshly allocated real `string`.
@@ -1269,9 +1254,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Replace every occurrence of `search`. Free-function form of
-   * {@link vstring#replaceAll}; `s` may be a `string` or a `vstring`.
+   * {@link str#replaceAll}; `s` may be a `string` or a `str`.
    *
-   * @param s           - source; a `string` or a `vstring`.
+   * @param s           - source; a `string` or a `str`.
    * @param search      - substring to search for.
    * @param replacement - text to substitute for each match.
    * @returns A freshly allocated real `string`.
@@ -1322,12 +1307,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 // @ts-ignore: decorator
 @inline function bData<T>(s: T): string {
   if (isString<T>()) return changetype<string>(s);
-  return changetype<vstring>(s).data;
+  return changetype<str>(s).data;
 }
 // @ts-ignore: decorator
 @inline function bStart<T>(s: T): usize {
   if (isString<T>()) return changetype<usize>(changetype<string>(s));
-  return changetype<vstring>(s).start;
+  return changetype<str>(s).start;
 }
 // @ts-ignore: decorator
 @inline function bEnd<T>(s: T): usize {
@@ -1335,7 +1320,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     const str = changetype<string>(s);
     return changetype<usize>(str) + ((<usize>str.length) << 1);
   }
-  return changetype<vstring>(s).end;
+  return changetype<str>(s).end;
 }
 
 function fillRepeat(dst: usize, count: i32, pad: string): i32 {
@@ -1353,17 +1338,17 @@ function fillRepeat(dst: usize, count: i32, pad: string): i32 {
 }
 
 /**
- * Encoding helpers merged onto `vstring`, mirroring `String.UTF8` and
- * `String.UTF16`. Functions accept either a `string` or a `vstring` as input.
+ * Encoding helpers merged onto `str`, mirroring `String.UTF8` and
+ * `String.UTF16`. Functions accept either a `string` or a `str` as input.
  */
-// Encoding namespaces, merged onto `vstring` (mirror `String.UTF8`/`String.UTF16`).
-export namespace vstring {
+// Encoding namespaces, merged onto `str` (mirror `String.UTF8`/`String.UTF16`).
+export namespace str {
   /** UTF-16 encoding/decoding for views and strings. */
   export namespace UTF16 {
     /**
      * Number of bytes the view occupies when UTF-16 encoded.
      *
-     * @param s - source; a `string` or a `vstring`.
+     * @param s - source; a `string` or a `str`.
      * @returns The byte length (two bytes per code unit).
      */
     export function byteLength<T>(s: T): i32 {
@@ -1372,7 +1357,7 @@ export namespace vstring {
     /**
      * Encode the view to a new UTF-16 `ArrayBuffer`.
      *
-     * @param s - source; a `string` or a `vstring`.
+     * @param s - source; a `string` or a `str`.
      * @returns A freshly allocated `ArrayBuffer` of the encoded bytes.
      */
     export function encode<T>(s: T): ArrayBuffer {
@@ -1406,8 +1391,8 @@ export namespace vstring {
      * @param buf - buffer of UTF-16 bytes.
      * @returns A view over the freshly decoded backing string.
      */
-    export function decode(buf: ArrayBuffer): vstring {
-      return vstring.from(U16.decode(buf));
+    export function decode(buf: ArrayBuffer): str {
+      return str.from(U16.decode(buf));
     }
     /**
      * Decode `len` bytes of UTF-16 starting at `buf` into a view.
@@ -1418,13 +1403,13 @@ export namespace vstring {
      * @unsafe Reads through raw pointers without bounds checks.
      */
     // @ts-ignore: decorator
-    @unsafe export function decodeUnsafe(buf: usize, len: usize): vstring {
-      return vstring.from(U16.decodeUnsafe(buf, len));
+    @unsafe export function decodeUnsafe(buf: usize, len: usize): str {
+      return str.from(U16.decodeUnsafe(buf, len));
     }
     /**
      * Whether the view is well-formed UTF-16 (additional helper from `utf-as`).
      *
-     * @param s - source; a `string` or a `vstring`.
+     * @param s - source; a `string` or a `str`.
      * @returns `true` if every surrogate is paired correctly.
      */
     export function validate<T>(s: T): bool {
@@ -1438,7 +1423,7 @@ export namespace vstring {
     /**
      * Number of bytes the view occupies when UTF-8 encoded.
      *
-     * @param s              - source; a `string` or a `vstring`.
+     * @param s              - source; a `string` or a `str`.
      * @param nullTerminated - include a trailing NUL byte in the count.
      * @returns The encoded byte length.
      */
@@ -1453,7 +1438,7 @@ export namespace vstring {
     /**
      * Encode the view to a new UTF-8 `ArrayBuffer`.
      *
-     * @param s              - source; a `string` or a `vstring`.
+     * @param s              - source; a `string` or a `str`.
      * @param nullTerminated - append a trailing NUL byte.
      * @param errorMode      - how to handle lone surrogates; defaults to WTF-8.
      * @returns A freshly allocated `ArrayBuffer` of the encoded bytes.
@@ -1510,8 +1495,8 @@ export namespace vstring {
     export function decode(
       buf: ArrayBuffer,
       nullTerminated: bool = false,
-    ): vstring {
-      return vstring.from(U8.decode(buf, nullTerminated));
+    ): str {
+      return str.from(U8.decode(buf, nullTerminated));
     }
     /**
      * Decode `len` bytes of UTF-8 starting at `buf` into a view.
@@ -1527,8 +1512,8 @@ export namespace vstring {
       buf: usize,
       len: usize,
       nullTerminated: bool = false,
-    ): vstring {
-      return vstring.from(U8.decodeUnsafe(buf, len, nullTerminated));
+    ): str {
+      return str.from(U8.decodeUnsafe(buf, len, nullTerminated));
     }
     /**
      * Whether `buf` holds well-formed UTF-8.

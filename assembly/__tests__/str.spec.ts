@@ -1,0 +1,243 @@
+// Behavioral tests for the virtual string core. The native `String` methods
+// are the oracle: a `str` view, once materialized, must agree with what the
+// equivalent native operation produces.
+
+import { describe, test, expect } from "as-test";
+import { str } from "../index";
+
+const SAMPLE = "hello, world";
+
+describe("str views (zero-copy)", () => {
+  test("slice matches String#slice", () => {
+    expect(str.slice(SAMPLE, 2).toString()).toBe(SAMPLE.slice(2));
+    expect(str.slice(SAMPLE, 0, 5).toString()).toBe(SAMPLE.slice(0, 5));
+    expect(str.slice(SAMPLE, -5).toString()).toBe(SAMPLE.slice(-5));
+    expect(str.slice(SAMPLE, -5, -1).toString()).toBe(SAMPLE.slice(-5, -1));
+    expect(str.slice(SAMPLE, 8, 2).toString()).toBe(SAMPLE.slice(8, 2));
+  });
+
+  test("substring matches String#substring", () => {
+    expect(str.substring(SAMPLE, 7).toString()).toBe(SAMPLE.substring(7));
+    expect(str.substring(SAMPLE, 7, 2).toString()).toBe(SAMPLE.substring(7, 2));
+    expect(str.substring(SAMPLE, -3, 4).toString()).toBe(
+      SAMPLE.substring(-3, 4),
+    );
+  });
+
+  test("substr matches String#substr", () => {
+    expect(str.substr(SAMPLE, 7, 3).toString()).toBe(SAMPLE.substr(7, 3));
+    expect(str.substr(SAMPLE, -5, 2).toString()).toBe(SAMPLE.substr(-5, 2));
+  });
+
+  test("charAt / at", () => {
+    expect(str.charAt(SAMPLE, 0).toString()).toBe(SAMPLE.charAt(0));
+    expect(str.charAt(SAMPLE, 99).toString()).toBe(SAMPLE.charAt(99));
+    expect(str.at(SAMPLE, -1).toString()).toBe("d");
+  });
+
+  test("trim family matches String#trim*", () => {
+    const padded = "  \t hi there \n ";
+    expect(str.trim(padded).toString()).toBe(padded.trim());
+    expect(str.trimStart(padded).toString()).toBe(padded.trimStart());
+    expect(str.trimEnd(padded).toString()).toBe(padded.trimEnd());
+  });
+
+  test("a view of a view stays anchored to the original data", () => {
+    const w = str.slice(SAMPLE, 7); // "world"
+    expect(w.toString()).toBe("world");
+    expect(w.slice(1, 4).toString()).toBe("orl");
+    expect(w.data).toBe(SAMPLE); // backing string is the GC owner
+  });
+});
+
+describe("str queries", () => {
+  test("length / isEmpty", () => {
+    expect(str.length(SAMPLE)).toBe(SAMPLE.length);
+    expect(str.isEmpty("")).toBe(true);
+    expect(str.slice(SAMPLE, 3, 3).isEmpty).toBe(true);
+  });
+
+  test("charCodeAt / codePointAt", () => {
+    expect(str.charCodeAt(SAMPLE, 0)).toBe(SAMPLE.charCodeAt(0));
+    expect(str.codePointAt("a😀b", 1)).toBe(0x1f600);
+  });
+
+  test("indexOf / lastIndexOf / includes", () => {
+    expect(str.indexOf(SAMPLE, "o")).toBe(SAMPLE.indexOf("o"));
+    expect(str.indexOf(SAMPLE, "o", 6)).toBe(SAMPLE.indexOf("o", 6));
+    expect(str.indexOf(SAMPLE, "zzz")).toBe(-1);
+    expect(str.lastIndexOf(SAMPLE, "o")).toBe(SAMPLE.lastIndexOf("o"));
+    expect(str.includes(SAMPLE, "wor")).toBe(true);
+  });
+
+  test("startsWith / endsWith", () => {
+    expect(str.startsWith(SAMPLE, "hello")).toBe(true);
+    expect(str.startsWith(SAMPLE, "world", 7)).toBe(true);
+    expect(str.endsWith(SAMPLE, "world")).toBe(true);
+    expect(str.endsWith(SAMPLE, "hello", 5)).toBe(true);
+  });
+
+  test("startsWith / endsWith edge cases match native", () => {
+    const probes: string[] = ["", "hello", "world", "hello, world", "xx"];
+    const positions: i32[] = [-3, 0, 3, 5, 12, 99];
+    for (let i = 0; i < probes.length; i++) {
+      const p = probes[i];
+      expect(str.startsWith(SAMPLE, p)).toBe(SAMPLE.startsWith(p));
+      expect(str.endsWith(SAMPLE, p)).toBe(SAMPLE.endsWith(p));
+      for (let j = 0; j < positions.length; j++) {
+        const n = positions[j];
+        expect(str.startsWith(SAMPLE, p, n)).toBe(SAMPLE.startsWith(p, n));
+        expect(str.endsWith(SAMPLE, p, n)).toBe(SAMPLE.endsWith(p, n));
+      }
+    }
+  });
+
+  test("equality and ordering operate on content, not identity", () => {
+    const a = str.slice(SAMPLE, 7); // "world"
+    const b = str.slice("xxworld", 2); // "world", different backing string
+    expect(a.equals(b)).toBe(true);
+    expect(a == b).toBe(true);
+    expect(str.slice("apple", 0) < str.from("banana")).toBe(true);
+    expect(a.equalsString("world")).toBe(true);
+  });
+
+  test("operators: <= >= []", () => {
+    const a: str = str.from("alpha");
+    const b: str = str.from("beta");
+    expect(a <= b).toBe(true);
+    expect(b >= a).toBe(true);
+    expect(a <= str.from("alpha")).toBe(true);
+    expect(a >= str.from("alpha")).toBe(true);
+    expect(str.from("b") >= str.from("a")).toBe(true);
+    // [] indexes a UTF-16 code unit without allocating
+    const v = str.from(SAMPLE);
+    expect(v[0]).toBe(SAMPLE.charCodeAt(0));
+    expect(v[7]).toBe(SAMPLE.charCodeAt(7));
+    expect(v[999]).toBe(-1);
+    // str.* statics are reachable directly too
+    expect(str.slice(SAMPLE, 7).toString()).toBe("world");
+  });
+});
+
+describe("str namespace accepts string OR str", () => {
+  test("primary argument may already be a view", () => {
+    const v: str = str.from(SAMPLE);
+    expect(str.slice(v, 7).toString()).toBe("world");
+    expect(str.length(v)).toBe(SAMPLE.length);
+    expect(str.indexOf(v, "world")).toBe(7);
+  });
+});
+
+describe("allocating helpers match native String", () => {
+  test("case / replace defer to native", () => {
+    expect(str.toUpperCase(SAMPLE)).toBe(SAMPLE.toUpperCase());
+    expect(str.toLowerCase("HeLLo")).toBe("HeLLo".toLowerCase());
+    expect(str.replace("a-b-c", "-", "+")).toBe("a+b-c");
+    expect(str.replaceAll("a-b-c", "-", "+")).toBe("a+b+c");
+  });
+
+  test("concat (built directly on the view)", () => {
+    expect(str.concat("foo", "bar")).toBe("foobar");
+    expect(str.concat("", "bar")).toBe("bar");
+    expect(str.concat("foo", "")).toBe("foo");
+    // operate on a view, not just a whole string
+    expect(str.concat(str.slice("xxfoo", 2), "bar")).toBe("foobar");
+  });
+
+  test("repeat (built directly on the view)", () => {
+    expect(str.repeat("ab", 3)).toBe("ababab");
+    expect(str.repeat("ab", 0)).toBe("");
+    expect(str.repeat("ab", 1)).toBe("ab");
+    expect(str.repeat(str.slice("__xy", 2), 3)).toBe("xyxyxy");
+  });
+
+  test("padStart / padEnd match native across pad widths", () => {
+    const cases: string[] = ["7", "ab", "hello"];
+    const pads: string[] = ["0", ".", "ab", "xyz"];
+    const lens: i32[] = [0, 1, 3, 6, 7, 10];
+    for (let i = 0; i < cases.length; i++) {
+      for (let j = 0; j < pads.length; j++) {
+        for (let k = 0; k < lens.length; k++) {
+          const s = cases[i];
+          const p = pads[j];
+          const n = lens[k];
+          expect(str.padStart(s, n, p)).toBe(s.padStart(n, p));
+          expect(str.padEnd(s, n, p)).toBe(s.padEnd(n, p));
+        }
+      }
+    }
+  });
+});
+
+describe("str instance methods mirror native String", () => {
+  test("materializing instance methods", () => {
+    const v = str.from(SAMPLE); // "hello, world"
+    expect(v.concat("!")).toBe(SAMPLE + "!");
+    expect(v.concat(str.from("?"))).toBe(SAMPLE + "?");
+    expect(str.from("ab").repeat(3)).toBe("ababab");
+    expect(str.from("7").padStart(3, "0")).toBe("007");
+    expect(str.from("7").padEnd(3, "0")).toBe("700");
+    expect(str.from("a-b-c").replace("-", "+")).toBe("a+b-c");
+    expect(str.from("a-b-c").replaceAll("-", "+")).toBe("a+b+c");
+    expect(v.toUpperCase()).toBe(SAMPLE.toUpperCase());
+    expect(v.toLowerCase()).toBe(SAMPLE.toLowerCase());
+  });
+
+  test("trim aliases, localeCompare, + operator, statics", () => {
+    expect(str.from("  hi  ").trimLeft().toString()).toBe("hi  ");
+    expect(str.from("  hi  ").trimRight().toString()).toBe("  hi");
+    expect(str.from("a").localeCompare(str.from("b")) < 0).toBe(true);
+    expect(str.from("a").localeCompare(str.from("a"))).toBe(0);
+    expect((str.from("foo") + str.from("bar")).toString()).toBe("foobar");
+    expect(str.fromCharCode(65).toString()).toBe("A");
+    expect(str.fromCodePoint(0x1f600).toString()).toBe("😀");
+  });
+
+  test("instance split with a limit", () => {
+    const parts = str.from("a,b,c,d").split(",", 2);
+    expect(parts.length).toBe(2);
+    expect(parts[1].toString()).toBe("b");
+  });
+});
+
+describe("str.UTF8 / UTF16 (powered by utf-as)", () => {
+  test("UTF16 round-trips a view's bytes", () => {
+    const backing = "xx héllo, 世界 😀 yy";
+    const view = str.slice(backing, 2, backing.length - 2);
+    const mid = view.toString();
+    expect(str.UTF16.byteLength(view)).toBe(mid.length << 1);
+    const buf = str.UTF16.encode(view);
+    expect(buf.byteLength).toBe(mid.length << 1);
+    expect(str.UTF16.decode(buf).equalsString(mid)).toBe(true);
+    expect(str.UTF16.validate(view)).toBe(true);
+  });
+
+  test("UTF8 encodes a view and round-trips", () => {
+    const backing = "xx héllo, 世界 😀 yy";
+    const view = str.slice(backing, 2, backing.length - 2);
+    const mid = view.toString();
+    const buf = str.UTF8.encode(view);
+    expect(buf.byteLength).toBe(str.UTF8.byteLength(view));
+    expect(str.UTF8.decode(buf).equalsString(mid)).toBe(true);
+  });
+
+  test("MAX_LENGTH matches String.MAX_LENGTH", () => {
+    expect(str.MAX_LENGTH).toBe(String.MAX_LENGTH);
+  });
+});
+
+describe("split returns zero-copy pieces", () => {
+  test("splits on a separator", () => {
+    const parts = str.split("a,bb,ccc", ",");
+    expect(parts.length).toBe(3);
+    expect(parts[0].toString()).toBe("a");
+    expect(parts[1].toString()).toBe("bb");
+    expect(parts[2].toString()).toBe("ccc");
+  });
+
+  test("empty separator yields each code unit", () => {
+    const parts = str.split("abc", "");
+    expect(parts.length).toBe(3);
+    expect(parts[2].toString()).toBe("c");
+  });
+});
