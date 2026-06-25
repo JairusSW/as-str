@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-24
+
+### Changed
+
+- `homepage` now points to the documentation site
+  (<https://docs.jairus.dev/as-str>) instead of the GitHub README.
+
 ## [0.2.0] - 2026-06-24
 
 ### Added
