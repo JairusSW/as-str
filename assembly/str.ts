@@ -1,22 +1,25 @@
 import {
   allocString,
+  asciiCaseFold,
   compare as rangeCompare,
   copyBytes,
   equals as rangeEquals,
   equalsBytes,
   indexOf as rangeIndexOf,
+  isAsciiRange,
   isWhiteSpace,
   lastIndexOf as rangeLastIndexOf,
   materialize,
   unitLength,
 } from "./util";
 import { UTF8 as U8, UTF16 as U16 } from "utf-as";
+import { Str8 } from "./str8";
 
 /**
  * A virtual (zero-copy) string: a lightweight view into an existing real
  * `string`.
  *
- * A `str` holds a backing `string` (the GC owner of the bytes) plus a
+ * A `Str` holds a backing `string` (the GC owner of the bytes) plus a
  * `[start, end)` pair of raw byte pointers describing the slice of that string
  * it represents. View-producing operations (`slice`, `substring`, `charAt`,
  * `trim`, `split`, the `[]`/`+` operators, …) merely move pointers and copy no
@@ -28,10 +31,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
  *
  * The same class is both the type and the API surface. Instance methods operate
  * on a view (`v.slice(2)`), while the mirrored static free-functions accept a
- * `string` or a `str` as their first argument (`str.slice(s, 2)`).
+ * `string` or a `Str` as their first argument (`Str.slice(s, 2)`).
  */
 // @ts-ignore: decorator
-@final export class str {
+@final export class Str {
   /**
    * Construct a view directly from a backing string and raw byte pointers.
    *
@@ -51,9 +54,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param s - backing string to view.
    * @returns A view covering all of `s` (no copy).
    */
-  static from(s: string): str {
+  static from(s: string): Str {
     const ptr = changetype<usize>(s);
-    return new str(s, ptr, ptr + ((<usize>s.length) << 1));
+    return new Str(s, ptr, ptr + ((<usize>s.length) << 1));
   }
 
   /**
@@ -64,12 +67,13 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param end   - exclusive end code-unit index.
    * @returns A view of `s` covering `[start, end)` (no copy).
    */
-  static fromRange(s: string, start: i32, end: i32): str {
+  static fromRange(s: string, start: i32, end: i32): Str {
     const base = changetype<usize>(s);
-    return new str(s, base + ((<usize>start) << 1), base + ((<usize>end) << 1));
+    return new Str(s, base + ((<usize>start) << 1), base + ((<usize>end) << 1));
   }
 
   /** Maximum length of a backing string, mirroring `String.MAX_LENGTH`. */
+  // @ts-expect-error: exists in asc (the editor resolves the JS String)
   static readonly MAX_LENGTH: i32 = String.MAX_LENGTH;
 
   // Mirrors of the native `String` static constructors, returning a view over a
@@ -82,8 +86,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param surr - optional low surrogate code unit, or -1 for none.
    * @returns A view over a freshly allocated string.
    */
-  static fromCharCode(unit: i32, surr: i32 = -1): str {
-    return str.from(String.fromCharCode(unit, surr));
+  static fromCharCode(unit: i32, surr: i32 = -1): Str {
+    return Str.from(String.fromCharCode(unit, surr));
   }
   /**
    * Build a string from an array of UTF-16 code units, then view it.
@@ -91,8 +95,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param units - code units to assemble.
    * @returns A view over a freshly allocated string.
    */
-  static fromCharCodes(units: Array<i32>): str {
-    return str.from(String.fromCharCodes(units));
+  static fromCharCodes(units: Array<i32>): Str {
+    return Str.from(String.fromCharCodes(units));
   }
   /**
    * Build a string from a single Unicode code point, then view it.
@@ -100,8 +104,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param code - Unicode code point.
    * @returns A view over a freshly allocated string.
    */
-  static fromCodePoint(code: i32): str {
-    return str.from(String.fromCodePoint(code));
+  static fromCodePoint(code: i32): Str {
+    return Str.from(String.fromCodePoint(code));
   }
 
   /** Length of the view in UTF-16 code units. */
@@ -132,12 +136,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     end: usize,
     lo0: i32,
     hi0: i32,
-  ): str {
+  ): Str {
     const len = unitLength(start, end);
     let lo = lo0 < 0 ? max(len + lo0, 0) : min(lo0, len);
     let hi = hi0 < 0 ? max(len + hi0, 0) : min(hi0, len);
     if (hi < lo) hi = lo;
-    return new str(
+    return new Str(
       data,
       start + ((<usize>lo) << 1),
       start + ((<usize>hi) << 1),
@@ -162,7 +166,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     end: usize,
     lo0: i32,
     hi0: i32,
-  ): str {
+  ): Str {
     const len = unitLength(start, end);
     let lo = lo0 < 0 ? 0 : min(lo0, len);
     let hi = hi0 < 0 ? 0 : min(hi0, len);
@@ -171,7 +175,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
       lo = hi;
       hi = t;
     }
-    return new str(
+    return new Str(
       data,
       start + ((<usize>lo) << 1),
       start + ((<usize>hi) << 1),
@@ -196,11 +200,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     end: usize,
     start0: i32,
     length: i32,
-  ): str {
+  ): Str {
     const len = unitLength(start, end);
     let lo = start0 < 0 ? max(len + start0, 0) : min(start0, len);
     let count = length < 0 ? 0 : min(length, len - lo);
-    return new str(
+    return new Str(
       data,
       start + ((<usize>lo) << 1),
       start + ((<usize>(lo + count)) << 1),
@@ -217,12 +221,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A single-code-unit view, or an empty view if out of range.
    * @internal
    */
-  static charAtRange(data: string, start: usize, end: usize, index: i32): str {
+  static charAtRange(data: string, start: usize, end: usize, index: i32): Str {
     if (<u32>index >= <u32>unitLength(start, end)) {
-      return new str(data, start, start);
+      return new Str(data, start, start);
     }
     const at = start + ((<usize>index) << 1);
-    return new str(data, at, at + 2);
+    return new Str(data, at, at + 2);
   }
 
   /**
@@ -235,14 +239,14 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A single-code-unit view, or an empty view if out of range.
    * @internal
    */
-  static atRange(data: string, start: usize, end: usize, index: i32): str {
+  static atRange(data: string, start: usize, end: usize, index: i32): Str {
     const len = unitLength(start, end);
     if (index < 0) index += len;
     if (<u32>index >= <u32>len) {
-      return new str(data, start, start);
+      return new Str(data, start, start);
     }
     const at = start + ((<usize>index) << 1);
-    return new str(data, at, at + 2);
+    return new Str(data, at, at + 2);
   }
 
   /**
@@ -254,10 +258,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view with leading whitespace removed (no copy).
    * @internal
    */
-  static trimStartRange(data: string, start: usize, end: usize): str {
+  static trimStartRange(data: string, start: usize, end: usize): Str {
     let p = start;
     while (p < end && isWhiteSpace(load<u16>(p))) p += 2;
-    return new str(data, p, end);
+    return new Str(data, p, end);
   }
 
   /**
@@ -269,10 +273,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view with trailing whitespace removed (no copy).
    * @internal
    */
-  static trimEndRange(data: string, start: usize, end: usize): str {
+  static trimEndRange(data: string, start: usize, end: usize): Str {
     let p = end;
     while (p > start && isWhiteSpace(load<u16>(p - 2))) p -= 2;
-    return new str(data, start, p);
+    return new Str(data, start, p);
   }
 
   /**
@@ -285,12 +289,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view with surrounding whitespace removed (no copy).
    * @internal
    */
-  static trimRange(data: string, start: usize, end: usize): str {
+  static trimRange(data: string, start: usize, end: usize): Str {
     let lo = start;
     let hi = end;
     while (lo < hi && isWhiteSpace(load<u16>(lo))) lo += 2;
     while (hi > lo && isWhiteSpace(load<u16>(hi - 2))) hi -= 2;
-    return new str(data, lo, hi);
+    return new Str(data, lo, hi);
   }
 
   /**
@@ -382,7 +386,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     return equalsBytes(start + ((<usize>lo) << 1), nStart, nBytes);
   }
 
-  // ---- view-producing methods (return a str) ---------------------------
+  // ---- view-producing methods (return a Str) ---------------------------
 
   /**
    * Return a section of the view. Negative indices count from the end.
@@ -391,8 +395,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param end   - end code-unit index, exclusive; defaults to the view's end.
    * @returns A view of the slice (no copy).
    */
-  slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
-    return str.sliceRange(this.data, this.start, this.end, start, end);
+  slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+    return Str.sliceRange(this.data, this.start, this.end, start, end);
   }
 
   /**
@@ -404,8 +408,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *                end.
    * @returns A view of the substring (no copy).
    */
-  substring(start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
-    return str.substringRange(this.data, this.start, this.end, start, end);
+  substring(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+    return Str.substringRange(this.data, this.start, this.end, start, end);
   }
 
   /**
@@ -416,8 +420,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param length - number of code units to include.
    * @returns A view of the substring (no copy).
    */
-  substr(start: i32 = 0, length: i32 = i32.MAX_VALUE): str {
-    return str.substrRange(this.data, this.start, this.end, start, length);
+  substr(start: i32 = 0, length: i32 = i32.MAX_VALUE): Str {
+    return Str.substrRange(this.data, this.start, this.end, start, length);
   }
 
   /**
@@ -427,20 +431,20 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A single-code-unit view, or an empty view if `index` is out of
    *          range (no copy).
    */
-  charAt(index: i32): str {
-    return str.charAtRange(this.data, this.start, this.end, index);
+  charAt(index: i32): Str {
+    return Str.charAtRange(this.data, this.start, this.end, index);
   }
 
   /**
-   * Like {@link str#charAt} but supports negative indices counting from the
+   * Like {@link Str#charAt} but supports negative indices counting from the
    * end.
    *
    * @param index - code-unit index (negative counts from the end).
    * @returns A single-code-unit view, or an empty view if out of range (no
    *          copy).
    */
-  at(index: i32): str {
-    return str.atRange(this.data, this.start, this.end, index);
+  at(index: i32): Str {
+    return Str.atRange(this.data, this.start, this.end, index);
   }
 
   /**
@@ -448,8 +452,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *
    * @returns A view with leading whitespace removed (no copy).
    */
-  trimStart(): str {
-    return str.trimStartRange(this.data, this.start, this.end);
+  trimStart(): Str {
+    return Str.trimStartRange(this.data, this.start, this.end);
   }
 
   /**
@@ -457,8 +461,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *
    * @returns A view with trailing whitespace removed (no copy).
    */
-  trimEnd(): str {
-    return str.trimEndRange(this.data, this.start, this.end);
+  trimEnd(): Str {
+    return Str.trimEndRange(this.data, this.start, this.end);
   }
 
   /**
@@ -466,26 +470,26 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    *
    * @returns A view with surrounding whitespace removed (no copy).
    */
-  trim(): str {
-    return str.trimRange(this.data, this.start, this.end);
+  trim(): Str {
+    return Str.trimRange(this.data, this.start, this.end);
   }
 
   /**
-   * Alias of {@link str#trimStart}, matching native `String#trimLeft`.
+   * Alias of {@link Str#trimStart}, matching native `String#trimLeft`.
    *
    * @returns A view with leading whitespace removed (no copy).
    */
-  trimLeft(): str {
-    return str.trimStartRange(this.data, this.start, this.end);
+  trimLeft(): Str {
+    return Str.trimStartRange(this.data, this.start, this.end);
   }
 
   /**
-   * Alias of {@link str#trimEnd}, matching native `String#trimRight`.
+   * Alias of {@link Str#trimEnd}, matching native `String#trimRight`.
    *
    * @returns A view with trailing whitespace removed (no copy).
    */
-  trimRight(): str {
-    return str.trimEndRange(this.data, this.start, this.end);
+  trimRight(): Str {
+    return Str.trimEndRange(this.data, this.start, this.end);
   }
 
   // ---- query methods -------------------------------------------------------
@@ -497,7 +501,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns The code unit, or -1 if there is no code unit at `index`.
    */
   charCodeAt(index: i32): i32 {
-    return str.charCodeAtRange(this.start, this.end, index);
+    return Str.charCodeAtRange(this.start, this.end, index);
   }
 
   /**
@@ -507,14 +511,14 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns The code point, or -1 if `index` is out of range.
    */
   codePointAt(index: i32): i32 {
-    return str.codePointAtRange(this.start, this.end, index);
+    return Str.codePointAtRange(this.start, this.end, index);
   }
 
   /**
    * Return the index of the first occurrence of `search`, or -1 if absent.
    * Searching for an empty string returns 0.
    *
-   * @param search - substring to search for; a `string` or a `str`.
+   * @param search - substring to search for; a `string` or a `Str`.
    * @param start  - code-unit index to begin searching from; negative clamps to
    *                 0.
    * @returns The first matching code-unit index, or -1.
@@ -533,7 +537,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * Return the index of the last occurrence of `search`, or -1 if absent.
    * Searching for an empty string returns the view's length.
    *
-   * @param search - substring to search for; a `string` or a `str`.
+   * @param search - substring to search for; a `string` or a `Str`.
    * @param start  - code-unit index to begin searching backwards from.
    * @returns The last matching code-unit index, or -1.
    */
@@ -550,7 +554,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   /**
    * Whether the view contains `search`.
    *
-   * @param search - substring to look for; a `string` or a `str`.
+   * @param search - substring to look for; a `string` or a `Str`.
    * @returns `true` if `search` occurs in the view.
    */
   includes<U>(search: U): bool {
@@ -560,12 +564,12 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   /**
    * Whether the view begins with `search` at the given offset.
    *
-   * @param search - prefix to test; a `string` or a `str`.
+   * @param search - prefix to test; a `string` or a `Str`.
    * @param start  - code-unit offset to test at; defaults to 0.
    * @returns `true` if the view starts with `search` at `start`.
    */
   startsWith<U>(search: U, start: i32 = 0): bool {
-    return str.startsWithRange(
+    return Str.startsWithRange(
       this.start,
       this.end,
       bStart(search),
@@ -577,13 +581,13 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   /**
    * Whether the view ends with `search` at the given position.
    *
-   * @param search - suffix to test; a `string` or a `str`.
+   * @param search - suffix to test; a `string` or a `Str`.
    * @param end    - code-unit position the match must end at; defaults to the
    *                 view's length.
    * @returns `true` if the view ends with `search` at `end`.
    */
   endsWith<U>(search: U, end: i32 = i32.MAX_VALUE): bool {
-    return str.endsWithRange(
+    return Str.endsWithRange(
       this.start,
       this.end,
       bStart(search),
@@ -598,7 +602,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param other - view to compare against.
    * @returns `true` if both views hold the same code units.
    */
-  equals(other: str): bool {
+  equals(other: Str): bool {
     return rangeEquals(this.start, this.end, other.start, other.end);
   }
 
@@ -625,7 +629,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A negative, zero, or positive value if this view sorts before,
    *          equal to, or after `other`.
    */
-  compareTo(other: str): i32 {
+  compareTo(other: Str): i32 {
     return rangeCompare(this.start, this.end, other.start, other.end);
   }
 
@@ -637,18 +641,18 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A negative, zero, or positive value if this view sorts before,
    *          equal to, or after `other`.
    */
-  localeCompare(other: str): i32 {
+  localeCompare(other: Str): i32 {
     return rangeCompare(this.start, this.end, other.start, other.end);
   }
 
   /**
    * Concatenate `other` onto the end of the view.
    *
-   * @param other - value to append; a `string` or a `str`.
+   * @param other - value to append; a `string` or a `Str`.
    * @returns A freshly allocated real `string`.
    */
   concat<U>(other: U): string {
-    return str.concat<str, U>(this, other);
+    return Str.concat<Str, U>(this, other);
   }
 
   /**
@@ -658,7 +662,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   repeat(count: i32 = 0): string {
-    return str.repeat<str>(this, count);
+    return Str.repeat<Str>(this, count);
   }
 
   /**
@@ -670,7 +674,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   padStart(length: i32, pad: string = " "): string {
-    return str.padStart<str>(this, length, pad);
+    return Str.padStart<Str>(this, length, pad);
   }
 
   /**
@@ -682,7 +686,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   padEnd(length: i32, pad: string = " "): string {
-    return str.padEnd<str>(this, length, pad);
+    return Str.padEnd<Str>(this, length, pad);
   }
 
   /**
@@ -693,7 +697,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   replace(search: string, replacement: string): string {
-    return str.replace<str>(this, search, replacement);
+    return Str.replace<Str>(this, search, replacement);
   }
 
   /**
@@ -704,7 +708,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   replaceAll(search: string, replacement: string): string {
-    return str.replaceAll<str>(this, search, replacement);
+    return Str.replaceAll<Str>(this, search, replacement);
   }
 
   /**
@@ -713,7 +717,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   toLowerCase(): string {
-    return str.toLowerCase<str>(this);
+    return Str.toLowerCase<Str>(this);
   }
 
   /**
@@ -722,7 +726,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A freshly allocated real `string`.
    */
   toUpperCase(): string {
-    return str.toUpperCase<str>(this);
+    return Str.toUpperCase<Str>(this);
   }
 
   /**
@@ -732,40 +736,40 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @param separator - string to split on; an empty separator splits into
    *                    single code units.
    * @param limit     - maximum number of pieces to return.
-   * @returns An array of `str` views (no character copying).
+   * @returns An array of `Str` views (no character copying).
    */
-  split(separator: string, limit: i32 = i32.MAX_VALUE): str[] {
-    return str.split<str>(this, separator, limit);
+  split(separator: string, limit: i32 = i32.MAX_VALUE): Str[] {
+    return Str.split<Str>(this, separator, limit);
   }
 
   /** `a == b` - content equality of two views. */
   // @ts-ignore: decorator
-  @operator("==") static __eq(a: str, b: str): bool {
+  @operator("==") static __eq(a: Str, b: Str): bool {
     return a.equals(b);
   }
   /** `a != b` - content inequality of two views. */
   // @ts-ignore: decorator
-  @operator("!=") static __ne(a: str, b: str): bool {
+  @operator("!=") static __ne(a: Str, b: Str): bool {
     return !a.equals(b);
   }
   /** `a < b` - `true` if `a` sorts before `b` by code-unit ordering. */
   // @ts-ignore: decorator
-  @operator("<") static __lt(a: str, b: str): bool {
+  @operator("<") static __lt(a: Str, b: Str): bool {
     return a.compareTo(b) < 0;
   }
   /** `a <= b` - `true` if `a` sorts before or equal to `b` by code unit. */
   // @ts-ignore: decorator
-  @operator("<=") static __le(a: str, b: str): bool {
+  @operator("<=") static __le(a: Str, b: Str): bool {
     return a.compareTo(b) <= 0;
   }
   /** `a > b` - `true` if `a` sorts after `b` by code-unit ordering. */
   // @ts-ignore: decorator
-  @operator(">") static __gt(a: str, b: str): bool {
+  @operator(">") static __gt(a: Str, b: Str): bool {
     return a.compareTo(b) > 0;
   }
   /** `a >= b` - `true` if `a` sorts after or equal to `b` by code unit. */
   // @ts-ignore: decorator
-  @operator(">=") static __ge(a: str, b: str): bool {
+  @operator(">=") static __ge(a: Str, b: Str): bool {
     return a.compareTo(b) >= 0;
   }
 
@@ -777,8 +781,8 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    * @returns A view over the newly allocated concatenation.
    */
   // @ts-ignore: decorator
-  @operator("+") static __add(a: str, b: str): str {
-    return str.from(str.concat<str, str>(a, b));
+  @operator("+") static __add(a: Str, b: Str): Str {
+    return Str.from(Str.concat<Str, Str>(a, b));
   }
 
   /**
@@ -789,7 +793,7 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
    */
   // @ts-ignore: decorator
   @operator("[]") __get(index: i32): i32 {
-    return str.charCodeAtRange(this.start, this.end, index);
+    return Str.charCodeAtRange(this.start, this.end, index);
   }
 
   /**
@@ -801,125 +805,135 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     return materialize(this.start, this.end);
   }
 
+  /** Identity conversion - this view is already a `str`. */
+  toStr(): Str {
+    return this;
+  }
+
+  /** Transcode this UTF-16 view into a UTF-8 {@link str8} (allocates). */
+  toStr8(): Str8 {
+    return Str8.from(this.toString());
+  }
+
   /**
-   * Free-function form of {@link str#slice}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#slice}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param start - start code-unit index (negative counts from the end).
    * @param end   - end code-unit index, exclusive.
    * @returns A view of the slice (no copy).
    */
-  static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
-    return str.sliceRange(bData(s), bStart(s), bEnd(s), start, end);
+  static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+    return Str.sliceRange(bData(s), bStart(s), bEnd(s), start, end);
   }
 
   /**
-   * Free-function form of {@link str#substring}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#substring}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param start - first code-unit index.
    * @param end   - second code-unit index, exclusive.
    * @returns A view of the substring (no copy).
    */
-  static substring<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): str {
-    return str.substringRange(bData(s), bStart(s), bEnd(s), start, end);
+  static substring<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+    return Str.substringRange(bData(s), bStart(s), bEnd(s), start, end);
   }
 
   /**
-   * Free-function form of {@link str#substr}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#substr}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
    * @param start  - start code-unit index (negative counts from the end).
    * @param length - number of code units to include.
    * @returns A view of the substring (no copy).
    */
-  static substr<T>(s: T, start: i32 = 0, length: i32 = i32.MAX_VALUE): str {
-    return str.substrRange(bData(s), bStart(s), bEnd(s), start, length);
+  static substr<T>(s: T, start: i32 = 0, length: i32 = i32.MAX_VALUE): Str {
+    return Str.substrRange(bData(s), bStart(s), bEnd(s), start, length);
   }
 
   /**
-   * Free-function form of {@link str#charAt}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#charAt}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param index - zero-based code-unit index.
    * @returns A single-code-unit view, or an empty view if out of range.
    */
-  static charAt<T>(s: T, index: i32): str {
-    return str.charAtRange(bData(s), bStart(s), bEnd(s), index);
+  static charAt<T>(s: T, index: i32): Str {
+    return Str.charAtRange(bData(s), bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link str#at}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#at}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param index - code-unit index (negative counts from the end).
    * @returns A single-code-unit view, or an empty view if out of range.
    */
-  static at<T>(s: T, index: i32): str {
-    return str.atRange(bData(s), bStart(s), bEnd(s), index);
+  static at<T>(s: T, index: i32): Str {
+    return Str.atRange(bData(s), bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link str#trim}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#trim}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns A view with surrounding whitespace removed (no copy).
    */
-  static trim<T>(s: T): str {
-    return str.trimRange(bData(s), bStart(s), bEnd(s));
+  static trim<T>(s: T): Str {
+    return Str.trimRange(bData(s), bStart(s), bEnd(s));
   }
 
   /**
-   * Free-function form of {@link str#trimStart}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#trimStart}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns A view with leading whitespace removed (no copy).
    */
-  static trimStart<T>(s: T): str {
-    return str.trimStartRange(bData(s), bStart(s), bEnd(s));
+  static trimStart<T>(s: T): Str {
+    return Str.trimStartRange(bData(s), bStart(s), bEnd(s));
   }
 
   /**
-   * Free-function form of {@link str#trimEnd}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#trimEnd}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns A view with trailing whitespace removed (no copy).
    */
-  static trimEnd<T>(s: T): str {
-    return str.trimEndRange(bData(s), bStart(s), bEnd(s));
+  static trimEnd<T>(s: T): Str {
+    return Str.trimEndRange(bData(s), bStart(s), bEnd(s));
   }
 
   /**
-   * Free-function form of {@link str#split}; `s` may be a `string` or a
-   * `str`. Each piece is a zero-copy view.
+   * Free-function form of {@link Str#split}; `s` may be a `string` or a
+   * `Str`. Each piece is a zero-copy view.
    *
-   * @param s         - source; a `string` or a `str`.
+   * @param s         - source; a `string` or a `Str`.
    * @param separator - string to split on; an empty separator splits into
    *                    single code units.
    * @param limit     - maximum number of pieces to return.
-   * @returns An array of `str` views (no character copying).
+   * @returns An array of `Str` views (no character copying).
    */
-  static split<T>(s: T, separator: string, limit: i32 = i32.MAX_VALUE): str[] {
+  static split<T>(s: T, separator: string, limit: i32 = i32.MAX_VALUE): Str[] {
     const data = bData(s);
     const start = bStart(s);
     const end = bEnd(s);
     const total = unitLength(start, end);
-    const out = new Array<str>();
+    const out = new Array<Str>();
     if (limit <= 0) return out;
 
     const sepLen = separator.length;
     if (sepLen == 0) {
       const n = total < limit ? total : limit;
       for (let i = 0; i < n; i++) {
-        out.push(str.sliceRange(data, start, end, i, i + 1));
+        out.push(Str.sliceRange(data, start, end, i, i + 1));
       }
       return out;
     }
@@ -930,21 +944,21 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
     let idx = rangeIndexOf(start, end, sp, spEnd, from);
     while (idx != -1) {
       if (out.length >= limit) return out;
-      out.push(str.sliceRange(data, start, end, from, idx));
+      out.push(Str.sliceRange(data, start, end, from, idx));
       from = idx + sepLen;
       idx = rangeIndexOf(start, end, sp, spEnd, from);
     }
     if (out.length < limit) {
-      out.push(str.sliceRange(data, start, end, from, total));
+      out.push(Str.sliceRange(data, start, end, from, total));
     }
     return out;
   }
 
   /**
-   * Length in UTF-16 code units. Free-function form of {@link str#length};
-   * `s` may be a `string` or a `str`.
+   * Length in UTF-16 code units. Free-function form of {@link Str#length};
+   * `s` may be a `string` or a `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns The code-unit length.
    */
   static length<T>(s: T): i32 {
@@ -952,10 +966,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#isEmpty}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#isEmpty}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns `true` if `s` has zero code units.
    */
   static isEmpty<T>(s: T): bool {
@@ -963,35 +977,35 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#charCodeAt}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#charCodeAt}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param index - zero-based code-unit index.
    * @returns The code unit, or -1 if out of range.
    */
   static charCodeAt<T>(s: T, index: i32): i32 {
-    return str.charCodeAtRange(bStart(s), bEnd(s), index);
+    return Str.charCodeAtRange(bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link str#codePointAt}; `s` may be a `string` or
-   * a `str`.
+   * Free-function form of {@link Str#codePointAt}; `s` may be a `string` or
+   * a `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param index - zero-based code-unit index.
    * @returns The code point, or -1 if out of range.
    */
   static codePointAt<T>(s: T, index: i32): i32 {
-    return str.codePointAtRange(bStart(s), bEnd(s), index);
+    return Str.codePointAtRange(bStart(s), bEnd(s), index);
   }
 
   /**
-   * Free-function form of {@link str#indexOf}; `s` and `search` may each be
-   * a `string` or a `str`.
+   * Free-function form of {@link Str#indexOf}; `s` and `search` may each be
+   * a `string` or a `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
-   * @param search - substring to search for; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
+   * @param search - substring to search for; a `string` or a `Str`.
    * @param start  - code-unit index to begin searching from.
    * @returns The first matching code-unit index, or -1.
    */
@@ -1006,11 +1020,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#lastIndexOf}; `s` and `search` may each
-   * be a `string` or a `str`.
+   * Free-function form of {@link Str#lastIndexOf}; `s` and `search` may each
+   * be a `string` or a `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
-   * @param search - substring to search for; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
+   * @param search - substring to search for; a `string` or a `Str`.
    * @param start  - code-unit index to begin searching backwards from.
    * @returns The last matching code-unit index, or -1.
    */
@@ -1025,28 +1039,28 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#includes}; `s` and `search` may each be
-   * a `string` or a `str`.
+   * Free-function form of {@link Str#includes}; `s` and `search` may each be
+   * a `string` or a `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
-   * @param search - substring to look for; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
+   * @param search - substring to look for; a `string` or a `Str`.
    * @returns `true` if `search` occurs in `s`.
    */
   static includes<T, U>(s: T, search: U): bool {
-    return str.indexOf(s, search) != -1;
+    return Str.indexOf(s, search) != -1;
   }
 
   /**
-   * Free-function form of {@link str#startsWith}; `s` and `search` may each
-   * be a `string` or a `str`.
+   * Free-function form of {@link Str#startsWith}; `s` and `search` may each
+   * be a `string` or a `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
-   * @param search - prefix to test; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
+   * @param search - prefix to test; a `string` or a `Str`.
    * @param start  - code-unit offset to test at.
    * @returns `true` if `s` starts with `search` at `start`.
    */
   static startsWith<T, U>(s: T, search: U, start: i32 = 0): bool {
-    return str.startsWithRange(
+    return Str.startsWithRange(
       bStart(s),
       bEnd(s),
       bStart(search),
@@ -1056,16 +1070,16 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#endsWith}; `s` and `search` may each be
-   * a `string` or a `str`.
+   * Free-function form of {@link Str#endsWith}; `s` and `search` may each be
+   * a `string` or a `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
-   * @param search - suffix to test; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
+   * @param search - suffix to test; a `string` or a `Str`.
    * @param end    - code-unit position the match must end at.
    * @returns `true` if `s` ends with `search` at `end`.
    */
   static endsWith<T, U>(s: T, search: U, end: i32 = i32.MAX_VALUE): bool {
-    return str.endsWithRange(
+    return Str.endsWithRange(
       bStart(s),
       bEnd(s),
       bStart(search),
@@ -1075,11 +1089,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Content equality. Free-function form of {@link str#equals}; both
-   * operands may each be a `string` or a `str`.
+   * Content equality. Free-function form of {@link Str#equals}; both
+   * operands may each be a `string` or a `Str`.
    *
-   * @param a - first operand; a `string` or a `str`.
-   * @param b - second operand; a `string` or a `str`.
+   * @param a - first operand; a `string` or a `Str`.
+   * @param b - second operand; a `string` or a `Str`.
    * @returns `true` if both hold the same code units.
    */
   static equals<T, U>(a: T, b: U): bool {
@@ -1087,11 +1101,11 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Code-unit ordering. Free-function form of {@link str#compareTo}; both
-   * operands may each be a `string` or a `str`.
+   * Code-unit ordering. Free-function form of {@link Str#compareTo}; both
+   * operands may each be a `string` or a `Str`.
    *
-   * @param a - first operand; a `string` or a `str`.
-   * @param b - second operand; a `string` or a `str`.
+   * @param a - first operand; a `string` or a `Str`.
+   * @param b - second operand; a `string` or a `Str`.
    * @returns A negative, zero, or positive value if `a` sorts before, equal to,
    *          or after `b`.
    */
@@ -1101,9 +1115,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Materialize into a real `string`. Free-function form of
-   * {@link str#toString}; `s` may be a `string` or a `str`.
+   * {@link Str#toString}; `s` may be a `string` or a `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns A freshly allocated, owned `string`.
    */
   static toString<T>(s: T): string {
@@ -1111,32 +1125,52 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#toUpperCase}; `s` may be a `string` or
-   * a `str`.
+   * Free-function form of {@link Str#toUpperCase}; `s` may be a `string` or
+   * a `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns A freshly allocated uppercased `string`.
    */
   static toUpperCase<T>(s: T): string {
-    return materialize(bStart(s), bEnd(s)).toUpperCase();
+    const start = bStart(s);
+    const end = bEnd(s);
+    // ASCII fast path: fold a-z in one allocate-and-scan pass, skipping the
+    // materialize + Unicode-aware native call. Non-ASCII defers to native.
+    if (isAsciiRange(start, end)) {
+      const bytes = end - start;
+      const out = allocString(bytes);
+      asciiCaseFold(changetype<usize>(out), start, bytes, 0x61, 0x7a, -0x20);
+      return out;
+    }
+    return materialize(start, end).toUpperCase();
   }
 
   /**
-   * Free-function form of {@link str#toLowerCase}; `s` may be a `string` or
-   * a `str`.
+   * Free-function form of {@link Str#toLowerCase}; `s` may be a `string` or
+   * a `Str`.
    *
-   * @param s - source; a `string` or a `str`.
+   * @param s - source; a `string` or a `Str`.
    * @returns A freshly allocated lowercased `string`.
    */
   static toLowerCase<T>(s: T): string {
-    return materialize(bStart(s), bEnd(s)).toLowerCase();
+    const start = bStart(s);
+    const end = bEnd(s);
+    // ASCII fast path: fold A-Z in one allocate-and-scan pass, skipping the
+    // materialize + Unicode-aware native call. Non-ASCII defers to native.
+    if (isAsciiRange(start, end)) {
+      const bytes = end - start;
+      const out = allocString(bytes);
+      asciiCaseFold(changetype<usize>(out), start, bytes, 0x41, 0x5a, 0x20);
+      return out;
+    }
+    return materialize(start, end).toLowerCase();
   }
 
   /**
-   * Free-function form of {@link str#repeat}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#repeat}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s     - source; a `string` or a `str`.
+   * @param s     - source; a `string` or a `Str`.
    * @param count - number of copies; `0` (or less) yields the empty string.
    * @returns A freshly allocated real `string`.
    */
@@ -1154,10 +1188,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#padStart}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#padStart}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
    * @param length - target length; if not greater than the current length the
    *                 source is returned unchanged.
    * @param pad    - string to pad with; truncated to fit. Defaults to `" "`.
@@ -1176,10 +1210,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
   }
 
   /**
-   * Free-function form of {@link str#padEnd}; `s` may be a `string` or a
-   * `str`.
+   * Free-function form of {@link Str#padEnd}; `s` may be a `string` or a
+   * `Str`.
    *
-   * @param s      - source; a `string` or a `str`.
+   * @param s      - source; a `string` or a `Str`.
    * @param length - target length; if not greater than the current length the
    *                 source is returned unchanged.
    * @param pad    - string to pad with; truncated to fit. Defaults to `" "`.
@@ -1200,10 +1234,10 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Concatenate two values into a freshly owned string. Free-function form of
-   * {@link str#concat}; both operands may each be a `string` or a `str`.
+   * {@link Str#concat}; both operands may each be a `string` or a `Str`.
    *
-   * @param s     - left operand; a `string` or a `str`.
-   * @param other - right operand; a `string` or a `str`.
+   * @param s     - left operand; a `string` or a `Str`.
+   * @param other - right operand; a `string` or a `Str`.
    * @returns A freshly allocated real `string`.
    */
   static concat<T, U>(s: T, other: U): string {
@@ -1220,9 +1254,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Replace the first occurrence of `search`. Free-function form of
-   * {@link str#replace}; `s` may be a `string` or a `str`.
+   * {@link Str#replace}; `s` may be a `string` or a `Str`.
    *
-   * @param s           - source; a `string` or a `str`.
+   * @param s           - source; a `string` or a `Str`.
    * @param search      - substring to search for.
    * @param replacement - text to substitute for the first match.
    * @returns A freshly allocated real `string`.
@@ -1254,9 +1288,9 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 
   /**
    * Replace every occurrence of `search`. Free-function form of
-   * {@link str#replaceAll}; `s` may be a `string` or a `str`.
+   * {@link Str#replaceAll}; `s` may be a `string` or a `Str`.
    *
-   * @param s           - source; a `string` or a `str`.
+   * @param s           - source; a `string` or a `Str`.
    * @param search      - substring to search for.
    * @param replacement - text to substitute for each match.
    * @returns A freshly allocated real `string`.
@@ -1307,20 +1341,20 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 // @ts-ignore: decorator
 @inline function bData<T>(s: T): string {
   if (isString<T>()) return changetype<string>(s);
-  return changetype<str>(s).data;
+  return changetype<Str>(s).data;
 }
 // @ts-ignore: decorator
 @inline function bStart<T>(s: T): usize {
   if (isString<T>()) return changetype<usize>(changetype<string>(s));
-  return changetype<str>(s).start;
+  return changetype<Str>(s).start;
 }
 // @ts-ignore: decorator
 @inline function bEnd<T>(s: T): usize {
   if (isString<T>()) {
-    const str = changetype<string>(s);
-    return changetype<usize>(str) + ((<usize>str.length) << 1);
+    const Str = changetype<string>(s);
+    return changetype<usize>(Str) + ((<usize>Str.length) << 1);
   }
-  return changetype<str>(s).end;
+  return changetype<Str>(s).end;
 }
 
 function fillRepeat(dst: usize, count: i32, pad: string): i32 {
@@ -1338,17 +1372,17 @@ function fillRepeat(dst: usize, count: i32, pad: string): i32 {
 }
 
 /**
- * Encoding helpers merged onto `str`, mirroring `String.UTF8` and
- * `String.UTF16`. Functions accept either a `string` or a `str` as input.
+ * Encoding helpers merged onto `Str`, mirroring `String.UTF8` and
+ * `String.UTF16`. Functions accept either a `string` or a `Str` as input.
  */
-// Encoding namespaces, merged onto `str` (mirror `String.UTF8`/`String.UTF16`).
-export namespace str {
+// Encoding namespaces, merged onto `Str` (mirror `String.UTF8`/`String.UTF16`).
+export namespace Str {
   /** UTF-16 encoding/decoding for views and strings. */
   export namespace UTF16 {
     /**
      * Number of bytes the view occupies when UTF-16 encoded.
      *
-     * @param s - source; a `string` or a `str`.
+     * @param s - source; a `string` or a `Str`.
      * @returns The byte length (two bytes per code unit).
      */
     export function byteLength<T>(s: T): i32 {
@@ -1357,21 +1391,22 @@ export namespace str {
     /**
      * Encode the view to a new UTF-16 `ArrayBuffer`.
      *
-     * @param s - source; a `string` or a `str`.
+     * @param s - source; a `string` or a `Str`.
      * @returns A freshly allocated `ArrayBuffer` of the encoded bytes.
      */
     export function encode<T>(s: T): ArrayBuffer {
       const start = bStart(s);
       const bytes = bEnd(s) - start;
+      // @ts-expect-error: exists
       const buf = changetype<ArrayBuffer>(__new(bytes, idof<ArrayBuffer>()));
       U16.encodeUnsafe(start, <i32>(bytes >> 1), changetype<usize>(buf));
       return buf;
     }
     /**
-     * Encode `len` UTF-16 code units from `str` into the caller-owned buffer at
+     * Encode `len` UTF-16 code units from `Str` into the caller-owned buffer at
      * `buf`.
      *
-     * @param str - pointer to the source code units.
+     * @param Str - pointer to the source code units.
      * @param len - number of code units to encode.
      * @param buf - pointer to the destination buffer.
      * @returns The number of bytes written.
@@ -1379,11 +1414,11 @@ export namespace str {
      */
     // @ts-ignore: decorator
     @unsafe export function encodeUnsafe(
-      str: usize,
+      Str: usize,
       len: i32,
       buf: usize,
     ): usize {
-      return U16.encodeUnsafe(str, len, buf);
+      return U16.encodeUnsafe(Str, len, buf);
     }
     /**
      * Decode a UTF-16 `ArrayBuffer` into a view.
@@ -1391,8 +1426,8 @@ export namespace str {
      * @param buf - buffer of UTF-16 bytes.
      * @returns A view over the freshly decoded backing string.
      */
-    export function decode(buf: ArrayBuffer): str {
-      return str.from(U16.decode(buf));
+    export function decode(buf: ArrayBuffer): Str {
+      return Str.from(U16.decode(buf));
     }
     /**
      * Decode `len` bytes of UTF-16 starting at `buf` into a view.
@@ -1403,13 +1438,13 @@ export namespace str {
      * @unsafe Reads through raw pointers without bounds checks.
      */
     // @ts-ignore: decorator
-    @unsafe export function decodeUnsafe(buf: usize, len: usize): str {
-      return str.from(U16.decodeUnsafe(buf, len));
+    @unsafe export function decodeUnsafe(buf: usize, len: usize): Str {
+      return Str.from(U16.decodeUnsafe(buf, len));
     }
     /**
      * Whether the view is well-formed UTF-16 (additional helper from `utf-as`).
      *
-     * @param s - source; a `string` or a `str`.
+     * @param s - source; a `string` or a `Str`.
      * @returns `true` if every surrogate is paired correctly.
      */
     export function validate<T>(s: T): bool {
@@ -1423,7 +1458,7 @@ export namespace str {
     /**
      * Number of bytes the view occupies when UTF-8 encoded.
      *
-     * @param s              - source; a `string` or a `str`.
+     * @param s              - source; a `string` or a `Str`.
      * @param nullTerminated - include a trailing NUL byte in the count.
      * @returns The encoded byte length.
      */
@@ -1438,7 +1473,7 @@ export namespace str {
     /**
      * Encode the view to a new UTF-8 `ArrayBuffer`.
      *
-     * @param s              - source; a `string` or a `str`.
+     * @param s              - source; a `string` or a `Str`.
      * @param nullTerminated - append a trailing NUL byte.
      * @param errorMode      - how to handle lone surrogates; defaults to WTF-8.
      * @returns A freshly allocated `ArrayBuffer` of the encoded bytes.
@@ -1464,10 +1499,10 @@ export namespace str {
       return buf;
     }
     /**
-     * Encode `len` UTF-16 code units from `str` as UTF-8 into the caller-owned
+     * Encode `len` UTF-16 code units from `Str` as UTF-8 into the caller-owned
      * buffer at `buf`.
      *
-     * @param str            - pointer to the source code units.
+     * @param Str            - pointer to the source code units.
      * @param len            - number of code units to encode.
      * @param buf            - pointer to the destination buffer.
      * @param nullTerminated - append a trailing NUL byte.
@@ -1477,13 +1512,13 @@ export namespace str {
      */
     // @ts-ignore: decorator
     @unsafe export function encodeUnsafe(
-      str: usize,
+      Str: usize,
       len: i32,
       buf: usize,
       nullTerminated: bool = false,
       errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
     ): usize {
-      return U8.encodeUnsafe(str, len, buf, nullTerminated, errorMode);
+      return U8.encodeUnsafe(Str, len, buf, nullTerminated, errorMode);
     }
     /**
      * Decode a UTF-8 `ArrayBuffer` into a view.
@@ -1495,8 +1530,8 @@ export namespace str {
     export function decode(
       buf: ArrayBuffer,
       nullTerminated: bool = false,
-    ): str {
-      return str.from(U8.decode(buf, nullTerminated));
+    ): Str {
+      return Str.from(U8.decode(buf, nullTerminated));
     }
     /**
      * Decode `len` bytes of UTF-8 starting at `buf` into a view.
@@ -1512,8 +1547,8 @@ export namespace str {
       buf: usize,
       len: usize,
       nullTerminated: bool = false,
-    ): str {
-      return str.from(U8.decodeUnsafe(buf, len, nullTerminated));
+    ): Str {
+      return Str.from(U8.decodeUnsafe(buf, len, nullTerminated));
     }
     /**
      * Whether `buf` holds well-formed UTF-8.
@@ -1532,6 +1567,252 @@ export namespace str {
      */
     export function utf16Length(buf: ArrayBuffer): i32 {
       return U8.utf16Length(buf);
+    }
+  }
+}
+
+/**
+ * The lowercase type alias - `Str` is the class, `str` the type used in
+ * annotations (`: str`), mirroring how `string` aliases `String` in the
+ * standard library.
+ */
+export type str = Str;
+
+/**
+ * Convert any value to a `str` (UTF-16 view). A `Str` is returned as-is; a
+ * native `string` is wrapped zero-copy; anything else with a `toString()`
+ * (numbers, a `str8`, user classes, …) is stringified then wrapped. Callable as
+ * `str(x)` thanks to function/namespace merging on the `str` name.
+ *
+ * @param x - value to convert.
+ * @returns A `str` view.
+ */
+export function str<T>(x: T): Str {
+  if (isString<T>()) return Str.from(changetype<string>(x));
+  // `idof` only applies to references, so guard it (AS `instanceof` is a
+  // runtime check; this folds at compile time and dead-codes the other arms).
+  if (isReference<T>() && idof<T>() == idof<Str>()) return changetype<Str>(x);
+  // @ts-ignore: isDefined guards the generic toString() (asc-only builtin)
+  if (isDefined(x.toString())) return Str.from(x.toString());
+  return Str.from("");
+}
+
+/**
+ * The free-function surface, merged onto the `str` converter so that
+ * `str.from(s)`, `str.slice(s, …)`, `str.UTF8`, … resolve under the lowercase
+ * `str` name in BOTH `asc` (via the `str` -> `Str` type alias -> class statics)
+ * AND the TS language server (via this function+namespace merge). Every member
+ * delegates to the `Str` class; keep these signatures in sync with it.
+ */
+export namespace str {
+  // @ts-ignore: re-exported static
+  export const MAX_LENGTH: i32 = Str.MAX_LENGTH;
+
+  export function from(s: string): Str {
+    return Str.from(s);
+  }
+  export function fromCharCode(unit: i32, surr: i32 = -1): Str {
+    return Str.fromCharCode(unit, surr);
+  }
+  export function fromCharCodes(units: Array<i32>): Str {
+    return Str.fromCharCodes(units);
+  }
+  export function fromCodePoint(code: i32): Str {
+    return Str.fromCodePoint(code);
+  }
+  export function fromRange(s: string, start: i32, end: i32): Str {
+    return Str.fromRange(s, start, end);
+  }
+
+  export function slice<T>(
+    s: T,
+    start: i32 = 0,
+    end: i32 = i32.MAX_VALUE,
+  ): Str {
+    return Str.slice<T>(s, start, end);
+  }
+  export function substring<T>(
+    s: T,
+    start: i32 = 0,
+    end: i32 = i32.MAX_VALUE,
+  ): Str {
+    return Str.substring<T>(s, start, end);
+  }
+  export function substr<T>(
+    s: T,
+    start: i32 = 0,
+    length: i32 = i32.MAX_VALUE,
+  ): Str {
+    return Str.substr<T>(s, start, length);
+  }
+  export function charAt<T>(s: T, index: i32): Str {
+    return Str.charAt<T>(s, index);
+  }
+  export function at<T>(s: T, index: i32): Str {
+    return Str.at<T>(s, index);
+  }
+  export function trim<T>(s: T): Str {
+    return Str.trim<T>(s);
+  }
+  export function trimStart<T>(s: T): Str {
+    return Str.trimStart<T>(s);
+  }
+  export function trimEnd<T>(s: T): Str {
+    return Str.trimEnd<T>(s);
+  }
+  export function split<T>(
+    s: T,
+    separator: string,
+    limit: i32 = i32.MAX_VALUE,
+  ): Str[] {
+    return Str.split<T>(s, separator, limit);
+  }
+  export function length<T>(s: T): i32 {
+    return Str.length<T>(s);
+  }
+  export function isEmpty<T>(s: T): bool {
+    return Str.isEmpty<T>(s);
+  }
+  export function charCodeAt<T>(s: T, index: i32): i32 {
+    return Str.charCodeAt<T>(s, index);
+  }
+  export function codePointAt<T>(s: T, index: i32): i32 {
+    return Str.codePointAt<T>(s, index);
+  }
+  export function indexOf<T, U>(s: T, search: U, start: i32 = 0): i32 {
+    return Str.indexOf<T, U>(s, search, start);
+  }
+  export function lastIndexOf<T, U>(
+    s: T,
+    search: U,
+    start: i32 = i32.MAX_VALUE,
+  ): i32 {
+    return Str.lastIndexOf<T, U>(s, search, start);
+  }
+  export function includes<T, U>(s: T, search: U): bool {
+    return Str.includes<T, U>(s, search);
+  }
+  export function startsWith<T, U>(s: T, search: U, start: i32 = 0): bool {
+    return Str.startsWith<T, U>(s, search, start);
+  }
+  export function endsWith<T, U>(
+    s: T,
+    search: U,
+    end: i32 = i32.MAX_VALUE,
+  ): bool {
+    return Str.endsWith<T, U>(s, search, end);
+  }
+  export function equals<T, U>(a: T, b: U): bool {
+    return Str.equals<T, U>(a, b);
+  }
+  export function compare<T, U>(a: T, b: U): i32 {
+    return Str.compare<T, U>(a, b);
+  }
+  export function toString<T>(s: T): string {
+    return Str.toString<T>(s);
+  }
+  export function toUpperCase<T>(s: T): string {
+    return Str.toUpperCase<T>(s);
+  }
+  export function toLowerCase<T>(s: T): string {
+    return Str.toLowerCase<T>(s);
+  }
+  export function repeat<T>(s: T, count: i32): string {
+    return Str.repeat<T>(s, count);
+  }
+  export function padStart<T>(s: T, length: i32, pad: string = " "): string {
+    return Str.padStart<T>(s, length, pad);
+  }
+  export function padEnd<T>(s: T, length: i32, pad: string = " "): string {
+    return Str.padEnd<T>(s, length, pad);
+  }
+  export function concat<T, U>(s: T, other: U): string {
+    return Str.concat<T, U>(s, other);
+  }
+  export function replace<T>(
+    s: T,
+    search: string,
+    replacement: string,
+  ): string {
+    return Str.replace<T>(s, search, replacement);
+  }
+  export function replaceAll<T>(
+    s: T,
+    search: string,
+    replacement: string,
+  ): string {
+    return Str.replaceAll<T>(s, search, replacement);
+  }
+
+  /** UTF-16 encoding/decoding (delegates to {@link Str.UTF16}). */
+  export namespace UTF16 {
+    export function byteLength<T>(s: T): i32 {
+      return Str.UTF16.byteLength<T>(s);
+    }
+    export function encode<T>(s: T): ArrayBuffer {
+      return Str.UTF16.encode<T>(s);
+    }
+    // @ts-ignore: decorator
+    @unsafe export function encodeUnsafe(
+      ptr: usize,
+      len: i32,
+      buf: usize,
+    ): usize {
+      return Str.UTF16.encodeUnsafe(ptr, len, buf);
+    }
+    export function decode(buf: ArrayBuffer): Str {
+      return Str.UTF16.decode(buf);
+    }
+    // @ts-ignore: decorator
+    @unsafe export function decodeUnsafe(buf: usize, len: usize): Str {
+      return Str.UTF16.decodeUnsafe(buf, len);
+    }
+    export function validate<T>(s: T): bool {
+      return Str.UTF16.validate<T>(s);
+    }
+  }
+
+  /** UTF-8 (WTF-8) encoding/decoding (delegates to {@link Str.UTF8}). */
+  export namespace UTF8 {
+    export function byteLength<T>(s: T, nullTerminated: bool = false): i32 {
+      return Str.UTF8.byteLength<T>(s, nullTerminated);
+    }
+    export function encode<T>(
+      s: T,
+      nullTerminated: bool = false,
+      errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+    ): ArrayBuffer {
+      return Str.UTF8.encode<T>(s, nullTerminated, errorMode);
+    }
+    // @ts-ignore: decorator
+    @unsafe export function encodeUnsafe(
+      ptr: usize,
+      len: i32,
+      buf: usize,
+      nullTerminated: bool = false,
+      errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+    ): usize {
+      return Str.UTF8.encodeUnsafe(ptr, len, buf, nullTerminated, errorMode);
+    }
+    export function decode(
+      buf: ArrayBuffer,
+      nullTerminated: bool = false,
+    ): Str {
+      return Str.UTF8.decode(buf, nullTerminated);
+    }
+    // @ts-ignore: decorator
+    @unsafe export function decodeUnsafe(
+      buf: usize,
+      len: usize,
+      nullTerminated: bool = false,
+    ): Str {
+      return Str.UTF8.decodeUnsafe(buf, len, nullTerminated);
+    }
+    export function validate(buf: ArrayBuffer): bool {
+      return Str.UTF8.validate(buf);
+    }
+    export function utf16Length(buf: ArrayBuffer): i32 {
+      return Str.UTF8.utf16Length(buf);
     }
   }
 }

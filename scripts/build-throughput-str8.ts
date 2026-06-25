@@ -1,8 +1,7 @@
-// throughput chart - ported from json-as's scripts/build-chart01.ts and fed
-// with str data. Same grouped-bar throughput chart, same bench lib (createBarChart /
-// generateChart / BenchResult from ./lib/bench-utils, MODE_BARS from
-// ./lib/palette). Here each "payload" is a string operation and the series are
-// the three code paths (native String / str SWAR / str SIMD).
+// throughput chart for str8 - the same grouped-bar throughput chart as
+// build-throughput.ts, fed with the `u8_*` suites. Each payload is an operation
+// and the series are the three code paths (native String / str8 SWAR /
+// str8 SIMD). The scan + fold ops are where SWAR and SIMD pull away from native.
 //
 // Reads the two as-bench `--json` logs produced by scripts/build-charts.sh:
 //   build/logs/bench.simd.json    - default build (SIMD path)
@@ -15,7 +14,6 @@ import {
 } from "./lib/bench-utils";
 import { MODE_BARS } from "./lib/palette";
 
-// as-bench JSON shapes (subset we need).
 interface AsBenchEntry {
   suite: string;
   name: string;
@@ -31,18 +29,15 @@ const readLog = (p: string): AsBenchLog =>
 const SIMD = readLog("./build/logs/bench.simd.json");
 const SWAR = readLog("./build/logs/bench.nosimd.json");
 
-// Throughput in millions of ops/sec (higher is better) from the per-op time.
 function mops(log: AsBenchLog, suite: string, isLib: boolean): number {
   const hit = log.benches.find(
-    (b) => b.suite === suite && b.name.startsWith("str.") === isLib,
+    (b) => b.suite === suite && b.name.startsWith("str8.") === isLib,
   );
   if (!hit) throw new Error(`no bench in suite "${suite}" (isLib=${isLib})`);
   const ns = hit.result.point * 1e6;
-  return 1000 / ns; // 1 / ns-per-op * 1e3 = Mops/s
+  return 1000 / ns; // Mops/s
 }
 
-// Wrap a throughput number as a BenchResult so it flows through createBarChart,
-// which charts the `mbps` field.
 const bar = (mbps: number, description: string): BenchResult => ({
   language: "as",
   description,
@@ -54,42 +49,39 @@ const bar = (mbps: number, description: string): BenchResult => ({
   gbps: mbps / 1000,
 });
 
-// x-axis groups: a representative spread of operations (all over the same 2 kb
-// string). The scan ops are where SWAR and SIMD pull away from native.
-// Kept identical (same set + order) to build-throughput-str8.ts so the str and
-// str8 throughput charts line up bar-for-bar: views, then scans, then folds.
+// Kept identical (same set + order) to build-throughput.ts so the str and str8
+// throughput charts line up bar-for-bar: views, then scans, then folds.
 const PAYLOADS: Record<string, string> = {
-  slice: "slice",
-  trim: "trim",
-  indexOf: "indexOf",
-  includes: "includes",
-  lastIndexOf: "lastIndexOf",
-  compare: "compare",
-  equals: "equals",
-  toUpperCase: "toUpperCase",
-  toLowerCase: "toLowerCase",
+  u8_slice: "slice",
+  u8_trim: "trim",
+  u8_indexOf: "indexOf",
+  u8_includes: "includes",
+  u8_lastIndexOf: "lastIndexOf",
+  u8_compare: "compare",
+  u8_equals: "equals",
+  u8_toUpperCase: "toUpperCase",
+  u8_toLowerCase: "toLowerCase",
 };
 
 const chartData: Record<string, BenchResult[]> = {};
 for (const suite of Object.keys(PAYLOADS)) {
   chartData[suite] = [
     bar(mops(SIMD, suite, false), "native String"), // native - same in both builds
-    bar(mops(SWAR, suite, true), "str (SWAR)"),
-    bar(mops(SIMD, suite, true), "str (SIMD)"),
+    bar(mops(SWAR, suite, true), "str8 (SWAR)"),
+    bar(mops(SIMD, suite, true), "str8 (SIMD)"),
   ];
 }
 
 const config = createBarChart(chartData, PAYLOADS, {
-  title: "str - String operation throughput (2 kb input)",
+  title: "str8 - UTF-8 operation throughput (2 kb ASCII input)",
   yLabel: "Throughput (Mops/s)",
   xLabel: "",
-  datasetLabels: ["native String", "str (SWAR)", "str (SIMD)"],
-  // native = strawberry red baseline, SWAR = jungle green, SIMD = pacific blue.
+  datasetLabels: ["native String", "str8 (SWAR)", "str8 (SIMD)"],
   colors: [MODE_BARS[0], MODE_BARS[2], MODE_BARS[3]],
   yStep: 5,
 });
 
 fs.mkdirSync("./build/charts", { recursive: true });
 const dims = { width: 1300, height: 620 };
-generateChart(config, "./build/charts/throughput.svg", dims);
-generateChart(config, "./build/charts/throughput.png", dims);
+generateChart(config, "./build/charts/throughput-str8.svg", dims);
+generateChart(config, "./build/charts/throughput-str8.png", dims);
