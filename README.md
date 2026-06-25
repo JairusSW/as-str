@@ -53,13 +53,13 @@ rather use `str` **without an import in every file**, opt into the transform
 1. Add the transform to your `asc` command:
 
    ```bash
-   --transform as-str/transform
+   --transform as-str
    ```
 
    or in `asconfig.json`:
 
    ```json
-   { "options": { "transform": ["as-str/transform"] } }
+   { "options": { "transform": ["as-str"] } }
    ```
 
 2. Add the ambient typings so your editor resolves the globals - extend
@@ -275,20 +275,20 @@ u.toStr(); // str8 -> str  (UTF-16)
 
 ## Performance
 
-📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/as-str/tree/docs/charts/v0.2.1)**
+📊 **[Browse the full chart set for this release →](https://github.com/JairusSW/as-str/tree/docs/charts/v0.2.2)**
 
 ### Per-Operation Speedup
 
 Every native `String` operation vs its `str` counterpart - native (red) is
 the `1×` baseline, `str` (blue) is its speedup:
 
-<img src="https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/docs/charts/v0.2.1/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
+<img src="https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/docs/charts/v0.2.2/per-op-speedup.svg" alt="Every String operation vs its str counterpart">
 
 ### Throughput
 
 Native vs `str` SWAR vs `str` SIMD, in millions of ops/sec:
 
-<img src="https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/docs/charts/v0.2.1/throughput.svg" alt="String operation throughput: native vs SWAR vs SIMD">
+<img src="https://raw.githubusercontent.com/JairusSW/as-str/refs/heads/docs/charts/v0.2.2/throughput.svg" alt="String operation throughput: native vs SWAR vs SIMD">
 
 ### SWAR and SIMD
 

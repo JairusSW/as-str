@@ -60,7 +60,8 @@ export default class StrAsTransform extends Transform {
         ? fromPath.slice(5)
         : path.join(baseCWD, fromPath);
       const baseRel = computeImportBaseRel(path.dirname(fromPath), packageDir);
-      const specifier = path.posix.join(baseRel, "assembly", "index");
+      const specifier =
+        baseRel === PKG ? PKG : path.posix.join(baseRel, "assembly", "index");
       specifiers.add(specifier);
       const range = source.range;
       source.statements.unshift(
@@ -83,10 +84,10 @@ export default class StrAsTransform extends Transform {
       }
     }
     for (const specifier of specifiers) {
-      if (!specifier.startsWith(PKG + "/")) continue;
-      const internal = "~lib/" + specifier;
+      if (specifier !== PKG && !specifier.startsWith(PKG + "/")) continue;
+      const internal = "~lib/" + PKG + "/index";
       if (parser.sources.some((s) => s.internalPath === internal)) continue;
-      const file = path.join(packageDir, "assembly", "index.ts");
+      const file = path.join(packageDir, "index.ts");
       if (!existsSync(file)) continue;
       parser.parseFile(readFileSync(file, "utf8"), internal + ".ts", false);
       if (DEBUG) console.log(`[as-str] force-parsed ${internal}`);

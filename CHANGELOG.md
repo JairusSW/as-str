@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-24
+
+### Changed
+
+- The transform can now be added as `--transform as-str` (or
+  `"transform": ["as-str"]` in `asconfig.json`) - the package `main` points at
+  it. The previous `as-str/transform` specifier still works.
+- The transform now injects the bare `import { str } from "as-str"` instead of
+  `as-str/assembly/index`, matching how you import `str` manually.
+
 ## [0.2.1] - 2026-06-24
 
 ### Changed

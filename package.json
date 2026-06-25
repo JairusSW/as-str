@@ -1,10 +1,10 @@
 {
   "name": "as-str",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "author": "Jairus Tanaka <me@jairus.dev>",
   "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without allocating",
   "types": "assembly/index.ts",
-  "main": "assembly/index.ts",
+  "main": "transform/lib/index.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JairusSW/as-str.git"

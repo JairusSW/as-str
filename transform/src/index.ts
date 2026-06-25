@@ -86,7 +86,10 @@ export default class StrAsTransform extends Transform {
         : path.join(baseCWD, fromPath);
 
       const baseRel = computeImportBaseRel(path.dirname(fromPath), packageDir);
-      const specifier = path.posix.join(baseRel, "assembly", "index");
+      // Installed: import the bare package (`as-str`), which asc resolves to
+      // its `assembly/index`. In-repo: keep the relative path to that file.
+      const specifier =
+        baseRel === PKG ? PKG : path.posix.join(baseRel, "assembly", "index");
       specifiers.add(specifier);
       const range = source.range;
 
@@ -112,10 +115,15 @@ export default class StrAsTransform extends Transform {
     }
 
     for (const specifier of specifiers) {
-      if (!specifier.startsWith(PKG + "/")) continue; // only the installed case
-      const internal = "~lib/" + specifier;
+      // only the installed case (bare `as-str` or an `as-str/...` subpath)
+      if (specifier !== PKG && !specifier.startsWith(PKG + "/")) continue;
+      // asc resolves bare `as-str` to the package root `index.ts`, so seed it
+      // there (its `export … from "./assembly/index"` is then resolved
+      // natively). The injected import is added after asc's own resolution
+      // pass, so without this seed asc never fetches the module.
+      const internal = "~lib/" + PKG + "/index";
       if (parser.sources.some((s) => s.internalPath === internal)) continue;
-      const file = path.join(packageDir, "assembly", "index.ts");
+      const file = path.join(packageDir, "index.ts");
       if (!existsSync(file)) continue;
       parser.parseFile(readFileSync(file, "utf8"), internal + ".ts", false);
       if (DEBUG) console.log(`[as-str] force-parsed ${internal}`);
