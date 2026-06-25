@@ -5,9 +5,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    // AssemblyScript sources use syntax stock typescript-eslint can't parse
-    // (decorators on const/function declarations, `<T>` value casts). They are
-    // type-checked by `asc` instead.
+    // AssemblyScript syntax is checked by `asc`, not typescript-eslint.
     ignores: ["assembly/**", "build/**", ".as-test/**", "**/*.tmp.ts"],
   },
   eslint.configs.recommended,

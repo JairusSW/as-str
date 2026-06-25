@@ -2,7 +2,7 @@
 ╠═╣╚═╗══╚═╗ ║ ╠╦╝
 ╩ ╩╚═╝  ╚═╝ ╩ ╩╚═</pre></h1>
 
-<p align="center">Virtual, zero-copy strings for AssemblyScript - slice, search, and trim without allocating.</p>
+<p align="center">Virtual, zero-copy strings for AssemblyScript - slice, search, and trim without allocating. Analogous to Rust's [string slice](https://doc.rust-lang.org/std/primitive.str.html)</p>
 
 <details>
 <summary>Table of Contents</summary>

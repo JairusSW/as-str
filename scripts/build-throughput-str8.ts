@@ -1,11 +1,4 @@
-// throughput chart for str8 - the same grouped-bar throughput chart as
-// build-throughput.ts, fed with the `u8_*` suites. Each payload is an operation
-// and the series are the three code paths (native String / str8 SWAR /
-// str8 SIMD). The scan + fold ops are where SWAR and SIMD pull away from native.
-//
-// Reads the two as-bench `--json` logs produced by scripts/build-charts.sh:
-//   build/logs/bench.simd.json    - default build (SIMD path)
-//   build/logs/bench.nosimd.json  - --disable simd build (SWAR path)
+// str8 throughput chart from the SIMD and no-SIMD as-bench logs.
 import fs from "node:fs";
 import {
   createBarChart,
@@ -49,8 +42,7 @@ const bar = (mbps: number, description: string): BenchResult => ({
   gbps: mbps / 1000,
 });
 
-// Kept identical (same set + order) to build-throughput.ts so the str and str8
-// throughput charts line up bar-for-bar: views, then scans, then folds.
+// Same operation set/order as the UTF-16 throughput chart.
 const PAYLOADS: Record<string, string> = {
   u8_slice: "slice",
   u8_trim: "trim",
@@ -66,7 +58,7 @@ const PAYLOADS: Record<string, string> = {
 const chartData: Record<string, BenchResult[]> = {};
 for (const suite of Object.keys(PAYLOADS)) {
   chartData[suite] = [
-    bar(mops(SIMD, suite, false), "native String"), // native - same in both builds
+    bar(mops(SIMD, suite, false), "native String"),
     bar(mops(SWAR, suite, true), "str8 (SWAR)"),
     bar(mops(SIMD, suite, true), "str8 (SIMD)"),
   ];

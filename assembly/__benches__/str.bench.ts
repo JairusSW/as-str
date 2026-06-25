@@ -1,8 +1,4 @@
-// Microbenchmarks contrasting every native `String` operation with its
-// `str` counterpart, all driven by one ~2 kb string so the inputs are
-// comparable across ops. View-producing ops only move pointers; queries
-// allocate nothing; allocating ops materialize the view then defer to the
-// native method. `blackbox` stops the optimizer folding the timed work away.
+// Native String vs `str` microbenchmarks on one ~2 kb input.
 
 import { bench, suite, blackbox, settings } from "as-bench/assembly/index";
 import { str } from "../index";
@@ -10,24 +6,19 @@ import { str } from "../index";
 settings.warmupTime = 250;
 settings.measurementTime = 500;
 
-// One ~2 kb backing string (1024 UTF-16 code units = 2048 bytes). A unique
-// "needle" sits ~halfway in so the scans have real distance to cover, and it is
-// wrapped in whitespace so the trim ops have something to do (otherwise native
-// trim short-circuits while str still builds a view).
+// 1024 UTF-16 units with a middle "needle" and trim padding.
 const PHRASE = "the quick brown fox jumps over the lazy dog, ";
 const PAD = "        "; // 8 spaces
 const CORE = (PHRASE.repeat(21) + "needle, " + PHRASE.repeat(3)).slice(0, 1008);
 const BIG = PAD + CORE + PAD; // 1024 code units
 
-// Derived inputs (still all 2 kb-scale).
+// Derived inputs.
 const PREFIX = BIG.substring(0, 9); // for startsWith
 const SUFFIX = BIG.substring(BIG.length - 8); // for endsWith
 const SAME = (BIG + " ").slice(0, BIG.length); // distinct copy, equal content
 const BIG_B = BIG.substring(0, BIG.length - 1) + "Z"; // differs at the last unit
 
-// ===========================================================================
-// View-producing ops - native copies; str returns a view.
-// ===========================================================================
+// View-producing ops: native copies, `str` returns a view.
 
 suite("slice", () => {
   bench("native String#slice", () => {
@@ -110,9 +101,7 @@ suite("split", () => {
   });
 });
 
-// ===========================================================================
-// Queries - both return a primitive; str allocates nothing.
-// ===========================================================================
+// Queries: both return primitives, `str` allocates nothing.
 
 suite("length", () => {
   bench("native String#length", () => {
@@ -204,10 +193,7 @@ suite("compare", () => {
   });
 });
 
-// ===========================================================================
-// Allocating ops - str materializes the view, then calls the native op,
-// so it is expected to trail native by one extra copy.
-// ===========================================================================
+// Allocating ops: `str` materializes before calling the native op.
 
 suite("toUpperCase", () => {
   bench("native String#toUpperCase", () => {

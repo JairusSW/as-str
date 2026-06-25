@@ -1,10 +1,4 @@
-// per-op speedup chart for str8 - every native String operation vs its str8
-// (UTF-8) counterpart over the same ~2 kb ASCII input. Same template as
-// build-per-op.ts, but reads the `u8_*` suites and treats benches whose name
-// starts with "str8." as the lib bar.
-//
-// Metric is speedup vs native (native = the 1× baseline bar). Reads
-// build/logs/bench.simd.json (produced by scripts/build-charts.sh).
+// str8 per-op speedup chart from build/logs/bench.simd.json.
 import fs from "node:fs";
 import {
   createBarChart,
@@ -42,8 +36,7 @@ const bar = (mbps: number, description: string): BenchResult => ({
   gbps: 0,
 });
 
-// suite key (u8_*) -> x-axis label. Order = display order (views, queries,
-// allocating). codePointCount is omitted: it has no native counterpart.
+// suite key (u8_*) -> x-axis label; codePointCount has no native counterpart.
 const PAYLOADS: Record<string, string> = {
   u8_slice: "slice",
   u8_substring: "substring",
@@ -77,7 +70,7 @@ const PAYLOADS: Record<string, string> = {
 const chartData: Record<string, BenchResult[]> = {};
 for (const suite of Object.keys(PAYLOADS)) {
   chartData[suite] = [
-    bar(1, "native (baseline)"), // native vs itself = 1×
+    bar(1, "native (baseline)"),
     bar(speedup(suite), "str8 (SIMD)"),
   ];
 }

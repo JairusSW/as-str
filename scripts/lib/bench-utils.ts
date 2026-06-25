@@ -39,8 +39,7 @@ const BENCH_RUNTIME: ASBenchRuntime = ((): ASBenchRuntime => {
   return value === "wavm" ? "wavm" : "v8";
 })();
 
-// Probe helper: never let a missing tool (no v8, no git history) crash the
-// import - fall back to "?" so the chart still renders.
+// Missing tools should not block chart rendering.
 function probe(cmd: string, fallback = "?"): string {
   try {
     return execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] })
@@ -103,10 +102,7 @@ export function getBenchResults(payloads: string[]): BenchResults {
   return out;
 }
 
-// Reads the dynamic JSON.Obj result for a payload (logged under `<payload>-obj`
-// by the per-payload benches). Returns null when absent - e.g. primitive
-// payloads have no JSON.Obj variant, or the obj benches weren't run - so charts
-// can fall back to a zero bar instead of crashing.
+// Optional JSON.Obj result for `<payload>-obj`.
 export function readObjBenchResult(
   payload: string,
   kind: BenchKind,
@@ -135,11 +131,7 @@ export function createBarChart(
     labelAnchor?: "start" | "center" | "end";
     /** Value-label font size in px (default 12). */
     labelFontSize?: number;
-    /**
-     * Rotate the value labels, in degrees (default 0 = flat). Use -90 to stand
-     * them up off the bar top so adjacent same-height labels stop colliding;
-     * the y-axis gains extra headroom automatically so tall labels don't clip.
-     */
+    /** Rotate value labels, in degrees. */
     labelRotation?: number;
   },
 ): ChartConfiguration<"bar"> {
@@ -152,11 +144,7 @@ export function createBarChart(
       .map((r) => r.mbps),
   );
 
-  // Round up to the next step above (tallest bar + headroom), so there is
-  // always room for the value label above the highest bar
-  // (e.g. 4992 -> 5500 instead of a clipped 5000). Rotated (near-vertical)
-  // labels stand up off the bar and need much more headroom than a flat label,
-  // so reserve a slice of the range proportional to the tallest bar.
+  // Reserve headroom for value labels, especially when rotated.
   const yStep = options.yStep ?? 500;
   const rotated = Math.abs(options.labelRotation ?? 0) >= 45;
   const headroom = rotated ? maxMBps * 0.18 + yStep : yStep / 2;
@@ -181,7 +169,7 @@ export function createBarChart(
         data: payloadKeys.map((k) => data[k][i]?.mbps ?? 0),
         backgroundColor: palette[i % palette.length].bg,
         borderColor: palette[i % palette.length].border,
-        // Preserve the original overview-chart look: the 4th (SIMD) bar had a 2px border.
+        // Keep the original SIMD border emphasis.
         borderWidth: !options.colors && i === 3 ? 2 : 1,
       })),
     },
@@ -244,9 +232,7 @@ export function createBarChart(
         },
       },
     },
-    // The datalabels plugin is registered per-render in generateChart (via
-    // chartjs-node-canvas's `modern` option / freshRequire), not inline here -
-    // see the note there.
+    // Datalabels is registered per render in generateChart.
   };
 }
 
@@ -325,16 +311,13 @@ export function generateChart(
 ) {
   const isSvg = outfile.endsWith(".svg");
 
-  // SVG is resolution-independent (dpr 1); PNG renders at 3x density so the
-  // logical 1000x600 layout becomes a crisp 3000x1800 raster.
+  // SVG is dpr 1; PNG renders at 3x density.
   config = {
     ...config,
     options: { ...(config.options ?? {}), devicePixelRatio: isSvg ? 1 : 3 },
   };
 
-  // Strip any inline datalabels plugin instance a caller added to its config:
-  // it's the shared module instance, and reusing it across renders is exactly
-  // the stale-state bug we avoid by registering a fresh copy per render (below).
+  // Avoid reusing a stale datalabels module between renders.
   if (Array.isArray(config.plugins)) {
     const kept = config.plugins.filter(
       (p) => (p as { id?: string })?.id !== "datalabels",
@@ -346,14 +329,7 @@ export function generateChart(
     width: dims?.width ?? 1000,
     height: dims?.height ?? 600,
     type: isSvg ? "svg" : "png",
-    // Register chartjs-plugin-datalabels through the `modern` option so
-    // chartjs-node-canvas freshRequire()s a CLEAN copy of the plugin per render.
-    // The plugin holds mutable module-level state that, reused across renders in
-    // one process, collapses rotated value labels onto the x-axis baseline on
-    // every render after the first - which is why the serialize chart (rendered
-    // after the deserialize one) had its labels stuck at the bottom while
-    // deserialize looked fine. A fresh module each render sidesteps it; no dpr or
-    // anchor-flip workarounds needed.
+    // freshRequire datalabels each render to avoid stale plugin state.
     plugins: { modern: ["chartjs-plugin-datalabels"] },
   });
 

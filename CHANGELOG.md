@@ -6,7 +6,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-06-24
+## [0.3.0] - 2026-06-25
+
+### Added
+
+- **Named forms of every operator overload** on `str` and `str8`, so editors
+  whose TypeScript language server doesn't understand AssemblyScript's
+  `@operator` overloads can call a method instead of using the operator. The
+  `@operator` decorator now lives on the descriptively-named method itself, so
+  `a + b` and `a.add(b)` are the same call: `equals` (`==`), `notEquals` (`!=`),
+  `lessThan`/`lessThanOrEqual`/`greaterThan`/`greaterThanOrEqual`
+  (`<`/`<=`/`>`/`>=`), `add` (`+`, returns a view), and `get` (`[]`). Also added
+  `set(other)`, which re-points a view in place at another view's contents.
+- Delimiter helpers on `str` and `str8`: `before`, `after`, `between`,
+  `beforeLast`, `afterLast`, and `betweenLast`.
+- `str8` QOL helpers: `isAscii`, `byteLength`, `sliceChars`, and
+  `nextCodePoint`.
 
 ### Changed
 

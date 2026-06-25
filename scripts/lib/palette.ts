@@ -1,5 +1,4 @@
-// Single source of truth for every benchmark chart's colours. Adjust here and
-// all charts (bar, line, lazy, multi-library) move together.
+// Shared benchmark chart colors.
 //
 // Base palette:
 //   jungle green #44AF69 · faded copper #9E7153 · strawberry red #F8333C
@@ -18,7 +17,7 @@ export const BASE = {
   sandDune: "#DBD5B5",
 } as const;
 
-// RGB triples, for rgba() interpolation (line charts + opacity ramps).
+// RGB triples for rgba() interpolation.
 const RGB = {
   jungleGreen: "68,175,105",
   fadedCopper: "158,113,83",
@@ -34,19 +33,18 @@ const RGB = {
 export const rgba = (name: keyof typeof RGB, alpha = 1): string =>
   `rgba(${RGB[name]},${alpha})`;
 
-// Engine/mode palette - one distinct hue per mode for the per-payload bar +
-// line charts (overview / string / object / primitive). Fastest mode (SIMD) gets the blue.
+// One distinct hue per engine/mode.
 //   JS → strawberry red · NAIVE → orange · SWAR → jungle green · SIMD → pacific blue
 export const MODE_RGB: Record<string, string> = {
   js: RGB.strawberryRed,
   naive: RGB.orange,
   swar: RGB.jungleGreen,
   simd: RGB.pacificBlue,
-  // Dynamic JSON.Obj throughput series (SIMD only) on the obj line charts.
+  // Dynamic JSON.Obj throughput series.
   obj: RGB.fadedCopper,
 };
 
-// The same four as createBarChart {bg, border} entries (JS, NAIVE, SWAR, SIMD).
+// JS, NAIVE, SWAR, SIMD bars.
 export const MODE_BARS = [
   { bg: rgba("strawberryRed", 0.85), border: BASE.strawberryRed },
   { bg: rgba("orange", 0.85), border: BASE.orange },
@@ -54,21 +52,17 @@ export const MODE_BARS = [
   { bg: rgba("pacificBlue", 0.9), border: BASE.pacificBlue },
 ];
 
-// Dynamic JSON.Obj bar, appended after the four mode bars on the struct charts
-// (overview-serialize / overview-deserialize) to compare typed-struct vs JSON.Obj performance.
+// Dynamic JSON.Obj bar.
 export const OBJ_BAR = {
   bg: rgba("fadedCopper", 0.85),
   border: BASE.fadedCopper,
 };
 
-// Eager vs lazy (build-lazy). Lazy shares the multi-library lazy hue (jungle green).
+// Eager vs lazy.
 export const EAGER = { bg: rgba("sandDune", 0.85), border: BASE.sandDune };
 export const LAZY = { bg: rgba("jungleGreen", 0.85), border: BASE.jungleGreen };
 
-// Multi-library comparison (library-serialize / library-deserialize): one bar per family (the three scan
-// modes are averaged), each a solid hue. The two JS baselines get their own
-// distinct hues (native JSON copper, fast-json teal); strawberry red marks the
-// non-json-as competitor.
+// Multi-library comparison colors.
 export const MULTILIB_COLORS: Record<string, string> = {
   "native JSON (JS)": BASE.fadedCopper,
   "fast-json-parse (JS)": BASE.mutedTeal,
@@ -79,7 +73,7 @@ export const MULTILIB_COLORS: Record<string, string> = {
   "json-as JSON.Obj": BASE.orange,
 };
 
-// Shared neutral inks (axis ticks, subtitle, value labels, gridlines).
+// Shared neutral inks.
 export const INK = {
   subtitle: "#6b7280",
   label: "#374151",

@@ -1,13 +1,4 @@
-// per-op speedup chart - every native String operation vs its str counterpart,
-// built from the throughput-chart template: the json-as `createBarChart` / `generateChart`
-// lib, grouped bars with native and str (SIMD) side by side per operation.
-//
-// Metric is speedup vs native (native = the 1× baseline bar, str = how many
-// times faster it runs). Throughput Mops/s spans ~200× across these ops - from
-// O(1) charCodeAt to a 1.2 kb scan - which a linear bar chart can't show; the
-// speedup ratio keeps every operation on a comparable, readable scale.
-//
-// Reads build/logs/bench.simd.json (produced by scripts/build-charts.sh).
+// Per-op speedup chart from build/logs/bench.simd.json.
 import fs from "node:fs";
 import {
   createBarChart,
@@ -34,8 +25,7 @@ function ns(suite: string, isLib: boolean): number {
 }
 const speedup = (suite: string): number => ns(suite, false) / ns(suite, true);
 
-// Wrap a number as a BenchResult so it flows through createBarChart (it charts
-// the `mbps` field).
+// createBarChart charts the `mbps` field.
 const bar = (mbps: number, description: string): BenchResult => ({
   language: "as",
   description,
@@ -47,7 +37,7 @@ const bar = (mbps: number, description: string): BenchResult => ({
   gbps: 0,
 });
 
-// suite name -> x-axis label. Order = display order (views, queries, allocating).
+// suite name -> x-axis label.
 const PAYLOADS: Record<string, string> = {
   slice: "slice",
   substring: "substring",
@@ -91,15 +81,14 @@ const config = createBarChart(chartData, PAYLOADS, {
   yLabel: "Speedup vs native (× - higher is faster)",
   xLabel: "",
   datasetLabels: ["native (baseline)", "str (SIMD)"],
-  // native = strawberry red baseline, str = pacific blue (SIMD).
+  // Native baseline, then str SIMD.
   colors: [MODE_BARS[0], MODE_BARS[3]],
   yStep: 2,
   labelRotation: -90,
   labelFontSize: 10,
 });
 
-// Tweaks createBarChart can't express for a 29-bar chart: show every x label
-// (rotated, no auto-skip), and print the ratio with a "×" and one decimal.
+// Keep every x label and format ratios.
 const opts = config.options!;
 const xTicks = opts.scales!.x!.ticks!;
 xTicks.autoSkip = false;
@@ -107,11 +96,9 @@ xTicks.maxRotation = 90;
 xTicks.minRotation = 90;
 opts.plugins!.datalabels!.formatter = (v: number) =>
   (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + "×";
-// Bottom margin below the auto-fitted x-axis labels, so they aren't jammed
-// against the canvas edge.
+// Room for rotated x labels.
 opts.layout = { padding: { top: 8, right: 16, bottom: 96, left: 8 } };
-// Tighten the top of the scale to the tallest bar (+ a little room for its
-// label) so the bars climb most of the plot height instead of sitting low.
+// Keep the tallest label inside the chart.
 const maxV = Math.max(...Object.values(chartData).map((d) => d[1].mbps));
 opts.scales!.y!.max = Math.ceil(maxV * 1.18);
 

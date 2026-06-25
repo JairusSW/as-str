@@ -1,12 +1,9 @@
-// Differential fuzzing: a materialized str view must agree, character for
-// character, with the equivalent native String operation across random inputs.
+// Differential fuzzing against native String behavior.
 
 import { expect, fuzz, FuzzSeed } from "as-test";
 import { str } from "../index";
 
-// A fixed corpus of backing strings; the fuzzer picks one plus random indices.
-// Several entries are long enough to drive the SWAR (4-unit) and SIMD (8-unit)
-// blocks plus their scalar tails inside `findUnit` / `compare`.
+// Fixed corpus with entries long enough for SWAR/SIMD paths.
 const CORPUS: string[] = [
   "",
   "a",
@@ -21,7 +18,7 @@ const CORPUS: string[] = [
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
 ];
 
-// A small alphabet of single-char needles to stress `findUnit` lane handling.
+// Single-char needles for `findUnit`.
 const NEEDLES: string[] = ["a", "X", "z", "9", " ", ",", "字", "?"];
 
 // @ts-ignore: decorator
@@ -81,7 +78,7 @@ fuzz("indexOf matches native", (a: u32, b: u32, c: u32): bool => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
 });
 
-// Single-char needles exercise the SWAR/SIMD `findUnit` lanes directly.
+// Exercise SWAR/SIMD `findUnit` lanes directly.
 fuzz("indexOf(char) matches native", (a: u32, b: u32, c: u32): bool => {
   const s = pick(a);
   const ch = pickNeedle(b);
@@ -102,8 +99,7 @@ fuzz("lastIndexOf matches native", (a: u32, b: u32, c: u32): bool => {
   run(<u32>seed.u64(), <u32>seed.u64(), <u32>seed.u64());
 });
 
-// Ordering must agree in sign with the native `<` / `>` operators across the
-// SWAR/SIMD block boundaries (shared prefixes, differing lanes, length ties).
+// Compare sign must match native ordering.
 fuzz("compare agrees in sign with native", (a: u32, b: u32): bool => {
   const x = pick(a);
   const y = pick(b);
@@ -116,7 +112,7 @@ fuzz("compare agrees in sign with native", (a: u32, b: u32): bool => {
   run(<u32>seed.u64(), <u32>seed.u64());
 });
 
-// ---- recently optimized / generalized ops ---------------------------------
+// More operations.
 
 fuzz(
   "concat matches native (string + view inputs)",
@@ -124,7 +120,7 @@ fuzz(
     const x = pick(a);
     const y = pick(b);
     expect(str.concat(x, y)).toBe(x + y);
-    // a view as the primary, a view as the secondary
+    // View inputs on both sides.
     const k = idx(c, x.length);
     expect(str.concat(str.slice(x, k), str.from(y))).toBe(x.slice(k) + y);
     return true;
@@ -159,7 +155,7 @@ fuzz("startsWith/endsWith match native", (a: u32, b: u32, c: u32): bool => {
   const pos = idx(c, s.length);
   expect(str.startsWith(s, probe, pos)).toBe(s.startsWith(probe, pos));
   expect(str.endsWith(s, probe, pos)).toBe(s.endsWith(probe, pos));
-  // a str needle must agree with the string needle
+  // `str` and string needles must agree.
   expect(str.startsWith(s, str.from(probe), pos)).toBe(
     s.startsWith(probe, pos),
   );
@@ -178,9 +174,7 @@ fuzz("indexOf with a str needle == string needle", (a: u32, b: u32): bool => {
   run(<u32>seed.u64(), <u32>seed.u64());
 });
 
-// Trusted references built from indexOf/slice/concat. Native `String#replace*`
-// is unreliable for longer replacements in this asc version (it can emit NUL
-// bytes / corrupt the heap), so it can't be the oracle here.
+// Use local replace references; native `String#replace*` is unreliable here.
 function refReplace(s: string, search: string, repl: string): string {
   const i = s.indexOf(search);
   if (i < 0 || search.length == 0) return s;

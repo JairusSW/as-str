@@ -70,19 +70,28 @@ describe("str8 views (zero-copy, byte-indexed)", () => {
 describe("str8 queries", () => {
   test("length is bytes; codePointCount is scalars", () => {
     expect(str8.length(SAMPLE)).toBe(SAMPLE.length); // ASCII: equal
+    expect(str8.byteLength(SAMPLE)).toBe(SAMPLE.length);
     expect(str8.from(MULTI).byteLength).toBe(String.UTF8.byteLength(MULTI));
     expect(str8.isEmpty("")).toBe(true);
     expect(str8.slice(SAMPLE, 3, 3).isEmpty).toBe(true);
     const v = str8.from("héllo");
     expect(v.byteLength).toBe(6);
     expect(v.codePointCount()).toBe(5);
+    expect(v.isAscii()).toBe(false);
+    expect(str8.isAscii(SAMPLE)).toBe(true);
   });
 
-  test("codePointAt / byteAt", () => {
+  test("sliceChars / codePointAt / nextCodePoint / byteAt", () => {
+    expect(str8.sliceChars("a😀bc", 1, 3).toString()).toBe("😀b");
+    expect(str8.from("a😀bc").sliceChars(-2).toString()).toBe("bc");
     expect(str8.codePointAt(SAMPLE, 0)).toBe(SAMPLE.codePointAt(0));
     // 😀 starts at its byte offset within MULTI
     const at = String.UTF8.byteLength("xx héllo, 世界 ");
     expect(str8.from(MULTI).codePointAt(at)).toBe(0x1f600);
+    const packed = str8.nextCodePoint("😀x", 0);
+    expect(<i32>(packed >> 32)).toBe(0x1f600);
+    expect(<i32>(packed & 0xffffffff)).toBe(4);
+    expect(str8.from("x").nextCodePoint(9)).toBe(<u64>0);
     // byteAt returns raw bytes; 'é' lead byte is 0xC3
     const v = str8.from("héllo");
     expect(v.byteAt(0)).toBe(0x68); // 'h'
@@ -109,6 +118,26 @@ describe("str8 queries", () => {
     expect(str8.from("héllo").indexOf("llo")).toBe(
       String.UTF8.byteLength("hé"),
     );
+  });
+
+  test("before / after / between helpers", () => {
+    const route = str8.from("GET /api/世界?id=42 HTTP/1.1");
+    expect(route.before(" ").toString()).toBe("GET");
+    expect(route.after(" ").before(" ").toString()).toBe("/api/世界?id=42");
+    expect(route.between("/api/", "?").toString()).toBe("世界");
+    expect(str8.before("abc", "x").toString()).toBe("");
+    expect(str8.after("abc", "x").toString()).toBe("");
+    expect(str8.between("abc", "[", "]").toString()).toBe("");
+  });
+
+  test("beforeLast / afterLast / betweenLast helpers", () => {
+    const path = str8.from("/root/app/世界/index.ts");
+    expect(path.beforeLast("/").toString()).toBe("/root/app/世界");
+    expect(path.afterLast("/").toString()).toBe("index.ts");
+    expect(str8.betweenLast("a[世] c[界]", "[", "]").toString()).toBe("界");
+    expect(str8.beforeLast("abc", "x").toString()).toBe("");
+    expect(str8.afterLast("abc", "x").toString()).toBe("");
+    expect(str8.betweenLast("abc", "[", "]").toString()).toBe("");
   });
 
   test("startsWith / endsWith", () => {

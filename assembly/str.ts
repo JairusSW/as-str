@@ -16,57 +16,28 @@ import { UTF8 as U8, UTF16 as U16 } from "utf-as";
 import { Str8 } from "./str8";
 
 /**
- * A virtual (zero-copy) string: a lightweight view into an existing real
- * `string`.
+ * Zero-copy UTF-16 string view backed by a real `string`.
  *
- * A `Str` holds a backing `string` (the GC owner of the bytes) plus a
- * `[start, end)` pair of raw byte pointers describing the slice of that string
- * it represents. View-producing operations (`slice`, `substring`, `charAt`,
- * `trim`, `split`, the `[]`/`+` operators, …) merely move pointers and copy no
- * characters, while allocating operations (`concat`, `repeat`, `padStart`,
- * `replace`, `toUpperCase`, `toString`, …) build a freshly owned real `string`.
- * Query operations (`length`, `indexOf`, `includes`, `equals`, …) allocate
- * nothing. All offsets and lengths are measured in UTF-16 code units and the
- * semantics mirror AssemblyScript's native `String`.
- *
- * The same class is both the type and the API surface. Instance methods operate
- * on a view (`v.slice(2)`), while the mirrored static free-functions accept a
- * `string` or a `Str` as their first argument (`Str.slice(s, 2)`).
+ * View operations move `[start, end)` byte pointers. Allocating operations build
+ * a fresh `string`. Static methods mirror the instance API for `string | Str`
+ * inputs.
  */
 // @ts-ignore: decorator
 @final export class Str {
-  /**
-   * Construct a view directly from a backing string and raw byte pointers.
-   *
-   * @param data  - backing real string; the GC owner of the underlying bytes.
-   * @param start - byte pointer to the first code unit of the view.
-   * @param end   - byte pointer one past the last code unit (exclusive).
-   */
+  /** Construct a view from a backing string and raw byte pointers. */
   constructor(
     public data: string,
     public start: usize,
     public end: usize,
   ) {}
 
-  /**
-   * Wrap an entire real `string` as a zero-copy view over its full length.
-   *
-   * @param s - backing string to view.
-   * @returns A view covering all of `s` (no copy).
-   */
+  /** Wrap a whole `string` without copying. */
   static from(s: string): Str {
     const ptr = changetype<usize>(s);
     return new Str(s, ptr, ptr + ((<usize>s.length) << 1));
   }
 
-  /**
-   * Build a view over a backing string from a code-unit `[start, end)` range.
-   *
-   * @param s     - backing string to view.
-   * @param start - inclusive start code-unit index.
-   * @param end   - exclusive end code-unit index.
-   * @returns A view of `s` covering `[start, end)` (no copy).
-   */
+  /** Build a view over code-unit range `[start, end)`. */
   static fromRange(s: string, start: i32, end: i32): Str {
     const base = changetype<usize>(s);
     return new Str(s, base + ((<usize>start) << 1), base + ((<usize>end) << 1));
@@ -76,34 +47,17 @@ import { Str8 } from "./str8";
   // @ts-expect-error: exists in asc (the editor resolves the JS String)
   static readonly MAX_LENGTH: i32 = String.MAX_LENGTH;
 
-  // Mirrors of the native `String` static constructors, returning a view over a
-  // freshly built backing string.
+  // Native constructors, wrapped as views.
 
-  /**
-   * Build a one- or two-unit string from char codes, then view it.
-   *
-   * @param unit - UTF-16 code unit (the high surrogate when `surr` is given).
-   * @param surr - optional low surrogate code unit, or -1 for none.
-   * @returns A view over a freshly allocated string.
-   */
+  /** Build a view from one or two UTF-16 code units. */
   static fromCharCode(unit: i32, surr: i32 = -1): Str {
     return Str.from(String.fromCharCode(unit, surr));
   }
-  /**
-   * Build a string from an array of UTF-16 code units, then view it.
-   *
-   * @param units - code units to assemble.
-   * @returns A view over a freshly allocated string.
-   */
+  /** Build a view from UTF-16 code units. */
   static fromCharCodes(units: Array<i32>): Str {
     return Str.from(String.fromCharCodes(units));
   }
-  /**
-   * Build a string from a single Unicode code point, then view it.
-   *
-   * @param code - Unicode code point.
-   * @returns A view over a freshly allocated string.
-   */
+  /** Build a view from one Unicode code point. */
   static fromCodePoint(code: i32): Str {
     return Str.from(String.fromCodePoint(code));
   }
@@ -118,18 +72,7 @@ import { Str8 } from "./str8";
     return this.end == this.start;
   }
 
-  /**
-   * Shared range implementation for `slice`. Negative bounds count from the end
-   * and out-of-range bounds clamp into `[0, len]`.
-   *
-   * @param data  - backing string of the resulting view.
-   * @param start - view start byte pointer.
-   * @param end   - view end byte pointer.
-   * @param lo0   - start code-unit index (negative counts from the end).
-   * @param hi0   - end code-unit index (negative counts from the end).
-   * @returns A view of the requested slice (no copy).
-   * @internal
-   */
+  /** Shared `slice` implementation. @internal */
   static sliceRange(
     data: string,
     start: usize,
@@ -148,18 +91,7 @@ import { Str8 } from "./str8";
     );
   }
 
-  /**
-   * Shared range implementation for `substring`. Negative bounds clamp to 0 and
-   * the bounds are swapped when `lo0 > hi0`.
-   *
-   * @param data  - backing string of the resulting view.
-   * @param start - view start byte pointer.
-   * @param end   - view end byte pointer.
-   * @param lo0   - first code-unit index.
-   * @param hi0   - second code-unit index.
-   * @returns A view of the requested substring (no copy).
-   * @internal
-   */
+  /** Shared `substring` implementation. @internal */
   static substringRange(
     data: string,
     start: usize,
@@ -182,18 +114,7 @@ import { Str8 } from "./str8";
     );
   }
 
-  /**
-   * Shared range implementation for `substr`. A negative `start0` counts from
-   * the end and a negative `length` yields an empty view.
-   *
-   * @param data   - backing string of the resulting view.
-   * @param start  - view start byte pointer.
-   * @param end    - view end byte pointer.
-   * @param start0 - start code-unit index (negative counts from the end).
-   * @param length - number of code units to include.
-   * @returns A view of the requested substring (no copy).
-   * @internal
-   */
+  /** Shared `substr` implementation. @internal */
   static substrRange(
     data: string,
     start: usize,
@@ -386,8 +307,6 @@ import { Str8 } from "./str8";
     return equalsBytes(start + ((<usize>lo) << 1), nStart, nBytes);
   }
 
-  // ---- view-producing methods (return a Str) ---------------------------
-
   /**
    * Return a section of the view. Negative indices count from the end.
    *
@@ -561,6 +480,56 @@ import { Str8 } from "./str8";
     return this.indexOf(search) != -1;
   }
 
+  /** View before the first `search`, or empty if absent. */
+  before<U>(search: U): Str {
+    const i = this.indexOf(search);
+    return i < 0
+      ? new Str(this.data, this.start, this.start)
+      : this.slice(0, i);
+  }
+
+  /** View after the first `search`, or empty if absent. */
+  after<U>(search: U): Str {
+    const i = this.indexOf(search);
+    if (i < 0) return new Str(this.data, this.end, this.end);
+    return this.slice(i + unitLength(bStart(search), bEnd(search)));
+  }
+
+  /** View between the first `open` and the next `close`, or empty if absent. */
+  between<U, V>(open: U, close: V): Str {
+    const lo = this.indexOf(open);
+    if (lo < 0) return new Str(this.data, this.start, this.start);
+    const start = lo + unitLength(bStart(open), bEnd(open));
+    const hi = this.indexOf(close, start);
+    return hi < 0
+      ? new Str(this.data, this.end, this.end)
+      : this.slice(start, hi);
+  }
+
+  /** View before the last `search`, or empty if absent. */
+  beforeLast<U>(search: U): Str {
+    const i = this.lastIndexOf(search);
+    return i < 0
+      ? new Str(this.data, this.start, this.start)
+      : this.slice(0, i);
+  }
+
+  /** View after the last `search`, or empty if absent. */
+  afterLast<U>(search: U): Str {
+    const i = this.lastIndexOf(search);
+    if (i < 0) return new Str(this.data, this.end, this.end);
+    return this.slice(i + unitLength(bStart(search), bEnd(search)));
+  }
+
+  /** View between the last `open` before the last `close`, or empty if absent. */
+  betweenLast<U, V>(open: U, close: V): Str {
+    const hi = this.lastIndexOf(close);
+    if (hi < 0) return new Str(this.data, this.end, this.end);
+    const lo = this.lastIndexOf(open, hi);
+    if (lo < 0) return new Str(this.data, this.start, this.start);
+    return this.slice(lo + unitLength(bStart(open), bEnd(open)), hi);
+  }
+
   /**
    * Whether the view begins with `search` at the given offset.
    *
@@ -602,7 +571,8 @@ import { Str8 } from "./str8";
    * @param other - view to compare against.
    * @returns `true` if both views hold the same code units.
    */
-  equals(other: Str): bool {
+  // @ts-ignore: decorator
+  @operator("==") equals(other: Str): bool {
     return rangeEquals(this.start, this.end, other.start, other.end);
   }
 
@@ -742,65 +712,59 @@ import { Str8 } from "./str8";
     return Str.split<Str>(this, separator, limit);
   }
 
-  /** `a == b` - content equality of two views. */
-  // @ts-ignore: decorator
-  @operator("==") static __eq(a: Str, b: Str): bool {
-    return a.equals(b);
+  // Operator overloads also have named methods for editor compatibility.
+
+  /** Re-point this view at `other`. */
+  set(other: Str): Str {
+    this.data = other.data;
+    this.start = other.start;
+    this.end = other.end;
+    return this;
   }
+
   /** `a != b` - content inequality of two views. */
   // @ts-ignore: decorator
-  @operator("!=") static __ne(a: Str, b: Str): bool {
-    return !a.equals(b);
-  }
-  /** `a < b` - `true` if `a` sorts before `b` by code-unit ordering. */
-  // @ts-ignore: decorator
-  @operator("<") static __lt(a: Str, b: Str): bool {
-    return a.compareTo(b) < 0;
-  }
-  /** `a <= b` - `true` if `a` sorts before or equal to `b` by code unit. */
-  // @ts-ignore: decorator
-  @operator("<=") static __le(a: Str, b: Str): bool {
-    return a.compareTo(b) <= 0;
-  }
-  /** `a > b` - `true` if `a` sorts after `b` by code-unit ordering. */
-  // @ts-ignore: decorator
-  @operator(">") static __gt(a: Str, b: Str): bool {
-    return a.compareTo(b) > 0;
-  }
-  /** `a >= b` - `true` if `a` sorts after or equal to `b` by code unit. */
-  // @ts-ignore: decorator
-  @operator(">=") static __ge(a: Str, b: Str): bool {
-    return a.compareTo(b) >= 0;
+  @operator("!=") notEquals(other: Str): bool {
+    return !this.equals(other);
   }
 
-  /**
-   * `a + b` - concatenation, returned as a view over a freshly owned string.
-   *
-   * @param a - left operand.
-   * @param b - right operand.
-   * @returns A view over the newly allocated concatenation.
-   */
+  /** `a < b` - `true` if this view sorts before `other` by code-unit ordering. */
   // @ts-ignore: decorator
-  @operator("+") static __add(a: Str, b: Str): Str {
-    return Str.from(Str.concat<Str, Str>(a, b));
+  @operator("<") lessThan(other: Str): bool {
+    return this.compareTo(other) < 0;
   }
 
-  /**
-   * `v[i]` - the UTF-16 code unit at `i` (no allocation).
-   *
-   * @param index - zero-based code-unit index.
-   * @returns The code unit, or -1 if `index` is out of range.
-   */
+  /** `a <= b` - `true` if this view sorts before or equal to `other`. */
   // @ts-ignore: decorator
-  @operator("[]") __get(index: i32): i32 {
+  @operator("<=") lessThanOrEqual(other: Str): bool {
+    return this.compareTo(other) <= 0;
+  }
+
+  /** `a > b` - `true` if this view sorts after `other` by code-unit ordering. */
+  // @ts-ignore: decorator
+  @operator(">") greaterThan(other: Str): bool {
+    return this.compareTo(other) > 0;
+  }
+
+  /** `a >= b` - `true` if this view sorts after or equal to `other`. */
+  // @ts-ignore: decorator
+  @operator(">=") greaterThanOrEqual(other: Str): bool {
+    return this.compareTo(other) >= 0;
+  }
+
+  /** `a + b` - concatenate into a fresh `Str` view. */
+  // @ts-ignore: decorator
+  @operator("+") add(other: Str): Str {
+    return Str.from(Str.concat<Str, Str>(this, other));
+  }
+
+  /** `v[i]` - UTF-16 code unit, or -1 if out of range. */
+  // @ts-ignore: decorator
+  @operator("[]") get(index: i32): i32 {
     return Str.charCodeAtRange(this.start, this.end, index);
   }
 
-  /**
-   * Materialize the view into a real `string`.
-   *
-   * @returns A freshly allocated, owned `string` holding the view's contents.
-   */
+  /** Materialize the view into a real `string`. */
   toString(): string {
     return materialize(this.start, this.end);
   }
@@ -1048,6 +1012,108 @@ import { Str8 } from "./str8";
    */
   static includes<T, U>(s: T, search: U): bool {
     return Str.indexOf(s, search) != -1;
+  }
+
+  /** Free-function form of {@link Str#before}. */
+  static before<T, U>(s: T, search: U): Str {
+    const data = bData(s);
+    const start = bStart(s);
+    const end = bEnd(s);
+    const i = rangeIndexOf(start, end, bStart(search), bEnd(search), 0);
+    return i < 0
+      ? new Str(data, start, start)
+      : Str.sliceRange(data, start, end, 0, i);
+  }
+
+  /** Free-function form of {@link Str#after}. */
+  static after<T, U>(s: T, search: U): Str {
+    const data = bData(s);
+    const start = bStart(s);
+    const end = bEnd(s);
+    const nStart = bStart(search);
+    const nEnd = bEnd(search);
+    const i = rangeIndexOf(start, end, nStart, nEnd, 0);
+    return i < 0
+      ? new Str(data, end, end)
+      : Str.sliceRange(
+          data,
+          start,
+          end,
+          i + unitLength(nStart, nEnd),
+          i32.MAX_VALUE,
+        );
+  }
+
+  /** Free-function form of {@link Str#between}. */
+  static between<T, U, V>(s: T, open: U, close: V): Str {
+    const data = bData(s);
+    const start = bStart(s);
+    const end = bEnd(s);
+    const oStart = bStart(open);
+    const oEnd = bEnd(open);
+    const lo = rangeIndexOf(start, end, oStart, oEnd, 0);
+    if (lo < 0) return new Str(data, start, start);
+    const bodyStart = lo + unitLength(oStart, oEnd);
+    const hi = rangeIndexOf(start, end, bStart(close), bEnd(close), bodyStart);
+    return hi < 0
+      ? new Str(data, end, end)
+      : Str.sliceRange(data, start, end, bodyStart, hi);
+  }
+
+  /** Free-function form of {@link Str#beforeLast}. */
+  static beforeLast<T, U>(s: T, search: U): Str {
+    const data = bData(s);
+    const start = bStart(s);
+    const end = bEnd(s);
+    const i = rangeLastIndexOf(
+      start,
+      end,
+      bStart(search),
+      bEnd(search),
+      i32.MAX_VALUE,
+    );
+    return i < 0
+      ? new Str(data, start, start)
+      : Str.sliceRange(data, start, end, 0, i);
+  }
+
+  /** Free-function form of {@link Str#afterLast}. */
+  static afterLast<T, U>(s: T, search: U): Str {
+    const data = bData(s);
+    const start = bStart(s);
+    const end = bEnd(s);
+    const nStart = bStart(search);
+    const nEnd = bEnd(search);
+    const i = rangeLastIndexOf(start, end, nStart, nEnd, i32.MAX_VALUE);
+    return i < 0
+      ? new Str(data, end, end)
+      : Str.sliceRange(
+          data,
+          start,
+          end,
+          i + unitLength(nStart, nEnd),
+          i32.MAX_VALUE,
+        );
+  }
+
+  /** Free-function form of {@link Str#betweenLast}. */
+  static betweenLast<T, U, V>(s: T, open: U, close: V): Str {
+    const data = bData(s);
+    const start = bStart(s);
+    const end = bEnd(s);
+    const hi = rangeLastIndexOf(
+      start,
+      end,
+      bStart(close),
+      bEnd(close),
+      i32.MAX_VALUE,
+    );
+    if (hi < 0) return new Str(data, end, end);
+    const oStart = bStart(open);
+    const oEnd = bEnd(open);
+    const lo = rangeLastIndexOf(start, end, oStart, oEnd, hi);
+    if (lo < 0) return new Str(data, start, start);
+    return Str.sliceRange(data, start, end, lo + unitLength(oStart, oEnd), hi);
   }
 
   /**
@@ -1691,6 +1757,24 @@ export namespace str {
   }
   export function includes<T, U>(s: T, search: U): bool {
     return Str.includes<T, U>(s, search);
+  }
+  export function before<T, U>(s: T, search: U): Str {
+    return Str.before<T, U>(s, search);
+  }
+  export function after<T, U>(s: T, search: U): Str {
+    return Str.after<T, U>(s, search);
+  }
+  export function between<T, U, V>(s: T, open: U, close: V): Str {
+    return Str.between<T, U, V>(s, open, close);
+  }
+  export function beforeLast<T, U>(s: T, search: U): Str {
+    return Str.beforeLast<T, U>(s, search);
+  }
+  export function afterLast<T, U>(s: T, search: U): Str {
+    return Str.afterLast<T, U>(s, search);
+  }
+  export function betweenLast<T, U, V>(s: T, open: U, close: V): Str {
+    return Str.betweenLast<T, U, V>(s, open, close);
   }
   export function startsWith<T, U>(s: T, search: U, start: i32 = 0): bool {
     return Str.startsWith<T, U>(s, search, start);

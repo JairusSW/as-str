@@ -1,29 +1,10 @@
-// Low-level, allocation-free helpers shared by the str core. Everything
-// here works on raw byte pointers into UTF-16 string data (2 bytes per code
-// unit) so that views never copy until a real `string` is materialized.
-//
-// The scanning primitives (`findUnit`, `compare`) carry three tiers:
-//
-//   * SIMD   - 8 code units (16 bytes) per step via v128, taken only when
-//     `ASC_FEATURE_SIMD` is compiled in (`--enable simd`); otherwise the whole
-//     branch is folded away at compile time.
-//   * SWAR   - 4 code units (8 bytes) per step using plain u64 word tricks; the
-//     default fast path when SIMD is off.
-//   * scalar - one code unit at a time, handling the sub-block tail.
-//
-// Wide loads are always gated by the remaining length (`p + block <= end`), so
-// they never read past the end of the backing string allocation - no scratch
-// padding is required. UTF-16 data is 2-byte aligned; wider unaligned loads are
-// well-defined in WebAssembly.
+// Low-level UTF-16 helpers for `str`. Scans use SIMD, SWAR, then scalar tails.
 
 // Per-16-bit-lane constants for the SWAR zero/diff detection (Mycroft's trick).
 const LANE_ONES: u64 = 0x0001000100010001;
 const LANE_HIGH: u64 = 0x8000800080008000;
 
-// Constant SIMD mask isolating the non-ASCII bits of each UTF-16 lane (anything
-// at or above U+0080). `@lazy` so the `i16x8.splat` initializer is emitted only
-// when referenced - which only happens inside `if (ASC_FEATURE_SIMD)`, so a
-// `--disable simd` build dead-codes the use and tree-shakes the global away.
+// Lazy so no-SIMD builds never emit the splat initializer.
 // @ts-ignore: decorator
 @lazy const NON_ASCII_MASK: v128 = i16x8.splat(<i16>0xff80);
 
@@ -33,11 +14,7 @@ const LANE_HIGH: u64 = 0x8000800080008000;
   return <i32>((end - start) >> 1);
 }
 
-/**
- * Find the first code unit equal to `needle` in `[start, end)`. Returns its
- * code-unit offset from `start`, or `-1`. This is the workhorse behind
- * `indexOf`: it locates candidate match positions far faster than a scalar scan.
- */
+/** Find `needle` in `[start, end)`, returning its code-unit offset or `-1`. */
 export function findUnit(start: usize, end: usize, needle: u16): i32 {
   let p = start;
   if (ASC_FEATURE_SIMD) {
@@ -116,16 +93,10 @@ export function compare(
   return aLen == bLen ? 0 : aLen < bLen ? -1 : 1;
 }
 
-// Above this many bytes `memory.compare` (optimized native memcmp) wins; below
-// it, a manual equality scan avoids its per-call overhead and needs no ordering.
+// Below this, manual equality avoids `memory.compare` overhead.
 const COMPARE_INTRINSIC_MIN: usize = 256;
 
-/**
- * Whether `n` bytes at `a` and `b` are identical. Small ranges use a manual
- * scan (v128 blocks under SIMD, else u64, then a scalar tail) that early-exits
- * on the first mismatch and never computes ordering; large ranges defer to
- * `memory.compare`. Pointers are at least 2-byte aligned.
- */
+/** Byte equality for two ranges, using manual scans for small inputs. */
 export function equalsBytes(a: usize, b: usize, n: usize): bool {
   if (n >= COMPARE_INTRINSIC_MIN) return memory.compare(a, b, n) == 0;
   let i: usize = 0;
@@ -163,14 +134,7 @@ export function equals(
   return equalsBytes(aStart, bStart, aBytes);
 }
 
-/**
- * Find the first occurrence of the needle range inside the haystack range,
- * starting at code-unit offset `from`. Returns the code-unit index or `-1`.
- *
- * `findUnit` (SIMD/SWAR) jumps straight to each position where the needle's
- * first unit appears; the remaining units are verified with `equalsBytes`. For
- * a single-unit needle this is a pure accelerated scan.
- */
+/** Find the first needle range in the haystack, returning a code-unit index. */
 export function indexOf(
   hStart: usize,
   hEnd: usize,
@@ -180,14 +144,13 @@ export function indexOf(
 ): i32 {
   const hLen = unitLength(hStart, hEnd);
   const nLen = unitLength(nStart, nEnd);
-  // Mirror AssemblyScript's `String#indexOf`: an empty needle is always found
-  // at offset 0, regardless of `from`.
+  // Empty needles match at 0, matching AssemblyScript.
   if (nLen == 0) return 0;
   if (nLen > hLen) return -1;
 
   const first = load<u16>(nStart);
   const last = hLen - nLen;
-  // The first unit can only start a valid match at indices `[from, last]`.
+  // First unit can only start a match at `[from, last]`.
   const scanEnd = hStart + ((<usize>(last + 1)) << 1);
   const tailBytes = (<usize>(nLen - 1)) << 1;
   let i = max(from, 0);
@@ -207,11 +170,7 @@ export function indexOf(
   return -1;
 }
 
-/**
- * Find the last occurrence at or before code-unit offset `from`. The backward
- * first-unit scan stays scalar (reverse vectorization buys little here), but
- * each candidate's tail is verified with `equalsBytes`.
- */
+/** Find the last needle range at or before `from`. */
 export function lastIndexOf(
   hStart: usize,
   hEnd: usize,
@@ -221,8 +180,7 @@ export function lastIndexOf(
 ): i32 {
   const hLen = unitLength(hStart, hEnd);
   const nLen = unitLength(nStart, nEnd);
-  // Mirror AssemblyScript's `String#lastIndexOf`: an empty needle always
-  // matches at the end of the string, regardless of `from`.
+  // Empty needles match at the end, matching AssemblyScript.
   if (nLen == 0) return hLen;
   if (nLen > hLen) return -1;
 
@@ -241,18 +199,10 @@ export function lastIndexOf(
   return -1;
 }
 
-// Above this many bytes the `memory.copy` bulk-memory intrinsic (an optimized
-// native memcpy) wins; below it, its fixed per-call setup dominates and a manual
-// unrolled copy is faster. Tiny copies - e.g. a pad fill repeating a 1-char
-// string - are where the manual path pays off the most.
+// Below this, manual copy avoids `memory.copy` overhead.
 const COPY_INTRINSIC_MIN: usize = 256;
 
-/**
- * Copy `n` bytes from `src` to `dst` (non-overlapping). Small copies use a
- * manual tiered loop (v128 blocks when SIMD is compiled in, else u64, then a
- * scalar tail); large copies defer to `memory.copy`. Pointers are at least
- * 2-byte aligned; wider unaligned loads/stores are well-defined in Wasm.
- */
+/** Copy `n` non-overlapping bytes from `src` to `dst`. */
 export function copyBytes(dst: usize, src: usize, n: usize): void {
   if (n >= COPY_INTRINSIC_MIN) {
     memory.copy(dst, src, n);

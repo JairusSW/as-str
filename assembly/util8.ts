@@ -1,32 +1,11 @@
-// Low-level, allocation-free helpers shared by the str8 core. Everything here
-// works on raw byte pointers into UTF-8 buffer data (1 byte per unit) so that
-// str8 views never copy until a fresh `ArrayBuffer` or `string` is materialized.
-//
-// This is the byte-granular twin of `util.ts`: where the UTF-16 helpers there
-// scan 16-bit code units (`load<u16>`, `<<1`/`>>1`), these scan 8-bit bytes, so
-// every shift collapses to identity. The scanning primitives (`findByte`,
-// `compareBytes`) carry the same three tiers:
-//
-//   * SIMD   - 16 bytes per step via v128, taken only when `ASC_FEATURE_SIMD`
-//     is compiled in (`--enable simd`); otherwise the branch folds away.
-//   * SWAR   - 8 bytes per step using plain u64 word tricks (Mycroft's trick),
-//     the default fast path when SIMD is off.
-//   * scalar - one byte at a time, handling the sub-block tail.
-//
-// `copyBytes`, `equalsBytes`, `equals` and `isWhiteSpace` in `util.ts` are
-// already byte-generic and reused directly by str8 rather than reimplemented.
+// Low-level UTF-8 byte helpers for `str8`. Scans use SIMD, SWAR, then scalar tails.
 import { copyBytes, equalsBytes } from "./util";
 
 // Per-byte-lane constants for the SWAR zero/diff detection (Mycroft's trick).
 const LANE_ONES_8: u64 = 0x0101010101010101;
 const LANE_HIGH_8: u64 = 0x8080808080808080;
 
-// Constant SIMD masks for the `codePointCount` continuation-byte test. These are
-// `@lazy` so their `i8x16.splat` initializer is emitted *only if* something
-// actually references them - which only happens inside an `if (ASC_FEATURE_SIMD)`
-// block. A `--disable simd` build dead-code-eliminates those blocks, so the
-// globals are never touched and tree-shake away (a plain top-level `const` would
-// instead run the splat eagerly in module start and fail to build without SIMD).
+// Lazy so no-SIMD builds never emit these splat initializers.
 // @ts-ignore: decorator
 @lazy const CONT_HIGH2: v128 = i8x16.splat(<i8>0xc0); // isolates the top 2 bits
 // @ts-ignore: decorator
@@ -43,12 +22,7 @@ const LANE_HIGH_8: u64 = 0x8080808080808080;
   return 1;
 }
 
-/**
- * Whether byte offset `i` (relative to `start`) lands on a codepoint boundary,
- * mirroring Rust's `str::is_char_boundary`. The ends (`0` and the length) are
- * boundaries; an interior offset is a boundary iff it is not a continuation
- * byte (`0b10xxxxxx`).
- */
+/** Whether byte offset `i` lands on a UTF-8 codepoint boundary. */
 // @ts-ignore: decorator
 @inline export function isCharBoundary(
   start: usize,
@@ -62,11 +36,7 @@ const LANE_HIGH_8: u64 = 0x8080808080808080;
   return (load<u8>(p) & 0xc0) != 0x80;
 }
 
-/**
- * Decode the UTF-8 codepoint at `p`, packing `(codepoint << 32) | byteWidth`
- * into a `u64`. Truncated or malformed sequences decode to U+FFFD with width 1.
- * Use `cpOf` / `widthOf` to unpack.
- */
+/** Decode at `p`, packed as `(codepoint << 32) | byteWidth`. */
 export function decodeCodePointAt(p: usize, end: usize): u64 {
   const b0 = <u32>load<u8>(p);
   if (b0 < 0x80) return ((<u64>b0) << 32) | 1;
@@ -109,21 +79,14 @@ export function decodeCodePointAt(p: usize, end: usize): u64 {
   return <i32>(packed & 0xffffffff);
 }
 
-/**
- * Byte pointer to the start of the codepoint immediately before `p`. Walks back
- * over UTF-8 continuation bytes; used by the reverse `trimEnd` scan.
- */
+/** Start pointer of the codepoint before `p`. */
 export function prevCodePointStart(start: usize, p: usize): usize {
   let q = p - 1;
   while (q > start && (load<u8>(q) & 0xc0) == 0x80) q--;
   return q;
 }
 
-/**
- * Number of Unicode codepoints in `[start, end)`: the byte count minus the
- * continuation bytes (`0b10xxxxxx`). Counts continuation bytes 16 at a time
- * under SIMD (`bitmask` + `popcnt`), 8 at a time under SWAR, then a scalar tail.
- */
+/** Number of Unicode codepoints in `[start, end)`. */
 export function codePointCount(start: usize, end: usize): i32 {
   const total = <i32>(end - start);
   let cont = 0;
@@ -151,11 +114,7 @@ export function codePointCount(start: usize, end: usize): i32 {
   return total - cont;
 }
 
-/**
- * Whether every byte in `[start, end)` is ASCII (high bit clear). Scans 16 bytes
- * at a time under SIMD (`bitmask` of the sign bits), 8 under SWAR, then a scalar
- * tail. Used to take an in-place byte fast path for case folding.
- */
+/** Whether every byte in `[start, end)` is ASCII. */
 export function isAsciiRange(start: usize, end: usize): bool {
   let p = start;
   if (ASC_FEATURE_SIMD) {
@@ -176,13 +135,7 @@ export function isAsciiRange(start: usize, end: usize): bool {
   return true;
 }
 
-/**
- * Copy `n` ASCII bytes from `src` to `dst`, adding `delta` to each byte in
- * `[lo, hi]`. With `lo='a',hi='z',delta=-0x20` this upper-cases; with
- * `lo='A',hi='Z',delta=+0x20` it lower-cases. Callers must ensure the range is
- * pure ASCII (see `isAsciiRange`). Folds 16 bytes per step under SIMD, 8 under
- * SWAR, then a scalar tail. Non-overlapping.
- */
+/** Copy ASCII bytes while folding `[lo, hi]` by `delta`. */
 export function asciiCaseFold(
   dst: usize,
   src: usize,
@@ -202,10 +155,7 @@ export function asciiCaseFold(
       v128.store(dst + i, i8x16.add(va, v128.and(inRange, vd)));
     }
   }
-  // SWAR: per-byte range test without cross-byte carry (input is pure ASCII, so
-  // `byte + bGe` never overflows its lane). `m` carries 0x80 in each in-range
-  // lane; `m >> 2` turns that into the 0x20 case-fold bit. Subtract to upper,
-  // add to lower.
+  // SWAR per-byte range test; input is ASCII, so lanes do not overflow.
   const bGe = <u64>(0x80 - lo) * LANE_ONES_8;
   const bLt = <u64>(0x80 - (<i32>hi + 1)) * LANE_ONES_8;
   const sub = delta < 0;
@@ -220,10 +170,7 @@ export function asciiCaseFold(
   }
 }
 
-/**
- * Find the first byte equal to `needle` in `[start, end)`. Returns its byte
- * offset from `start`, or `-1`. The workhorse behind `indexOfBytes`.
- */
+/** Find `needle` in `[start, end)`, returning its byte offset or `-1`. */
 export function findByte(start: usize, end: usize, needle: u8): i32 {
   let p = start;
   if (ASC_FEATURE_SIMD) {
@@ -249,13 +196,7 @@ export function findByte(start: usize, end: usize, needle: u8): i32 {
   return -1;
 }
 
-/**
- * Find the first occurrence of the needle byte range inside the haystack range,
- * starting at byte offset `from`. Returns the byte offset or `-1`.
- *
- * UTF-8 is self-synchronizing, so a raw byte-substring match is always a real
- * codepoint-aligned match - no false positives spanning a partial sequence.
- */
+/** Find the first needle byte range in the haystack. */
 export function indexOfBytes(
   hStart: usize,
   hEnd: usize,
@@ -265,7 +206,7 @@ export function indexOfBytes(
 ): i32 {
   const hLen = <i32>(hEnd - hStart);
   const nLen = <i32>(nEnd - nStart);
-  // Mirror native `indexOf`: an empty needle is found at offset 0.
+  // Empty needles match at 0.
   if (nLen == 0) return 0;
   if (nLen > hLen) return -1;
 
@@ -290,10 +231,7 @@ export function indexOfBytes(
   return -1;
 }
 
-/**
- * Find the last occurrence at or before byte offset `from`. The backward
- * first-byte scan stays scalar; each candidate's tail uses `equalsBytes`.
- */
+/** Find the last needle byte range at or before `from`. */
 export function lastIndexOfBytes(
   hStart: usize,
   hEnd: usize,
@@ -303,7 +241,7 @@ export function lastIndexOfBytes(
 ): i32 {
   const hLen = <i32>(hEnd - hStart);
   const nLen = <i32>(nEnd - nStart);
-  // Mirror native `lastIndexOf`: an empty needle matches at the end.
+  // Empty needles match at the end.
   if (nLen == 0) return hLen;
   if (nLen > hLen) return -1;
 
@@ -321,11 +259,7 @@ export function lastIndexOfBytes(
   return -1;
 }
 
-/**
- * Lexicographic unsigned-byte compare of two ranges. For valid UTF-8 this is
- * exactly Unicode codepoint order (and matches Rust/Go `Ord for str`), which
- * differs from UTF-16 code-unit order only for astral vs BMP >= U+E000.
- */
+/** Lexicographic unsigned-byte compare of two ranges. */
 export function compareBytes(
   aStart: usize,
   aEnd: usize,

@@ -70,6 +70,26 @@ describe("str queries", () => {
     expect(str.includes(SAMPLE, "wor")).toBe(true);
   });
 
+  test("before / after / between helpers", () => {
+    const route = str.from("GET /api/users?id=42 HTTP/1.1");
+    expect(route.before(" ").toString()).toBe("GET");
+    expect(route.after(" ").before(" ").toString()).toBe("/api/users?id=42");
+    expect(route.between("/api/", "?").toString()).toBe("users");
+    expect(str.before("abc", "x").toString()).toBe("");
+    expect(str.after("abc", "x").toString()).toBe("");
+    expect(str.between("abc", "[", "]").toString()).toBe("");
+  });
+
+  test("beforeLast / afterLast / betweenLast helpers", () => {
+    const path = str.from("/root/app/src/index.ts");
+    expect(path.beforeLast("/").toString()).toBe("/root/app/src");
+    expect(path.afterLast("/").toString()).toBe("index.ts");
+    expect(str.betweenLast("a[b] c[d]", "[", "]").toString()).toBe("d");
+    expect(str.beforeLast("abc", "x").toString()).toBe("");
+    expect(str.afterLast("abc", "x").toString()).toBe("");
+    expect(str.betweenLast("abc", "[", "]").toString()).toBe("");
+  });
+
   test("startsWith / endsWith", () => {
     expect(str.startsWith(SAMPLE, "hello")).toBe(true);
     expect(str.startsWith(SAMPLE, "world", 7)).toBe(true);

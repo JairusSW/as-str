@@ -1,11 +1,4 @@
-// Microbenchmarks contrasting every native `String` operation with its `str8`
-// (UTF-8) counterpart over the same ~2 kb ASCII input. The backing string is
-// pure ASCII so UTF-8 byte offsets line up with native char indices, keeping the
-// comparison apples-to-apples (one byte per char). The str8 inputs are
-// pre-encoded once into UTF-8 views (`V8` and the needles), so each timed body
-// measures the str8 operation itself, not the one-time transcode. Suite keys are
-// prefixed `u8_` so they never collide with str.bench's suites in the shared
-// as-bench JSON. `blackbox` stops the optimizer folding the timed work away.
+// Native String vs `str8` microbenchmarks on one ~2 kb ASCII input.
 
 import { bench, suite, blackbox, settings } from "as-bench/assembly/index";
 import { str8 } from "../index";
@@ -13,9 +6,7 @@ import { str8 } from "../index";
 settings.warmupTime = 250;
 settings.measurementTime = 500;
 
-// One ~2 kb backing string (1024 chars = 1024 UTF-8 bytes here, all ASCII). A
-// unique "needle" sits ~halfway in, wrapped in whitespace so the trim ops have
-// real work to do.
+// 1024 ASCII bytes with a middle "needle" and trim padding.
 const PHRASE = "the quick brown fox jumps over the lazy dog, ";
 const PAD = "        "; // 8 spaces
 const CORE = (PHRASE.repeat(21) + "needle, " + PHRASE.repeat(3)).slice(0, 1008);
@@ -26,8 +17,7 @@ const SUFFIX = BIG.substring(BIG.length - 8); // for endsWith
 const SAME = (BIG + " ").slice(0, BIG.length); // distinct copy, equal content
 const BIG_B = BIG.substring(0, BIG.length - 1) + "Z"; // differs at the last byte
 
-// Pre-encoded UTF-8 views / needles (transcode happens once, here, not in the
-// timed bodies).
+// Pre-encode UTF-8 inputs outside timed bodies.
 const V8 = str8.from(BIG);
 const SAME8 = str8.from(SAME);
 const BIGB8 = str8.from(BIG_B);
@@ -35,9 +25,7 @@ const PREFIX8 = str8.from(PREFIX);
 const SUFFIX8 = str8.from(SUFFIX);
 const NEEDLE8 = str8.from("needle");
 
-// ===========================================================================
-// View-producing ops - native copies; str8 returns a view (byte offsets).
-// ===========================================================================
+// View-producing ops: native copies, `str8` returns a view.
 
 suite("u8_slice", () => {
   bench("native String#slice", () => {
@@ -120,9 +108,7 @@ suite("u8_split", () => {
   });
 });
 
-// ===========================================================================
-// Queries - both return a primitive; str8 allocates nothing.
-// ===========================================================================
+// Queries: both return primitives, `str8` allocates nothing.
 
 suite("u8_length", () => {
   bench("native String#length", () => {
@@ -151,7 +137,7 @@ suite("u8_codePointAt", () => {
   });
 });
 
-// str8-only: O(n) Unicode-scalar count (not charted; here for optimization data).
+// str8-only: O(n) Unicode-scalar count.
 suite("u8_codePointCount", () => {
   bench("str8.codePointCount", () => {
     blackbox<i32>(str8.codePointCount(blackbox<str8>(V8)));
@@ -221,9 +207,7 @@ suite("u8_compare", () => {
   });
 });
 
-// ===========================================================================
-// Allocating ops - str8 builds a fresh UTF-8 buffer (no UTF-16 decode).
-// ===========================================================================
+// Allocating ops: `str8` builds a fresh UTF-8 buffer.
 
 suite("u8_toUpperCase", () => {
   bench("native String#toUpperCase", () => {

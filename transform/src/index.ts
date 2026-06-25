@@ -15,7 +15,7 @@ const DEBUG = /^(1|true|on|yes)$/i.test(process.env["STR_AS_DEBUG"] ?? "");
 
 const USES =
   /(?:\bstr\s*\.|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
-// The file declares its own `str` binding - never inject in that case.
+// Do not inject when the file owns `str`.
 const BINDS =
   /(?:\b(?:const|let|var|function|class|namespace|type)\s+str\b|\(\s*str\s*:|,\s*str\s*:)/;
 
@@ -57,7 +57,7 @@ function importedNames(source: Source): Set<string> {
 
 export default class StrAsTransform extends Transform {
   afterParse(parser: Parser): void {
-    // Package root: this file is <pkg>/transform/lib/index.js -> ../../.. is <pkg>.
+    // <pkg>/transform/lib/index.js -> <pkg>.
     const packageDir = path.resolve(
       fileURLToPath(import.meta.url),
       "..",
@@ -66,18 +66,17 @@ export default class StrAsTransform extends Transform {
     );
     const baseCWD = path.join(process.cwd(), this.baseDir ?? ".");
 
-    // The bare-specifier modules we may inject, and the source that backs each.
+    // Bare modules injected during this pass.
     const specifiers = new Set<string>();
 
     for (const source of parser.sources) {
-      // Skip stdlib + installed libraries (incl. as-str's own files when used
-      // as a dependency) and runtime internals.
+      // Skip stdlib, libraries, and runtime internals.
       if (source.isLibrary) continue;
       if (source.internalPath.startsWith("~lib")) continue;
 
       const text = source.text;
       const already = importedNames(source);
-      // Inject only when `str` is used as the class and not already in scope.
+      // Inject only if `str` is used and not already in scope.
       if (already.has(NAME) || !USES.test(text) || BINDS.test(text)) continue;
 
       let fromPath = source.normalizedPath.replaceAll("/", path.sep);
@@ -86,8 +85,7 @@ export default class StrAsTransform extends Transform {
         : path.join(baseCWD, fromPath);
 
       const baseRel = computeImportBaseRel(path.dirname(fromPath), packageDir);
-      // Installed: import the bare package (`as-str`), which asc resolves to
-      // its `assembly/index`. In-repo: keep the relative path to that file.
+      // Installed builds use `as-str`; in-repo builds use a relative import.
       const specifier =
         baseRel === PKG ? PKG : path.posix.join(baseRel, "assembly", "index");
       specifiers.add(specifier);
@@ -115,12 +113,10 @@ export default class StrAsTransform extends Transform {
     }
 
     for (const specifier of specifiers) {
-      // only the installed case (bare `as-str` or an `as-str/...` subpath)
+      // Only installed-package imports need seeding.
       if (specifier !== PKG && !specifier.startsWith(PKG + "/")) continue;
-      // asc resolves bare `as-str` to the package root `index.ts`, so seed it
-      // there (its `export … from "./assembly/index"` is then resolved
-      // natively). The injected import is added after asc's own resolution
-      // pass, so without this seed asc never fetches the module.
+      // The injected import is added after asc's resolver, so seed the package
+      // root explicitly.
       const internal = "~lib/" + PKG + "/index";
       if (parser.sources.some((s) => s.internalPath === internal)) continue;
       const file = path.join(packageDir, "index.ts");

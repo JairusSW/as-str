@@ -158,6 +158,11 @@ import { Str } from "./str";
     return rangeCodePointCount(this.start, this.end);
   }
 
+  /** Whether every byte is ASCII. */
+  isAscii(): bool {
+    return isAsciiRange(this.start, this.end);
+  }
+
   /**
    * Shared range implementation for `slice`. Negative bounds count from the end
    * and out-of-range bounds clamp into `[0, len]`.
@@ -328,6 +333,23 @@ import { Str } from "./str";
     return <i32>load<u8>(start + <usize>index);
   }
 
+  /** Shared codepoint-indexed slice implementation. @internal */
+  static sliceCharsRange(
+    buffer: ArrayBuffer,
+    start: usize,
+    end: usize,
+    lo0: i32,
+    hi0: i32,
+  ): Str8 {
+    const len = rangeCodePointCount(start, end);
+    let lo = lo0 < 0 ? max(len + lo0, 0) : min(lo0, len);
+    let hi = hi0 < 0 ? max(len + hi0, 0) : min(hi0, len);
+    if (hi < lo) hi = lo;
+    const bs = byteOffsetOfChar(start, end, lo);
+    const be = hi == lo ? bs : byteOffsetOfChar(bs, end, hi - lo);
+    return new Str8(buffer, bs, be);
+  }
+
   /**
    * Shared range implementation for `startsWith`; compares the needle's bytes at
    * a clamped byte offset.
@@ -377,6 +399,11 @@ import { Str } from "./str";
    */
   slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str8 {
     return Str8.sliceRange(this.buffer, this.start, this.end, start, end);
+  }
+
+  /** Codepoint-indexed slice that always returns valid UTF-8 boundaries. */
+  sliceChars(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str8 {
+    return Str8.sliceCharsRange(this.buffer, this.start, this.end, start, end);
   }
 
   /**
@@ -456,6 +483,12 @@ import { Str } from "./str";
     return Str8.codePointAtRange(this.start, this.end, index);
   }
 
+  /** Packed `(codepoint << 32) | byteWidth` at byte `index`; width 0 if absent. */
+  nextCodePoint(index: i32): u64 {
+    if (<u32>index >= <u32>(this.end - this.start)) return 0;
+    return decodeCodePointAt(this.start + <usize>index, this.end);
+  }
+
   /**
    * Return the raw byte at `index` (Go `s[i]`), or -1 if out of range.
    */
@@ -487,6 +520,60 @@ import { Str } from "./str";
     return this.indexOf(search) != -1;
   }
 
+  /** View before the first `search`, or empty if absent. */
+  before<U>(search: U): Str8 {
+    const i = this.indexOf(search);
+    return i < 0
+      ? new Str8(this.buffer, this.start, this.start)
+      : this.slice(0, i);
+  }
+
+  /** View after the first `search`, or empty if absent. */
+  after<U>(search: U): Str8 {
+    const i = this.indexOf(search);
+    if (i < 0) return new Str8(this.buffer, this.end, this.end);
+    const n = asView(search);
+    return this.slice(i + <i32>(n.end - n.start));
+  }
+
+  /** View between the first `open` and the next `close`, or empty if absent. */
+  between<U, V>(open: U, close: V): Str8 {
+    const lo = this.indexOf(open);
+    if (lo < 0) return new Str8(this.buffer, this.start, this.start);
+    const o = asView(open);
+    const bodyStart = lo + <i32>(o.end - o.start);
+    const hi = this.indexOf(close, bodyStart);
+    return hi < 0
+      ? new Str8(this.buffer, this.end, this.end)
+      : this.slice(bodyStart, hi);
+  }
+
+  /** View before the last `search`, or empty if absent. */
+  beforeLast<U>(search: U): Str8 {
+    const i = this.lastIndexOf(search);
+    return i < 0
+      ? new Str8(this.buffer, this.start, this.start)
+      : this.slice(0, i);
+  }
+
+  /** View after the last `search`, or empty if absent. */
+  afterLast<U>(search: U): Str8 {
+    const i = this.lastIndexOf(search);
+    if (i < 0) return new Str8(this.buffer, this.end, this.end);
+    const n = asView(search);
+    return this.slice(i + <i32>(n.end - n.start));
+  }
+
+  /** View between the last `open` before the last `close`, or empty if absent. */
+  betweenLast<U, V>(open: U, close: V): Str8 {
+    const hi = this.lastIndexOf(close);
+    if (hi < 0) return new Str8(this.buffer, this.end, this.end);
+    const lo = this.lastIndexOf(open, hi);
+    if (lo < 0) return new Str8(this.buffer, this.start, this.start);
+    const o = asView(open);
+    return this.slice(lo + <i32>(o.end - o.start), hi);
+  }
+
   /** Whether the view begins with `search` at the given byte offset. */
   startsWith<U>(search: U, start: i32 = 0): bool {
     const n = asView(search);
@@ -499,8 +586,9 @@ import { Str } from "./str";
     return Str8.endsWithRange(this.start, this.end, n.start, n.end, end);
   }
 
-  /** Content equality against another view. */
-  equals(other: Str8): bool {
+  /** `a == b` - content equality against another view. */
+  // @ts-ignore: decorator
+  @operator("==") equals(other: Str8): bool {
     return rangeEquals(this.start, this.end, other.start, other.end);
   }
 
@@ -574,44 +662,55 @@ import { Str } from "./str";
     return Str8.split<Str8>(this, separator, limit);
   }
 
-  /** `a == b` - content equality of two views. */
-  // @ts-ignore: decorator
-  @operator("==") static __eq(a: Str8, b: Str8): bool {
-    return a.equals(b);
+  // Operator overloads also have named methods for editor compatibility.
+
+  /** Re-point this view at `other`. */
+  set(other: Str8): Str8 {
+    this.buffer = other.buffer;
+    this.start = other.start;
+    this.end = other.end;
+    return this;
   }
+
   /** `a != b` - content inequality of two views. */
   // @ts-ignore: decorator
-  @operator("!=") static __ne(a: Str8, b: Str8): bool {
-    return !a.equals(b);
+  @operator("!=") notEquals(other: Str8): bool {
+    return !this.equals(other);
   }
-  /** `a < b` - `true` if `a` sorts before `b` by byte (codepoint) order. */
+
+  /** `a < b` - `true` if this view sorts before `other` by byte (codepoint) order. */
   // @ts-ignore: decorator
-  @operator("<") static __lt(a: Str8, b: Str8): bool {
-    return a.compareTo(b) < 0;
+  @operator("<") lessThan(other: Str8): bool {
+    return this.compareTo(other) < 0;
   }
-  /** `a <= b` - `true` if `a` sorts before or equal to `b`. */
+
+  /** `a <= b` - `true` if this view sorts before or equal to `other`. */
   // @ts-ignore: decorator
-  @operator("<=") static __le(a: Str8, b: Str8): bool {
-    return a.compareTo(b) <= 0;
+  @operator("<=") lessThanOrEqual(other: Str8): bool {
+    return this.compareTo(other) <= 0;
   }
-  /** `a > b` - `true` if `a` sorts after `b`. */
+
+  /** `a > b` - `true` if this view sorts after `other` by byte (codepoint) order. */
   // @ts-ignore: decorator
-  @operator(">") static __gt(a: Str8, b: Str8): bool {
-    return a.compareTo(b) > 0;
+  @operator(">") greaterThan(other: Str8): bool {
+    return this.compareTo(other) > 0;
   }
-  /** `a >= b` - `true` if `a` sorts after or equal to `b`. */
+
+  /** `a >= b` - `true` if this view sorts after or equal to `other`. */
   // @ts-ignore: decorator
-  @operator(">=") static __ge(a: Str8, b: Str8): bool {
-    return a.compareTo(b) >= 0;
+  @operator(">=") greaterThanOrEqual(other: Str8): bool {
+    return this.compareTo(other) >= 0;
   }
-  /** `a + b` - concatenation, returned as a view over a fresh buffer. */
+
+  /** `a + b` - concatenate into a fresh `Str8` view. */
   // @ts-ignore: decorator
-  @operator("+") static __add(a: Str8, b: Str8): Str8 {
-    return Str8.concat<Str8, Str8>(a, b);
+  @operator("+") add(other: Str8): Str8 {
+    return Str8.concat<Str8, Str8>(this, other);
   }
-  /** `v[i]` - the raw byte at `i` (Go `s[i]`), or -1 if out of range. */
+
+  /** `v[i]` - raw byte, or -1 if out of range. */
   // @ts-ignore: decorator
-  @operator("[]") __get(index: i32): i32 {
+  @operator("[]") get(index: i32): i32 {
     return Str8.byteAtRange(this.start, this.end, index);
   }
 
@@ -634,6 +733,12 @@ import { Str } from "./str";
   static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str8 {
     const v = asView(s);
     return Str8.sliceRange(v.buffer, v.start, v.end, start, end);
+  }
+
+  /** Free-function form of {@link Str8#sliceChars}. */
+  static sliceChars<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str8 {
+    const v = asView(s);
+    return Str8.sliceCharsRange(v.buffer, v.start, v.end, start, end);
   }
 
   /** Free-function form of {@link Str8#substring}. */
@@ -684,6 +789,12 @@ import { Str } from "./str";
     return <i32>(v.end - v.start);
   }
 
+  /** Explicit byte-length alias of {@link Str8#length}. */
+  static byteLength<T>(s: T): i32 {
+    const v = asView(s);
+    return <i32>(v.end - v.start);
+  }
+
   /** Free-function form of {@link Str8#isEmpty}. */
   static isEmpty<T>(s: T): bool {
     const v = asView(s);
@@ -696,10 +807,23 @@ import { Str } from "./str";
     return rangeCodePointCount(v.start, v.end);
   }
 
+  /** Free-function form of {@link Str8#isAscii}. */
+  static isAscii<T>(s: T): bool {
+    const v = asView(s);
+    return isAsciiRange(v.start, v.end);
+  }
+
   /** Free-function form of {@link Str8#codePointAt}. */
   static codePointAt<T>(s: T, index: i32): i32 {
     const v = asView(s);
     return Str8.codePointAtRange(v.start, v.end, index);
+  }
+
+  /** Free-function form of {@link Str8#nextCodePoint}. */
+  static nextCodePoint<T>(s: T, index: i32): u64 {
+    const v = asView(s);
+    if (<u32>index >= <u32>(v.end - v.start)) return 0;
+    return decodeCodePointAt(v.start + <usize>index, v.end);
   }
 
   /** Free-function form of {@link Str8#byteAt}. */
@@ -732,6 +856,90 @@ import { Str } from "./str";
   /** Free-function form of {@link Str8#includes}. */
   static includes<T, U>(s: T, search: U): bool {
     return Str8.indexOf(s, search) != -1;
+  }
+
+  /** Free-function form of {@link Str8#before}. */
+  static before<T, U>(s: T, search: U): Str8 {
+    const v = asView(s);
+    const n = asView(search);
+    const i = indexOfBytes(v.start, v.end, n.start, n.end, 0);
+    return i < 0
+      ? new Str8(v.buffer, v.start, v.start)
+      : Str8.sliceRange(v.buffer, v.start, v.end, 0, i);
+  }
+
+  /** Free-function form of {@link Str8#after}. */
+  static after<T, U>(s: T, search: U): Str8 {
+    const v = asView(s);
+    const n = asView(search);
+    const i = indexOfBytes(v.start, v.end, n.start, n.end, 0);
+    return i < 0
+      ? new Str8(v.buffer, v.end, v.end)
+      : Str8.sliceRange(
+          v.buffer,
+          v.start,
+          v.end,
+          i + <i32>(n.end - n.start),
+          i32.MAX_VALUE,
+        );
+  }
+
+  /** Free-function form of {@link Str8#between}. */
+  static between<T, U, V>(s: T, open: U, close: V): Str8 {
+    const v = asView(s);
+    const o = asView(open);
+    const lo = indexOfBytes(v.start, v.end, o.start, o.end, 0);
+    if (lo < 0) return new Str8(v.buffer, v.start, v.start);
+    const bodyStart = lo + <i32>(o.end - o.start);
+    const c = asView(close);
+    const hi = indexOfBytes(v.start, v.end, c.start, c.end, bodyStart);
+    return hi < 0
+      ? new Str8(v.buffer, v.end, v.end)
+      : Str8.sliceRange(v.buffer, v.start, v.end, bodyStart, hi);
+  }
+
+  /** Free-function form of {@link Str8#beforeLast}. */
+  static beforeLast<T, U>(s: T, search: U): Str8 {
+    const v = asView(s);
+    const n = asView(search);
+    const i = lastIndexOfBytes(v.start, v.end, n.start, n.end, i32.MAX_VALUE);
+    return i < 0
+      ? new Str8(v.buffer, v.start, v.start)
+      : Str8.sliceRange(v.buffer, v.start, v.end, 0, i);
+  }
+
+  /** Free-function form of {@link Str8#afterLast}. */
+  static afterLast<T, U>(s: T, search: U): Str8 {
+    const v = asView(s);
+    const n = asView(search);
+    const i = lastIndexOfBytes(v.start, v.end, n.start, n.end, i32.MAX_VALUE);
+    return i < 0
+      ? new Str8(v.buffer, v.end, v.end)
+      : Str8.sliceRange(
+          v.buffer,
+          v.start,
+          v.end,
+          i + <i32>(n.end - n.start),
+          i32.MAX_VALUE,
+        );
+  }
+
+  /** Free-function form of {@link Str8#betweenLast}. */
+  static betweenLast<T, U, V>(s: T, open: U, close: V): Str8 {
+    const v = asView(s);
+    const c = asView(close);
+    const hi = lastIndexOfBytes(v.start, v.end, c.start, c.end, i32.MAX_VALUE);
+    if (hi < 0) return new Str8(v.buffer, v.end, v.end);
+    const o = asView(open);
+    const lo = lastIndexOfBytes(v.start, v.end, o.start, o.end, hi);
+    if (lo < 0) return new Str8(v.buffer, v.start, v.start);
+    return Str8.sliceRange(
+      v.buffer,
+      v.start,
+      v.end,
+      lo + <i32>(o.end - o.start),
+      hi,
+    );
   }
 
   /** Free-function form of {@link Str8#startsWith}. */
@@ -1048,6 +1256,16 @@ function fillRepeatBytes(
   if (remaining) copyBytes(p, src, remaining);
 }
 
+function byteOffsetOfChar(start: usize, end: usize, index: i32): usize {
+  let p = start;
+  let i = 0;
+  while (p < end && i < index) {
+    p += <usize>widthOf(decodeCodePointAt(p, end));
+    i++;
+  }
+  return p;
+}
+
 /**
  * Encoding / interop helpers merged onto `Str8`, mirroring `str.UTF8` /
  * `str.UTF16`. Functions accept a `string`, `Str8` or `ArrayBuffer`.
@@ -1169,6 +1387,13 @@ export namespace str8 {
   ): Str8 {
     return Str8.slice<T>(s, start, end);
   }
+  export function sliceChars<T>(
+    s: T,
+    start: i32 = 0,
+    end: i32 = i32.MAX_VALUE,
+  ): Str8 {
+    return Str8.sliceChars<T>(s, start, end);
+  }
   export function substring<T>(
     s: T,
     start: i32 = 0,
@@ -1208,14 +1433,23 @@ export namespace str8 {
   export function length<T>(s: T): i32 {
     return Str8.length<T>(s);
   }
+  export function byteLength<T>(s: T): i32 {
+    return Str8.byteLength<T>(s);
+  }
   export function isEmpty<T>(s: T): bool {
     return Str8.isEmpty<T>(s);
   }
   export function codePointCount<T>(s: T): i32 {
     return Str8.codePointCount<T>(s);
   }
+  export function isAscii<T>(s: T): bool {
+    return Str8.isAscii<T>(s);
+  }
   export function codePointAt<T>(s: T, index: i32): i32 {
     return Str8.codePointAt<T>(s, index);
+  }
+  export function nextCodePoint<T>(s: T, index: i32): u64 {
+    return Str8.nextCodePoint<T>(s, index);
   }
   export function byteAt<T>(s: T, index: i32): i32 {
     return Str8.byteAt<T>(s, index);
@@ -1235,6 +1469,24 @@ export namespace str8 {
   }
   export function includes<T, U>(s: T, search: U): bool {
     return Str8.includes<T, U>(s, search);
+  }
+  export function before<T, U>(s: T, search: U): Str8 {
+    return Str8.before<T, U>(s, search);
+  }
+  export function after<T, U>(s: T, search: U): Str8 {
+    return Str8.after<T, U>(s, search);
+  }
+  export function between<T, U, V>(s: T, open: U, close: V): Str8 {
+    return Str8.between<T, U, V>(s, open, close);
+  }
+  export function beforeLast<T, U>(s: T, search: U): Str8 {
+    return Str8.beforeLast<T, U>(s, search);
+  }
+  export function afterLast<T, U>(s: T, search: U): Str8 {
+    return Str8.afterLast<T, U>(s, search);
+  }
+  export function betweenLast<T, U, V>(s: T, open: U, close: V): Str8 {
+    return Str8.betweenLast<T, U, V>(s, open, close);
   }
   export function startsWith<T, U>(s: T, search: U, start: i32 = 0): bool {
     return Str8.startsWith<T, U>(s, search, start);

@@ -1,12 +1,4 @@
-// throughput chart - ported from json-as's scripts/build-chart01.ts and fed
-// with str data. Same grouped-bar throughput chart, same bench lib (createBarChart /
-// generateChart / BenchResult from ./lib/bench-utils, MODE_BARS from
-// ./lib/palette). Here each "payload" is a string operation and the series are
-// the three code paths (native String / str SWAR / str SIMD).
-//
-// Reads the two as-bench `--json` logs produced by scripts/build-charts.sh:
-//   build/logs/bench.simd.json    - default build (SIMD path)
-//   build/logs/bench.nosimd.json  - --disable simd build (SWAR path)
+// Throughput chart from the SIMD and no-SIMD as-bench logs.
 import fs from "node:fs";
 import {
   createBarChart,
@@ -15,7 +7,7 @@ import {
 } from "./lib/bench-utils";
 import { MODE_BARS } from "./lib/palette";
 
-// as-bench JSON shapes (subset we need).
+// as-bench JSON subset.
 interface AsBenchEntry {
   suite: string;
   name: string;
@@ -31,18 +23,17 @@ const readLog = (p: string): AsBenchLog =>
 const SIMD = readLog("./build/logs/bench.simd.json");
 const SWAR = readLog("./build/logs/bench.nosimd.json");
 
-// Throughput in millions of ops/sec (higher is better) from the per-op time.
+// Convert per-op time to millions of ops/sec.
 function mops(log: AsBenchLog, suite: string, isLib: boolean): number {
   const hit = log.benches.find(
     (b) => b.suite === suite && b.name.startsWith("str.") === isLib,
   );
   if (!hit) throw new Error(`no bench in suite "${suite}" (isLib=${isLib})`);
   const ns = hit.result.point * 1e6;
-  return 1000 / ns; // 1 / ns-per-op * 1e3 = Mops/s
+  return 1000 / ns; // Mops/s
 }
 
-// Wrap a throughput number as a BenchResult so it flows through createBarChart,
-// which charts the `mbps` field.
+// createBarChart charts the `mbps` field.
 const bar = (mbps: number, description: string): BenchResult => ({
   language: "as",
   description,
@@ -54,10 +45,7 @@ const bar = (mbps: number, description: string): BenchResult => ({
   gbps: mbps / 1000,
 });
 
-// x-axis groups: a representative spread of operations (all over the same 2 kb
-// string). The scan ops are where SWAR and SIMD pull away from native.
-// Kept identical (same set + order) to build-throughput-str8.ts so the str and
-// str8 throughput charts line up bar-for-bar: views, then scans, then folds.
+// Same operation set/order as the str8 throughput chart.
 const PAYLOADS: Record<string, string> = {
   slice: "slice",
   trim: "trim",
@@ -73,7 +61,7 @@ const PAYLOADS: Record<string, string> = {
 const chartData: Record<string, BenchResult[]> = {};
 for (const suite of Object.keys(PAYLOADS)) {
   chartData[suite] = [
-    bar(mops(SIMD, suite, false), "native String"), // native - same in both builds
+    bar(mops(SIMD, suite, false), "native String"),
     bar(mops(SWAR, suite, true), "str (SWAR)"),
     bar(mops(SIMD, suite, true), "str (SIMD)"),
   ];
@@ -84,7 +72,7 @@ const config = createBarChart(chartData, PAYLOADS, {
   yLabel: "Throughput (Mops/s)",
   xLabel: "",
   datasetLabels: ["native String", "str (SWAR)", "str (SIMD)"],
-  // native = strawberry red baseline, SWAR = jungle green, SIMD = pacific blue.
+  // Native baseline, SWAR, then SIMD.
   colors: [MODE_BARS[0], MODE_BARS[2], MODE_BARS[3]],
   yStep: 5,
 });
