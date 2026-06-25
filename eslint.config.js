@@ -24,6 +24,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["globals/**/*.ts"],
+    rules: {
+      "@typescript-eslint/ban-ts-comment": "off",
+    },
+  },
+  {
     files: ["assembly/**/*.ts"],
     rules: {
       "@typescript-eslint/ban-ts-comment": "off",
