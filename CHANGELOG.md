@@ -6,6 +6,58 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-24
+
+### Added
+
+- **`str(x)` / `str8(x)` converters** - `str` and `str8` are now callable as
+  functions that convert any value to the respective view: a `str`/`str8` is
+  returned as-is, a native `string` is wrapped/transcoded, and anything else
+  with a `toString()` (numbers, the other view type, user classes, …) is
+  stringified then wrapped - dispatched at compile time via `isDefined`.
+- **`.toStr()` / `.toStr8()` methods** on both views - convert between the
+  UTF-16 `str` and UTF-8 `str8` representations (the same-type call is identity).
+- **`str8`** - a zero-copy **UTF-8** string view, the byte-indexed sibling of
+  `str` (Rust `&str` / Go `string` model). It is stored as an `ArrayBuffer` of
+  UTF-8 bytes plus a `[start, end)` pair of raw byte pointers; inputs may be a
+  native `string` (`str8.from`, transcoded to UTF-8 - allocates) or an existing
+  UTF-8 `ArrayBuffer` (`str8.fromBuffer`/`fromBufferChecked`, wrapped zero-copy).
+  Indices are **byte offsets**: `length`/`byteLength` are the byte length,
+  `slice`/`substring`/`substr` are O(1) zero-copy byte slices, and
+  `indexOf`/`lastIndexOf` return byte offsets. Codepoint access is layered on
+  top via `codePointAt`, `codePointCount`, `byteAt`, `isCharBoundary`, and the
+  `[]` operator returns a raw byte (Go `s[i]`). `equals`/`compareTo`/`<`…`>=`
+  use byte order, which for UTF-8 equals Unicode codepoint order (matching
+  Rust/Go). Allocating ops (`concat`, `repeat`, `padStart`, `padEnd`, `replace`,
+  `replaceAll`, `toUpperCase`, `toLowerCase`) build a fresh UTF-8 buffer and
+  return a `str8`; `toString` decodes to a native `string`; `split` yields
+  zero-copy `str8` pieces. Mirrors `str`'s instance + static free-function
+  surface (accepting `string | str8 | ArrayBuffer`) and adds `str8.UTF8`/
+  `str8.UTF16` interop plus `toStr`/`str8.fromStr` bridges to `str`.
+  Import-only (`import { str8 } from "as-str"`); not yet auto-injected by the
+  transform.
+
+  Caveats: `length` is bytes (not characters - use `codePointCount()`); slicing
+  cuts raw bytes Go-style and may split a codepoint (`isCharBoundary` guards);
+  `fromBuffer` trusts its input (use `fromBufferChecked` for untrusted bytes).
+
+### Changed
+
+- The implementation classes are now exported as **`Str`** / **`Str8`**, with
+  **`str`** / **`str8`** as the public type aliases + callable converters
+  (mirroring how the standard library pairs `String` with `string`). Existing
+  usage (`: str`, `str.from(…)`, `str.slice(…)`, `str.UTF8`, …) is unchanged.
+
+### Performance
+
+- **`str.toUpperCase` / `str.toLowerCase`** take an ASCII fast path (SIMD/SWAR
+  byte fold in one allocate-and-scan pass) instead of materializing then calling
+  the native Unicode-aware method - ~3.8× faster than native on ASCII input
+  (was ~1.1× slower); non-ASCII still defers to native for correctness.
+- `str8` ships vectorized (SIMD `i8x16` / SWAR `u64` / scalar) `codePointCount`
+  and the same ASCII case-fold fast path; constant SIMD masks are `@lazy` so
+  they tree-shake under `--disable simd`.
+
 ## [0.1.2] - 2026-06024
 
 ### Changed

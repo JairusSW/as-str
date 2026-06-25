@@ -6,13 +6,14 @@
 // Loaded via the `as-str/globals.json` preset (add it to your assembly
 // tsconfig's `extends` array). asc never loads this file, so there is no
 // duplicate-identifier conflict with the injected import.
-import { str as _str } from "as-str/assembly/index";
+import { Str as _Str, str as _str } from "as-str/assembly/index";
 
 export {};
 
 declare global {
-  /** Zero-copy virtual string view: the type, the instance methods, and the
-   *  static free-function API (`str.slice`, …). */
-  type str = _str;
-  const str: typeof _str;
+  /** Zero-copy virtual string view (UTF-16). The type used in annotations. */
+  type str = _Str;
+  /** The `str` value: callable as a converter (`str(x)`) AND the static
+   *  free-function / encoding API (`str.from`, `str.slice`, `str.UTF8`, …). */
+  const str: typeof _str & typeof _Str;
 }

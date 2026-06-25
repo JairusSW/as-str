@@ -20,6 +20,13 @@
 const LANE_ONES: u64 = 0x0001000100010001;
 const LANE_HIGH: u64 = 0x8000800080008000;
 
+// Constant SIMD mask isolating the non-ASCII bits of each UTF-16 lane (anything
+// at or above U+0080). `@lazy` so the `i16x8.splat` initializer is emitted only
+// when referenced - which only happens inside `if (ASC_FEATURE_SIMD)`, so a
+// `--disable simd` build dead-codes the use and tree-shakes the global away.
+// @ts-ignore: decorator
+@lazy const NON_ASCII_MASK: v128 = i16x8.splat(<i16>0xff80);
+
 /** Number of UTF-16 code units spanned by a `[start, end)` byte range. */
 // @ts-ignore: decorator
 @inline export function unitLength(start: usize, end: usize): i32 {
@@ -284,6 +291,74 @@ export function materialize(start: usize, end: usize): string {
   const out = allocString(bytes);
   copyBytes(changetype<usize>(out), start, bytes);
   return out;
+}
+
+/**
+ * Whether every UTF-16 code unit in `[start, end)` is ASCII (below U+0080).
+ * Scans 8 units (16 bytes) at a time under SIMD, 4 under SWAR, then a scalar
+ * tail. Lets the case-fold family take an allocation-light byte fast path.
+ */
+export function isAsciiRange(start: usize, end: usize): bool {
+  let p = start;
+  if (ASC_FEATURE_SIMD) {
+    while (p + 16 <= end) {
+      if (v128.any_true(v128.and(v128.load(p), NON_ASCII_MASK))) return false;
+      p += 16;
+    }
+  } else {
+    while (p + 8 <= end) {
+      if (load<u64>(p) & 0xff80ff80ff80ff80) return false;
+      p += 8;
+    }
+  }
+  while (p < end) {
+    if (load<u16>(p) >= 0x80) return false;
+    p += 2;
+  }
+  return true;
+}
+
+/**
+ * Copy `n` bytes of ASCII UTF-16 from `src` to `dst`, adding `delta` to each
+ * code unit in `[lo, hi]`. With `lo='a',hi='z',delta=-0x20` this upper-cases;
+ * with `lo='A',hi='Z',delta=+0x20` it lower-cases. Callers must ensure the range
+ * is pure ASCII (see `isAsciiRange`). Folds 8 units per step under SIMD, 4 under
+ * SWAR, then a scalar tail. Non-overlapping.
+ */
+export function asciiCaseFold(
+  dst: usize,
+  src: usize,
+  n: usize,
+  lo: u16,
+  hi: u16,
+  delta: i32,
+): void {
+  let i: usize = 0;
+  if (ASC_FEATURE_SIMD) {
+    const vlo = i16x8.splat(<i16>lo);
+    const vhi = i16x8.splat(<i16>hi);
+    const vd = i16x8.splat(<i16>delta);
+    for (; i + 16 <= n; i += 16) {
+      const va = v128.load(src + i);
+      const inRange = v128.and(i16x8.ge_s(va, vlo), i16x8.le_s(va, vhi));
+      v128.store(dst + i, i16x8.add(va, v128.and(inRange, vd)));
+    }
+  }
+  // SWAR: per-lane range test with no cross-lane carry (ASCII units are < 0x80,
+  // so `unit + bGe` stays within its 16-bit lane). `m` carries 0x8000 in each
+  // in-range lane; `m >> 10` turns that into the 0x20 case-fold bit.
+  const bGe = <u64>(0x8000 - <i32>lo) * LANE_ONES;
+  const bLt = <u64>(0x8000 - (<i32>hi + 1)) * LANE_ONES;
+  const sub = delta < 0;
+  for (; i + 8 <= n; i += 8) {
+    const w = load<u64>(src + i);
+    const fold = ((w + bGe) & ~(w + bLt) & LANE_HIGH) >> 10;
+    store<u64>(dst + i, sub ? w - fold : w + fold);
+  }
+  for (; i < n; i += 2) {
+    const c = load<u16>(src + i);
+    store<u16>(dst + i, <u16>(c >= lo && c <= hi ? <i32>c + delta : <i32>c));
+  }
 }
 
 // Whitespace + line-terminator set used by `trim` family, matching the code
