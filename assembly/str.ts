@@ -1397,6 +1397,7 @@ export namespace Str {
     export function encode<T>(s: T): ArrayBuffer {
       const start = bStart(s);
       const bytes = bEnd(s) - start;
+      // @ts-expect-error: exists
       const buf = changetype<ArrayBuffer>(__new(bytes, idof<ArrayBuffer>()));
       U16.encodeUnsafe(start, <i32>(bytes >> 1), changetype<usize>(buf));
       return buf;

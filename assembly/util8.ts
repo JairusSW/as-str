@@ -381,6 +381,7 @@ export function compareBytes(
 /** Allocate an uninitialized `ArrayBuffer` of `bytes` bytes. */
 // @ts-ignore: decorator
 @inline export function allocBuffer(bytes: usize): ArrayBuffer {
+  // @ts-expect-error: exists
   return changetype<ArrayBuffer>(__new(bytes, idof<ArrayBuffer>()));
 }
 
