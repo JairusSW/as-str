@@ -18,6 +18,8 @@
   - [Comparisons and Operators](#comparisons-and-operators)
   - [Encoding (UTF-8 / UTF-16)](#encoding-utf-8--utf-16)
   - [The Two Layers](#the-two-layers)
+  - [str8 - UTF-8 Views (byte-indexed)](#str8---utf-8-views-byte-indexed)
+  - [Converting Anything: str(x) / str8(x)](#converting-anything-strx--str8x)
 - [Performance](#performance)
   - [Per-Operation Speedup](#per-operation-speedup)
   - [Throughput](#throughput)
@@ -226,6 +228,50 @@ str.toUpperCase("hello"); // "HELLO" (allocates)
 
 Convert a `string` to a view with **`str.from(s)`** (or `new str(data, start,
 end)` from explicit bounds).
+
+### str8 - UTF-8 Views (byte-indexed)
+
+`str8` is the UTF-8 sibling of `str`, for text that already lives as UTF-8 bytes
+(files, network, WASI, JSON) so you can slice/search/trim it without first
+transcoding to UTF-16. It is stored as an `ArrayBuffer` plus `[start, end)` byte
+pointers and is **byte-indexed**, following Rust `&str` / Go `string`.
+
+```typescript
+import { str8 } from "as-str";
+
+const s = str8.from("héllo, 世界"); // string -> UTF-8 buffer (allocates)
+s.length; // 14 (BYTES, like Rust .len() / Go len())
+s.codePointCount(); // 9 (Unicode scalars)
+s.slice(0, 5).toString(); // "hé" - O(1) zero-copy byte slice
+s.indexOf("llo"); // byte offset (Go strings.Index / Rust .find)
+s[0]; // 104 - the raw byte (Go s[i])
+s.codePointAt(1); // 0xE9 ('é'), decoded from the 2-byte sequence
+s.isCharBoundary(1); // false - byte 1 is mid-codepoint
+
+// Wrap existing UTF-8 bytes with no copy:
+const view = str8.fromBuffer(someArrayBuffer); // trusts the bytes
+str8.fromBufferChecked(buf); // validates UTF-8 first
+```
+
+`equals`/`compareTo`/`<`…`>=` use byte order, which for UTF-8 is exactly Unicode
+codepoint order (matching Rust/Go). Allocating ops (`concat`, `repeat`, `pad*`,
+`replace`, `toUpperCase`, …) stay in UTF-8 and return a `str8`; `toString()`
+decodes to a native `string`. Note slicing cuts raw bytes Go-style and can split
+a codepoint - guard with `isCharBoundary` if you need a valid boundary.
+
+### Converting Anything: `str(x)` / `str8(x)`
+
+`str` and `str8` are also callable as converters. A view of the same type passes
+through, a native `string` is wrapped/transcoded, and anything else with a
+`toString()` (numbers, the other view, your own classes) is stringified:
+
+```typescript
+str(42).toString(); // "42"
+str8("héllo").byteLength; // 6
+str(someStr8); // str8 -> str (UTF-16)
+v.toStr8(); // str  -> str8 (UTF-8)
+u.toStr(); // str8 -> str  (UTF-16)
+```
 
 ## Performance
 

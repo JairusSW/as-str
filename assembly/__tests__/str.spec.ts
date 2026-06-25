@@ -3,7 +3,7 @@
 // equivalent native operation produces.
 
 import { describe, test, expect } from "as-test";
-import { str } from "../index";
+import { str, str8 } from "../index";
 
 const SAMPLE = "hello, world";
 
@@ -136,6 +136,20 @@ describe("allocating helpers match native String", () => {
     expect(str.replaceAll("a-b-c", "-", "+")).toBe("a+b+c");
   });
 
+  test("case folding: ASCII fast path tiers + non-ASCII native fallback", () => {
+    // long ASCII -> SIMD (8 units) + SWAR (4 units) + scalar fold tiers
+    const LONG = "The Quick Brown FOX 0123!@# over THE lazy Dog and Cat.";
+    expect(str.toUpperCase(LONG)).toBe(LONG.toUpperCase());
+    expect(str.toLowerCase(LONG)).toBe(LONG.toLowerCase());
+    expect(str.from(LONG).toUpperCase()).toBe(LONG.toUpperCase());
+    // non-ASCII -> defers to native Unicode-aware fold
+    const U = "héllo, 世界 ﬁ ß";
+    expect(str.toUpperCase(U)).toBe(U.toUpperCase());
+    expect(str.toLowerCase("HÉLLO, 世界")).toBe("HÉLLO, 世界".toLowerCase());
+    // a slice that is ASCII even though its backing string is not
+    expect(str.slice(U, 0, 1).toUpperCase()).toBe("H");
+  });
+
   test("concat (built directly on the view)", () => {
     expect(str.concat("foo", "bar")).toBe("foobar");
     expect(str.concat("", "bar")).toBe("bar");
@@ -222,6 +236,7 @@ describe("str.UTF8 / UTF16 (powered by utf-as)", () => {
   });
 
   test("MAX_LENGTH matches String.MAX_LENGTH", () => {
+    // @ts-expect-error: String.MAX_LENGTH exists in asc (editor sees JS String)
     expect(str.MAX_LENGTH).toBe(String.MAX_LENGTH);
   });
 });
@@ -239,5 +254,28 @@ describe("split returns zero-copy pieces", () => {
     const parts = str.split("abc", "");
     expect(parts.length).toBe(3);
     expect(parts[2].toString()).toBe("c");
+  });
+});
+
+describe("str() converter and cross-conversion", () => {
+  test("str(x) converts any value via toString", () => {
+    expect(str(SAMPLE).toString()).toBe(SAMPLE); // string -> str
+    expect(str<i32>(42).toString()).toBe((42).toString()); // number
+    expect(str<f64>(3.5).toString()).toBe((<f64>3.5).toString());
+    expect(str(str.from("abc")).toString()).toBe("abc"); // str identity
+    expect(str(str8.from("héllo")).toString()).toBe("héllo"); // str8 -> str
+  });
+
+  test(".toStr (identity) / .toStr8 (bridge to UTF-8)", () => {
+    const v = str.from("héllo");
+    expect(v.toStr().toString()).toBe("héllo"); // identity
+    const u = v.toStr8(); // str -> str8 (UTF-8)
+    expect(u.toString()).toBe("héllo");
+    expect(u.byteLength).toBe(6); // 'é' is 2 UTF-8 bytes
+  });
+
+  test("str is usable as a type annotation", () => {
+    const a: str = str(SAMPLE);
+    expect(a.length).toBe(SAMPLE.length);
   });
 });

@@ -17,3 +17,5 @@ npx asb run --mode nosimd --json >./build/logs/bench.nosimd.json
 echo "Rendering charts..."
 bun ./scripts/build-throughput.ts
 bun ./scripts/build-per-op.ts
+bun ./scripts/build-throughput-str8.ts
+bun ./scripts/build-per-op-str8.ts
