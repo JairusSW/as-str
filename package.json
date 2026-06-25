@@ -1,6 +1,6 @@
 {
   "name": "as-str",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Jairus Tanaka <me@jairus.dev>",
   "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without allocating",
   "types": "assembly/index.ts",
@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/JairusSW/as-str/issues"
   },
-  "homepage": "https://github.com/JairusSW/as-str#readme",
+  "homepage": "https://docs.jairus.dev/as-str",
   "license": "MIT",
   "type": "module",
   "keywords": [
