@@ -91,6 +91,69 @@ import, and never touches the library's own sources - so explicit
 `import { str } from "as-str"` keeps working, and you can mix the two
 freely.
 
+### Automatic view optimization (experimental)
+
+The same transform can conservatively replace allocation-producing native
+string temporaries with zero-copy `str` views. It tracks local string flow,
+rewrites safe slice/substring/trim chains, propagates views through branches and
+internal functions, and inserts `str.from(...)` / `.toString()` at proven typed
+boundaries.
+
+Enable the single-pass optimizer with:
+
+```bash
+AS_STR_OPTIMIZE=1 asc input.ts --transform as-str
+```
+
+For a type-aware two-pass build, use the included compiler wrapper. It first
+collects resolved AssemblyScript string facts into a temporary manifest, then
+performs the optimized build:
+
+```bash
+npx as-strc input.ts --outFile build/app.wasm
+```
+
+The optimizer preserves exported/external ABIs and leaves a value native when
+it encounters raw memory, pointer casts, explicit assertions, native-string
+call parameters, unknown calls, containers, fields, nullable boundaries,
+templates, or unsupported operators. Set `STR_AS_DEBUG=1` for a deterministic
+decision log. Set `STR_AS_DUMP=1` to print rewritten AST source.
+
+Debug builds finish with an aggregate profitability line containing the number
+of tracked, promoted, and rejected values, conversions inserted, and estimated
+native allocations removed. The estimate is deliberately conservative and can
+be checked against the WAT allocation-path report with:
+
+```bash
+npm run bench:transform
+```
+
+Statically resolved internal functions, immutable local function aliases, and
+unique method targets participate in boundary conversion. Typed `Array<str>`
+and `Array<string>` element writes are converted without changing container
+layout. Nullable values remain native unless the source supplies an explicit
+non-null proof such as `value!`; uncertain nullable, overloaded, virtual, and
+indirect flows remain barriers.
+
+Local overrides use comments because AssemblyScript does not allow decorators
+on local variables:
+
+```typescript
+// @as-str no-view
+const pointerSensitive = input.slice(1);
+
+// @as-str prefer-view
+const knownSafe = input;
+```
+
+`prefer-view` still obeys all safety barriers. Optimization remains opt-in
+while the transform matures.
+
+The compiler wrapper is authored in TypeScript at `cli/src/as-strc.ts`; the
+published `bin/as-strc.js` and `transform/lib` files are generated build
+artifacts. `npm run test:differential` compares optimized and unoptimized Wasm
+behavior, while `npm run test:consumer` validates a clean packed installation.
+
 ## Docs
 
 Full documentation lives at:

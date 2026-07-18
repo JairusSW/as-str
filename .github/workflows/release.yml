@@ -38,6 +38,12 @@ jobs:
       - name: Run Fuzz Tests
         run: bun run test:fuzz
 
+      - name: Run Transform Tests
+        run: bun run test:transform
+
+      - name: Test Clean Consumer Package
+        run: bun run test:consumer
+
   # Create the GitHub Release with auto-generated notes.
   release:
     runs-on: ubuntu-latest

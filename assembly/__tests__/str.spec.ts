@@ -57,6 +57,49 @@ describe("str queries", () => {
     expect(str.slice(SAMPLE, 3, 3).isEmpty).toBe(true);
   });
 
+  test("allocation-free view length specializations match produced views", () => {
+    const padded = "  abc/def=ghi[jkl]<mno>  ";
+    expect(str.sliceLength(padded, -8, -1)).toBe(
+      str.slice(padded, -8, -1).length,
+    );
+    expect(str.substringLength(padded, 9, 2)).toBe(
+      str.substring(padded, 9, 2).length,
+    );
+    expect(str.substrLength(padded, -8, 4)).toBe(
+      str.substr(padded, -8, 4).length,
+    );
+    expect(str.charAtLength(padded, 2)).toBe(str.charAt(padded, 2).length);
+    expect(str.charAtLength(padded, 999)).toBe(str.charAt(padded, 999).length);
+    expect(str.atLength(padded, -1)).toBe(str.at(padded, -1).length);
+    expect(str.trimLength(padded)).toBe(str.trim(padded).length);
+    expect(str.trimStartLength(padded)).toBe(str.trimStart(padded).length);
+    expect(str.trimEndLength(padded)).toBe(str.trimEnd(padded).length);
+    expect(str.trimLeftLength(padded)).toBe(str.from(padded).trimLeft().length);
+    expect(str.trimRightLength(padded)).toBe(
+      str.from(padded).trimRight().length,
+    );
+    expect(str.beforeLength(padded, "=")).toBe(str.before(padded, "=").length);
+    expect(str.afterLength(padded, "=")).toBe(str.after(padded, "=").length);
+    expect(str.betweenLength(padded, "[", "]")).toBe(
+      str.between(padded, "[", "]").length,
+    );
+    expect(str.beforeLastLength(padded, "/")).toBe(
+      str.beforeLast(padded, "/").length,
+    );
+    expect(str.afterLastLength(padded, "/")).toBe(
+      str.afterLast(padded, "/").length,
+    );
+    expect(str.betweenLastLength(padded, "<", ">")).toBe(
+      str.betweenLast(padded, "<", ">").length,
+    );
+    expect(str.afterLength(padded, "missing")).toBe(0);
+    expect(str.betweenLastLength("abc", "[", "]")).toBe(0);
+
+    const view = str.slice(padded, 2, -2);
+    expect(str.trimLength(view)).toBe(view.trim().length);
+    expect(str.sliceLength(view, 1, -1)).toBe(view.slice(1, -1).length);
+  });
+
   test("charCodeAt / codePointAt", () => {
     expect(str.charCodeAt(SAMPLE, 0)).toBe(SAMPLE.charCodeAt(0));
     expect(str.codePointAt("a😀b", 1)).toBe(0x1f600);
@@ -292,6 +335,13 @@ describe("str() converter and cross-conversion", () => {
     const u = v.toStr8(); // str -> str8 (UTF-8)
     expect(u.toString()).toBe("héllo");
     expect(u.byteLength).toBe(6); // 'é' is 2 UTF-8 bytes
+  });
+
+  test("full-range toString returns the backing string", () => {
+    const backing = "allocation-free round trip";
+    const native = str.from(backing).toString();
+    expect(changetype<usize>(native)).toBe(changetype<usize>(backing));
+    expect(str.slice(backing, 1).toString()).toBe("llocation-free round trip");
   });
 
   test("str is usable as a type annotation", () => {

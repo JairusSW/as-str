@@ -31,3 +31,40 @@ jobs:
 
       - name: Run Fuzz Tests
         run: bun run test:fuzz
+
+      - name: Run Transform Tests
+        run: bun run test:transform
+
+      - name: Test Clean Consumer Package
+        run: bun run test:consumer
+
+  transform-compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        assemblyscript: ["0.28.18"]
+        include:
+          - os: ubuntu-latest
+            assemblyscript: latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: bun install
+
+      - name: Select AssemblyScript Version
+        run: bun add --dev assemblyscript@${{ matrix.assemblyscript }}
+
+      - name: Run Transform Compatibility Tests
+        run: bun run test:transform

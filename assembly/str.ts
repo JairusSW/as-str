@@ -63,17 +63,20 @@ import { Str8 } from "./str8";
   }
 
   /** Length of the view in UTF-16 code units. */
-  get length(): i32 {
+  // @ts-ignore: decorator
+  @inline get length(): i32 {
     return unitLength(this.start, this.end);
   }
 
   /** Whether the view is empty (zero code units). */
-  get isEmpty(): bool {
+  // @ts-ignore: decorator
+  @inline get isEmpty(): bool {
     return this.end == this.start;
   }
 
   /** Shared `slice` implementation. @internal */
-  static sliceRange(
+  // @ts-ignore: decorator
+  @inline static sliceRange(
     data: string,
     start: usize,
     end: usize,
@@ -92,7 +95,8 @@ import { Str8 } from "./str8";
   }
 
   /** Shared `substring` implementation. @internal */
-  static substringRange(
+  // @ts-ignore: decorator
+  @inline static substringRange(
     data: string,
     start: usize,
     end: usize,
@@ -115,7 +119,8 @@ import { Str8 } from "./str8";
   }
 
   /** Shared `substr` implementation. @internal */
-  static substrRange(
+  // @ts-ignore: decorator
+  @inline static substrRange(
     data: string,
     start: usize,
     end: usize,
@@ -142,7 +147,13 @@ import { Str8 } from "./str8";
    * @returns A single-code-unit view, or an empty view if out of range.
    * @internal
    */
-  static charAtRange(data: string, start: usize, end: usize, index: i32): Str {
+  // @ts-ignore: decorator
+  @inline static charAtRange(
+    data: string,
+    start: usize,
+    end: usize,
+    index: i32,
+  ): Str {
     if (<u32>index >= <u32>unitLength(start, end)) {
       return new Str(data, start, start);
     }
@@ -160,7 +171,13 @@ import { Str8 } from "./str8";
    * @returns A single-code-unit view, or an empty view if out of range.
    * @internal
    */
-  static atRange(data: string, start: usize, end: usize, index: i32): Str {
+  // @ts-ignore: decorator
+  @inline static atRange(
+    data: string,
+    start: usize,
+    end: usize,
+    index: i32,
+  ): Str {
     const len = unitLength(start, end);
     if (index < 0) index += len;
     if (<u32>index >= <u32>len) {
@@ -179,7 +196,8 @@ import { Str8 } from "./str8";
    * @returns A view with leading whitespace removed (no copy).
    * @internal
    */
-  static trimStartRange(data: string, start: usize, end: usize): Str {
+  // @ts-ignore: decorator
+  @inline static trimStartRange(data: string, start: usize, end: usize): Str {
     let p = start;
     while (p < end && isWhiteSpace(load<u16>(p))) p += 2;
     return new Str(data, p, end);
@@ -194,7 +212,8 @@ import { Str8 } from "./str8";
    * @returns A view with trailing whitespace removed (no copy).
    * @internal
    */
-  static trimEndRange(data: string, start: usize, end: usize): Str {
+  // @ts-ignore: decorator
+  @inline static trimEndRange(data: string, start: usize, end: usize): Str {
     let p = end;
     while (p > start && isWhiteSpace(load<u16>(p - 2))) p -= 2;
     return new Str(data, start, p);
@@ -210,7 +229,8 @@ import { Str8 } from "./str8";
    * @returns A view with surrounding whitespace removed (no copy).
    * @internal
    */
-  static trimRange(data: string, start: usize, end: usize): Str {
+  // @ts-ignore: decorator
+  @inline static trimRange(data: string, start: usize, end: usize): Str {
     let lo = start;
     let hi = end;
     while (lo < hi && isWhiteSpace(load<u16>(lo))) lo += 2;
@@ -314,7 +334,8 @@ import { Str8 } from "./str8";
    * @param end   - end code-unit index, exclusive; defaults to the view's end.
    * @returns A view of the slice (no copy).
    */
-  slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+  // @ts-ignore: decorator
+  @inline slice(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
     return Str.sliceRange(this.data, this.start, this.end, start, end);
   }
 
@@ -327,7 +348,8 @@ import { Str8 } from "./str8";
    *                end.
    * @returns A view of the substring (no copy).
    */
-  substring(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+  // @ts-ignore: decorator
+  @inline substring(start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
     return Str.substringRange(this.data, this.start, this.end, start, end);
   }
 
@@ -339,7 +361,8 @@ import { Str8 } from "./str8";
    * @param length - number of code units to include.
    * @returns A view of the substring (no copy).
    */
-  substr(start: i32 = 0, length: i32 = i32.MAX_VALUE): Str {
+  // @ts-ignore: decorator
+  @inline substr(start: i32 = 0, length: i32 = i32.MAX_VALUE): Str {
     return Str.substrRange(this.data, this.start, this.end, start, length);
   }
 
@@ -350,7 +373,8 @@ import { Str8 } from "./str8";
    * @returns A single-code-unit view, or an empty view if `index` is out of
    *          range (no copy).
    */
-  charAt(index: i32): Str {
+  // @ts-ignore: decorator
+  @inline charAt(index: i32): Str {
     return Str.charAtRange(this.data, this.start, this.end, index);
   }
 
@@ -362,7 +386,8 @@ import { Str8 } from "./str8";
    * @returns A single-code-unit view, or an empty view if out of range (no
    *          copy).
    */
-  at(index: i32): Str {
+  // @ts-ignore: decorator
+  @inline at(index: i32): Str {
     return Str.atRange(this.data, this.start, this.end, index);
   }
 
@@ -371,7 +396,8 @@ import { Str8 } from "./str8";
    *
    * @returns A view with leading whitespace removed (no copy).
    */
-  trimStart(): Str {
+  // @ts-ignore: decorator
+  @inline trimStart(): Str {
     return Str.trimStartRange(this.data, this.start, this.end);
   }
 
@@ -380,7 +406,8 @@ import { Str8 } from "./str8";
    *
    * @returns A view with trailing whitespace removed (no copy).
    */
-  trimEnd(): Str {
+  // @ts-ignore: decorator
+  @inline trimEnd(): Str {
     return Str.trimEndRange(this.data, this.start, this.end);
   }
 
@@ -389,7 +416,8 @@ import { Str8 } from "./str8";
    *
    * @returns A view with surrounding whitespace removed (no copy).
    */
-  trim(): Str {
+  // @ts-ignore: decorator
+  @inline trim(): Str {
     return Str.trimRange(this.data, this.start, this.end);
   }
 
@@ -398,7 +426,8 @@ import { Str8 } from "./str8";
    *
    * @returns A view with leading whitespace removed (no copy).
    */
-  trimLeft(): Str {
+  // @ts-ignore: decorator
+  @inline trimLeft(): Str {
     return Str.trimStartRange(this.data, this.start, this.end);
   }
 
@@ -407,7 +436,8 @@ import { Str8 } from "./str8";
    *
    * @returns A view with trailing whitespace removed (no copy).
    */
-  trimRight(): Str {
+  // @ts-ignore: decorator
+  @inline trimRight(): Str {
     return Str.trimEndRange(this.data, this.start, this.end);
   }
 
@@ -766,6 +796,13 @@ import { Str8 } from "./str8";
 
   /** Materialize the view into a real `string`. */
   toString(): string {
+    const base = changetype<usize>(this.data);
+    if (
+      this.start == base &&
+      this.end == base + ((<usize>this.data.length) << 1)
+    ) {
+      return this.data;
+    }
     return materialize(this.start, this.end);
   }
 
@@ -788,7 +825,8 @@ import { Str8 } from "./str8";
    * @param end   - end code-unit index, exclusive.
    * @returns A view of the slice (no copy).
    */
-  static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+  // @ts-ignore: decorator
+  @inline static slice<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
     return Str.sliceRange(bData(s), bStart(s), bEnd(s), start, end);
   }
 
@@ -801,7 +839,12 @@ import { Str8 } from "./str8";
    * @param end   - second code-unit index, exclusive.
    * @returns A view of the substring (no copy).
    */
-  static substring<T>(s: T, start: i32 = 0, end: i32 = i32.MAX_VALUE): Str {
+  // @ts-ignore: decorator
+  @inline static substring<T>(
+    s: T,
+    start: i32 = 0,
+    end: i32 = i32.MAX_VALUE,
+  ): Str {
     return Str.substringRange(bData(s), bStart(s), bEnd(s), start, end);
   }
 
@@ -814,7 +857,12 @@ import { Str8 } from "./str8";
    * @param length - number of code units to include.
    * @returns A view of the substring (no copy).
    */
-  static substr<T>(s: T, start: i32 = 0, length: i32 = i32.MAX_VALUE): Str {
+  // @ts-ignore: decorator
+  @inline static substr<T>(
+    s: T,
+    start: i32 = 0,
+    length: i32 = i32.MAX_VALUE,
+  ): Str {
     return Str.substrRange(bData(s), bStart(s), bEnd(s), start, length);
   }
 
@@ -826,7 +874,8 @@ import { Str8 } from "./str8";
    * @param index - zero-based code-unit index.
    * @returns A single-code-unit view, or an empty view if out of range.
    */
-  static charAt<T>(s: T, index: i32): Str {
+  // @ts-ignore: decorator
+  @inline static charAt<T>(s: T, index: i32): Str {
     return Str.charAtRange(bData(s), bStart(s), bEnd(s), index);
   }
 
@@ -838,7 +887,8 @@ import { Str8 } from "./str8";
    * @param index - code-unit index (negative counts from the end).
    * @returns A single-code-unit view, or an empty view if out of range.
    */
-  static at<T>(s: T, index: i32): Str {
+  // @ts-ignore: decorator
+  @inline static at<T>(s: T, index: i32): Str {
     return Str.atRange(bData(s), bStart(s), bEnd(s), index);
   }
 
@@ -849,7 +899,8 @@ import { Str8 } from "./str8";
    * @param s - source; a `string` or a `Str`.
    * @returns A view with surrounding whitespace removed (no copy).
    */
-  static trim<T>(s: T): Str {
+  // @ts-ignore: decorator
+  @inline static trim<T>(s: T): Str {
     return Str.trimRange(bData(s), bStart(s), bEnd(s));
   }
 
@@ -860,7 +911,8 @@ import { Str8 } from "./str8";
    * @param s - source; a `string` or a `Str`.
    * @returns A view with leading whitespace removed (no copy).
    */
-  static trimStart<T>(s: T): Str {
+  // @ts-ignore: decorator
+  @inline static trimStart<T>(s: T): Str {
     return Str.trimStartRange(bData(s), bStart(s), bEnd(s));
   }
 
@@ -871,8 +923,282 @@ import { Str8 } from "./str8";
    * @param s - source; a `string` or a `Str`.
    * @returns A view with trailing whitespace removed (no copy).
    */
-  static trimEnd<T>(s: T): Str {
+  // @ts-ignore: decorator
+  @inline static trimEnd<T>(s: T): Str {
     return Str.trimEndRange(bData(s), bStart(s), bEnd(s));
+  }
+
+  // Allocation-free scalar consumers used by the optimizer when a produced
+  // view is observed only through `.length`.
+
+  // @ts-ignore: decorator
+  @inline static span(start: usize, end: usize): u64 {
+    return ((<u64>start) << 32) | (<u64>end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static spanStart(value: u64): usize {
+    return <usize>(value >> 32);
+  }
+
+  // @ts-ignore: decorator
+  @inline static spanEnd(value: u64): usize {
+    return <usize>value;
+  }
+
+  // @ts-ignore: decorator
+  @inline static spanLength<T>(owner: T, value: u64): i32 {
+    // Reading the owner keeps the backing string visible to the GC until the
+    // scalar span's final use.
+    bData(owner);
+    return unitLength(Str.spanStart(value), Str.spanEnd(value));
+  }
+
+  // @ts-ignore: decorator
+  @inline static sliceSpan<T>(
+    s: T,
+    start0: i32 = 0,
+    end0: i32 = i32.MAX_VALUE,
+  ): u64 {
+    return Str.sliceSpanOf(Str.span(bStart(s), bEnd(s)), start0, end0);
+  }
+
+  // @ts-ignore: decorator
+  @inline static sliceSpanOf(
+    value: u64,
+    start0: i32 = 0,
+    end0: i32 = i32.MAX_VALUE,
+  ): u64 {
+    const start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    const len = unitLength(start, end);
+    const lo = start0 < 0 ? max(len + start0, 0) : min(start0, len);
+    let hi = end0 < 0 ? max(len + end0, 0) : min(end0, len);
+    if (hi < lo) hi = lo;
+    return Str.span(start + ((<usize>lo) << 1), start + ((<usize>hi) << 1));
+  }
+
+  // @ts-ignore: decorator
+  @inline static substringSpan<T>(
+    s: T,
+    start0: i32 = 0,
+    end0: i32 = i32.MAX_VALUE,
+  ): u64 {
+    return Str.substringSpanOf(Str.span(bStart(s), bEnd(s)), start0, end0);
+  }
+
+  // @ts-ignore: decorator
+  @inline static substringSpanOf(
+    value: u64,
+    start0: i32 = 0,
+    end0: i32 = i32.MAX_VALUE,
+  ): u64 {
+    const start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    const len = unitLength(start, end);
+    let lo = start0 < 0 ? 0 : min(start0, len);
+    let hi = end0 < 0 ? 0 : min(end0, len);
+    if (lo > hi) {
+      const swap = lo;
+      lo = hi;
+      hi = swap;
+    }
+    return Str.span(start + ((<usize>lo) << 1), start + ((<usize>hi) << 1));
+  }
+
+  // @ts-ignore: decorator
+  @inline static substrSpan<T>(
+    s: T,
+    start0: i32 = 0,
+    length: i32 = i32.MAX_VALUE,
+  ): u64 {
+    return Str.substrSpanOf(Str.span(bStart(s), bEnd(s)), start0, length);
+  }
+
+  // @ts-ignore: decorator
+  @inline static substrSpanOf(
+    value: u64,
+    start0: i32 = 0,
+    length: i32 = i32.MAX_VALUE,
+  ): u64 {
+    const start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    const len = unitLength(start, end);
+    const lo = start0 < 0 ? max(len + start0, 0) : min(start0, len);
+    const count = length < 0 ? 0 : min(length, len - lo);
+    return Str.span(
+      start + ((<usize>lo) << 1),
+      start + ((<usize>(lo + count)) << 1),
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimSpan<T>(s: T): u64 {
+    return Str.trimSpanOf(Str.span(bStart(s), bEnd(s)));
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimSpanOf(value: u64): u64 {
+    let start = Str.spanStart(value);
+    let end = Str.spanEnd(value);
+    while (start < end && isWhiteSpace(load<u16>(start))) start += 2;
+    while (end > start && isWhiteSpace(load<u16>(end - 2))) end -= 2;
+    return Str.span(start, end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimStartSpan<T>(s: T): u64 {
+    return Str.trimStartSpanOf(Str.span(bStart(s), bEnd(s)));
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimStartSpanOf(value: u64): u64 {
+    let start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    while (start < end && isWhiteSpace(load<u16>(start))) start += 2;
+    return Str.span(start, end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimEndSpan<T>(s: T): u64 {
+    return Str.trimEndSpanOf(Str.span(bStart(s), bEnd(s)));
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimEndSpanOf(value: u64): u64 {
+    const start = Str.spanStart(value);
+    let end = Str.spanEnd(value);
+    while (end > start && isWhiteSpace(load<u16>(end - 2))) end -= 2;
+    return Str.span(start, end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static sliceLength<T>(
+    s: T,
+    start0: i32 = 0,
+    end0: i32 = i32.MAX_VALUE,
+  ): i32 {
+    const len = unitLength(bStart(s), bEnd(s));
+    const lo = start0 < 0 ? max(len + start0, 0) : min(start0, len);
+    let hi = end0 < 0 ? max(len + end0, 0) : min(end0, len);
+    if (hi < lo) hi = lo;
+    return hi - lo;
+  }
+
+  // @ts-ignore: decorator
+  @inline static substringLength<T>(
+    s: T,
+    start0: i32 = 0,
+    end0: i32 = i32.MAX_VALUE,
+  ): i32 {
+    const len = unitLength(bStart(s), bEnd(s));
+    let lo = start0 < 0 ? 0 : min(start0, len);
+    let hi = end0 < 0 ? 0 : min(end0, len);
+    if (lo > hi) {
+      const swap = lo;
+      lo = hi;
+      hi = swap;
+    }
+    return hi - lo;
+  }
+
+  // @ts-ignore: decorator
+  @inline static substrLength<T>(
+    s: T,
+    start0: i32 = 0,
+    length: i32 = i32.MAX_VALUE,
+  ): i32 {
+    const len = unitLength(bStart(s), bEnd(s));
+    const lo = start0 < 0 ? max(len + start0, 0) : min(start0, len);
+    return length < 0 ? 0 : min(length, len - lo);
+  }
+
+  // @ts-ignore: decorator
+  @inline static charAtLength<T>(s: T, index: i32): i32 {
+    return <u32>index < <u32>unitLength(bStart(s), bEnd(s)) ? 1 : 0;
+  }
+
+  // @ts-ignore: decorator
+  @inline static atLength<T>(s: T, index: i32): i32 {
+    const len = unitLength(bStart(s), bEnd(s));
+    if (index < 0) index += len;
+    return <u32>index < <u32>len ? 1 : 0;
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimStartLength<T>(s: T): i32 {
+    let start = bStart(s);
+    const end = bEnd(s);
+    while (start < end && isWhiteSpace(load<u16>(start))) start += 2;
+    return unitLength(start, end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimEndLength<T>(s: T): i32 {
+    const start = bStart(s);
+    let end = bEnd(s);
+    while (end > start && isWhiteSpace(load<u16>(end - 2))) end -= 2;
+    return unitLength(start, end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimLength<T>(s: T): i32 {
+    let start = bStart(s);
+    let end = bEnd(s);
+    while (start < end && isWhiteSpace(load<u16>(start))) start += 2;
+    while (end > start && isWhiteSpace(load<u16>(end - 2))) end -= 2;
+    return unitLength(start, end);
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimLeftLength<T>(s: T): i32 {
+    return Str.trimStartLength(s);
+  }
+
+  // @ts-ignore: decorator
+  @inline static trimRightLength<T>(s: T): i32 {
+    return Str.trimEndLength(s);
+  }
+
+  // @ts-ignore: decorator
+  @inline static beforeLength<T, U>(s: T, search: U): i32 {
+    const index = Str.indexOf(s, search);
+    return index < 0 ? 0 : index;
+  }
+
+  // @ts-ignore: decorator
+  @inline static afterLength<T, U>(s: T, search: U): i32 {
+    const index = Str.indexOf(s, search);
+    return index < 0 ? 0 : Str.length(s) - index - Str.length(search);
+  }
+
+  // @ts-ignore: decorator
+  @inline static betweenLength<T, U, V>(s: T, open: U, close: V): i32 {
+    const lo = Str.indexOf(s, open);
+    if (lo < 0) return 0;
+    const start = lo + Str.length(open);
+    const hi = Str.indexOf(s, close, start);
+    return hi < 0 ? 0 : hi - start;
+  }
+
+  // @ts-ignore: decorator
+  @inline static beforeLastLength<T, U>(s: T, search: U): i32 {
+    const index = Str.lastIndexOf(s, search);
+    return index < 0 ? 0 : index;
+  }
+
+  // @ts-ignore: decorator
+  @inline static afterLastLength<T, U>(s: T, search: U): i32 {
+    const index = Str.lastIndexOf(s, search);
+    return index < 0 ? 0 : Str.length(s) - index - Str.length(search);
+  }
+
+  // @ts-ignore: decorator
+  @inline static betweenLastLength<T, U, V>(s: T, open: U, close: V): i32 {
+    const hi = Str.lastIndexOf(s, close);
+    if (hi < 0) return 0;
+    const lo = Str.lastIndexOf(s, open, hi);
+    return lo < 0 ? 0 : max(hi - lo - Str.length(open), 0);
   }
 
   /**
