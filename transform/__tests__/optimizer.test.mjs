@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repo = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -12,7 +12,9 @@ const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
 const transform = path.join(repo, "transform/lib/index.js");
 const wrapper = path.join(repo, "bin/as-strc.js");
 const outDir = path.join(repo, "build");
-const operations = await import(path.join(repo, "transform/lib/operations.js"));
+const operations = await import(
+  pathToFileURL(path.join(repo, "transform/lib/operations.js"))
+);
 
 const strSource = readFileSync(path.join(repo, "assembly/str.ts"), "utf8");
 const instanceSection = strSource.slice(

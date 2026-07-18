@@ -53,16 +53,16 @@ try {
     'export function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\n',
   );
   const cli = path.join(scratch, "node_modules/as-str/bin/as-strc.js");
-  const wat = path.join(scratch, "consumer.wat");
-  run(process.execPath, [
-    cli,
-    input,
-    "--outFile",
-    "consumer.wasm",
-    "--textFile",
-    wat,
-  ]);
-  assert.match(readFileSync(wat, "utf8"), /assembly\/str\/Str\.slice/);
+  const wasm = path.join(scratch, "consumer.wasm");
+  run(process.execPath, [cli, input, "--outFile", wasm]);
+  const module = await WebAssembly.instantiate(readFileSync(wasm), {
+    env: {
+      abort() {
+        throw new Error("AssemblyScript abort");
+      },
+    },
+  });
+  assert.equal(module.instance.exports.check(), 3);
   assert.ok(
     readdirSync(path.join(scratch, "node_modules/as-str/transform/lib")).length,
   );
