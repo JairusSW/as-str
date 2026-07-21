@@ -200,10 +200,10 @@ try {
     "--textFile",
     autoWat,
   ]);
-  assert.match(
+  assert.doesNotMatch(
     readFileSync(autoWat, "utf8"),
-    /assembly\/str\/Str\.sliceLength/,
-    "as-str/auto must enable view optimization without an environment flag",
+    /~lib\/string\/String#slice/,
+    "as-str/auto must remove the native slice allocation without an environment flag",
   );
   const autoModule = await WebAssembly.instantiate(readFileSync(autoWasm), {
     env: {
