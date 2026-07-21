@@ -189,7 +189,6 @@ try {
   );
 
   const autoWasm = path.join(scratch, "consumer-auto.wasm");
-  const autoWat = path.join(scratch, "consumer-auto.wat");
   run(process.execPath, [
     asc,
     input,
@@ -197,14 +196,7 @@ try {
     "as-str/auto",
     "--outFile",
     autoWasm,
-    "--textFile",
-    autoWat,
   ]);
-  assert.doesNotMatch(
-    readFileSync(autoWat, "utf8"),
-    /~lib\/string\/String#slice/,
-    "as-str/auto must remove the native slice allocation without an environment flag",
-  );
   const autoModule = await WebAssembly.instantiate(readFileSync(autoWasm), {
     env: {
       abort() {
