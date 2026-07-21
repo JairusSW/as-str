@@ -3,14 +3,14 @@
 ╩ ╩╚═╝  ╚═╝ ╩ ╩╚═</pre></h1>
 
 <p align="center">
-  Virtual, zero-copy strings for AssemblyScript: slice, search, and trim without allocating. Analogous to Rust's <a href="https://doc.rust-lang.org/std/primitive.str.html">string slice</a>.
+  Virtual, drop-in, zero-copy strings for AssemblyScript: slice, search, and trim without allocating. Analogous to Rust's <a href="https://doc.rust-lang.org/std/primitive.str.html">string slice</a>.
 </p>
 
 <details>
 <summary>Table of Contents</summary>
 
 - [Installation](#installation)
-- [Global Mode (optional)](#global-mode-optional)
+- [Flavors](#flavors)
 - [Docs](#docs)
 - [Usage](#usage)
 - [Examples](#examples)
@@ -40,100 +40,116 @@
 npm install as-str
 ```
 
-Optionally, for additional performance, also add:
+## Flavors
 
-```bash
---enable simd
-```
+[as-str](https://github.com/AssemblyScript/as-str) has three modes. They all use
+the same package; choose how much control you want over imports and optimization.
 
-## Global Mode (optional)
+**Manual Mode (default)**
 
-By default you `import { str } from "as-str"` where you use it. If you'd
-rather use `str` **without an import in every file**, opt into the transform
-- it injects the import for you at compile time.
+Import `str` where you use it and choose view boundaries yourself. This mode
+does not use a transform and gives you explicit control over materialization.
 
-1. Add the transform to your `asc` command:
+```ts
+import { str } from "as-str";
 
-   ```bash
-   --transform as-str
-   ```
-
-   or in `asconfig.json`:
-
-   ```json
-   { "options": { "transform": ["as-str"] } }
-   ```
-
-2. Add the ambient typings so your editor resolves the globals - extend
-   str's preset in `assembly/tsconfig.json`:
-
-   ```json
-   {
-     "extends": ["assemblyscript/std/assembly.json", "as-str/globals.json"],
-     "include": ["./**/*.ts"]
-   }
-   ```
-
-   (For pnpm or other non-hoisted `node_modules` layouts, drop a copy of
-   `node_modules/as-str/globals/index.d.ts` into your assembly directory
-   instead - any `.d.ts` in the project is picked up automatically.)
-
-Now this compiles with no import:
-
-```typescript
-export function method(line: string): string {
-  return str.slice(line, 0, line.indexOf(" ")).toString();
+export function firstToken(line: string): string {
+  const view: str = str(line);
+  const space = view.indexOf(" ");
+  const end = space < 0 ? view.length : space;
+  return view.slice(0, end).toString();
 }
 ```
 
-The transform only injects names a file actually uses and doesn't already
-import, and never touches the library's own sources - so explicit
-`import { str } from "as-str"` keeps working, and you can mix the two
-freely.
+**Global Mode**
 
-### Automatic view optimization (experimental)
+Global mode injects `str` and `Str` imports, letting you use the library without
+an import in every file. It does not optimize native strings.
 
-The same transform can conservatively replace allocation-producing native
-string temporaries with zero-copy `str` views. It tracks local string flow,
-rewrites safe slice/substring/trim chains, propagates views through branches and
-internal functions, and inserts `str.from(...)` / `.toString()` at proven typed
-boundaries.
-
-Enable the single-pass optimizer with:
+Add the transform to your `asc` command:
 
 ```bash
-AS_STR_OPTIMIZE=1 asc input.ts --transform as-str
+--transform as-str/global
 ```
 
-For a type-aware two-pass build, use the included compiler wrapper. It first
-collects resolved AssemblyScript string facts into a temporary manifest, then
-performs the optimized build:
+or in `asconfig.json`:
+
+```json
+{ "options": { "transform": ["as-str/global"] } }
+```
+
+Add the ambient typings to `assembly/tsconfig.json` so your editor resolves the
+globals:
+
+```json
+{
+  "extends": ["assemblyscript/std/assembly.json", "as-str/globals.json"],
+  "include": ["./**/*.ts"]
+}
+```
+
+You can then use `str` with no import:
+
+```ts
+export function firstToken(line: string): string {
+  const view: str = str(line);
+  const space = view.indexOf(" ");
+  const end = space < 0 ? view.length : space;
+  return view.slice(0, end).toString();
+}
+```
+
+**Automatic Mode**
+
+Automatic mode uses a shadow compiler pass for resolved type information, then
+conservatively migrates safe internal `string` values to zero-copy `str` views.
+It lowers values into views and lifts them back at native-string boundaries
+while preserving exported and external signatures.
+
+Add the transform to your `asc` command:
 
 ```bash
-npx as-strc input.ts --outFile build/app.wasm
+--transform as-str/auto
 ```
 
-The optimizer preserves exported/external ABIs and leaves a value native when
-it encounters raw memory, pointer casts, explicit assertions, native-string
-call parameters, unknown calls, containers, fields, nullable boundaries,
-templates, or unsupported operators. Set `STR_AS_DEBUG=1` for a deterministic
-decision log. Set `STR_AS_DUMP=1` to print rewritten AST source.
+or in `asconfig.json`:
 
-Debug builds finish with an aggregate profitability line containing the number
-of tracked, promoted, and rejected values, conversions inserted, and estimated
-native allocations removed. The estimate is deliberately conservative and can
-be checked against the WAT allocation-path report with:
-
-```bash
-npm run bench:transform
+```json
+{ "options": { "transform": ["as-str/auto"] } }
 ```
 
-Statically resolved internal functions, immutable local function aliases, and
-unique method targets participate in boundary conversion. Typed `Array<str>`
-and `Array<string>` element writes are converted without changing container
-layout. Nullable values remain native unless the source supplies an explicit
-non-null proof such as `value!`; uncertain nullable, overloaded, virtual, and
-indirect flows remain barriers.
+Your source continues to use native `string` types:
+
+```ts
+function compactLabel(value: string): string {
+  return value.trim().slice(0, 12);
+}
+
+export function formatLabel(value: string): string {
+  return compactLabel(value);
+}
+```
+
+After optimization, the relevant source shape is:
+
+```ts
+import { str } from "as-str";
+
+function compactLabel(value: str): str {
+  return value.trim().slice(0, 12);
+}
+
+export function formatLabel(value: string): string {
+  return compactLabel(str.from(value)).toString();
+}
+```
+
+The exported function keeps its native `string` signature while the internal
+helper operates entirely on views.
+
+The optimizer leaves values native around raw loads, pointer casts, explicit
+assertions, native-string call parameters, unknown calls, containers, fields,
+nullable boundaries, and other operations it cannot prove safe.
 
 Local overrides use comments because AssemblyScript does not allow decorators
 on local variables:
@@ -146,13 +162,8 @@ const pointerSensitive = input.slice(1);
 const knownSafe = input;
 ```
 
-`prefer-view` still obeys all safety barriers. Optimization remains opt-in
-while the transform matures.
-
-The compiler wrapper is authored in TypeScript at `cli/src/as-strc.ts`; the
-published `bin/as-strc.js` and `transform/lib` files are generated build
-artifacts. `npm run test:differential` compares optimized and unoptimized Wasm
-behavior, while `npm run test:consumer` validates a clean packed installation.
+Benchmark automatic mode against your workload when compile time, wall time,
+memory use, or Wasm size matters.
 
 ## Docs
 

@@ -16,4 +16,5 @@ asconfig.json
 transform/src/
 transform/tsconfig.json
 transform/lib/**/*.map
+transform/lib/**/*.d.ts
 transform/lib/**/*.d.ts.map

@@ -1,0 +1,4 @@
+{
+  "main": "../transform/lib/index.js",
+  "type": "module"
+}

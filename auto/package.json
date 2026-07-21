@@ -1,0 +1,4 @@
+{
+  "main": "../transform/lib/auto.js",
+  "type": "module"
+}

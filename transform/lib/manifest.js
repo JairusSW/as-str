@@ -21,8 +21,23 @@ function sourceIsUser(source) {
   return !source.isLibrary && !source.internalPath.startsWith("~lib");
 }
 export function buildSemanticManifest(program) {
-  const facts = [];
-  const seen = new Set();
+  const factsByKey = new Map();
+  const conflicts = new Set();
+  function addFact(key, fact) {
+    const previous = factsByKey.get(key);
+    if (!previous) {
+      factsByKey.set(key, fact);
+      return;
+    }
+    if (conflicts.has(key) || previous.representation !== fact.representation) {
+      conflicts.add(key);
+      factsByKey.set(key, {
+        ...previous,
+        representation: "unknown",
+        resolvedType: "conflicting generic instantiations",
+      });
+    }
+  }
   for (const element of program.instancesByName.values()) {
     if (element instanceof Property || element instanceof Global) {
       if (!element.declaration) continue;
@@ -31,12 +46,9 @@ export function buildSemanticManifest(program) {
       if (!sourceIsUser(source)) continue;
       const resolvedType = element.type.toString();
       const representation = representationOfResolvedType(resolvedType);
-      if (representation === "unknown") continue;
       const kind = element instanceof Property ? "field" : "global";
       const key = `${source.normalizedPath}:${range.start}:${kind}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      facts.push({
+      addFact(key, {
         source: source.normalizedPath,
         start: range.start,
         end: range.end,
@@ -54,30 +66,24 @@ export function buildSemanticManifest(program) {
     const returnType = element.signature.returnType.toString();
     const returnRepresentation = representationOfResolvedType(returnType);
     const returnKey = `${functionSource.normalizedPath}:${functionRange.start}:return`;
-    if (!seen.has(returnKey)) {
-      seen.add(returnKey);
-      facts.push({
-        source: functionSource.normalizedPath,
-        start: functionRange.start,
-        end: functionRange.end,
-        name: element.prototype.declaration.name.text,
-        kind: "return",
-        representation: returnRepresentation,
-        resolvedType: returnType,
-      });
-    }
+    addFact(returnKey, {
+      source: functionSource.normalizedPath,
+      start: functionRange.start,
+      end: functionRange.end,
+      name: element.prototype.declaration.name.text,
+      kind: "return",
+      representation: returnRepresentation,
+      resolvedType: returnType,
+    });
     element.prototype.declaration.signature.parameters.forEach(
       (parameter, index) => {
         const resolvedType =
           element.signature.parameterTypes[index]?.toString();
         if (!resolvedType) return;
         const representation = representationOfResolvedType(resolvedType);
-        if (representation === "unknown") return;
         const range = parameter.range;
         const key = `${functionSource.normalizedPath}:${range.start}:parameter`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        facts.push({
+        addFact(key, {
           source: functionSource.normalizedPath,
           start: range.start,
           end: range.end,
@@ -95,11 +101,8 @@ export function buildSemanticManifest(program) {
       if (!sourceIsUser(source)) continue;
       const resolvedType = local.type.toString();
       const representation = representationOfResolvedType(resolvedType);
-      if (representation === "unknown") continue;
       const key = `${source.normalizedPath}:${range.start}:local`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      facts.push({
+      addFact(key, {
         source: source.normalizedPath,
         start: range.start,
         end: range.end,
@@ -110,6 +113,14 @@ export function buildSemanticManifest(program) {
       });
     }
   }
+  const facts = [...factsByKey.entries()]
+    .filter(
+      ([key, fact]) =>
+        fact.representation !== "unknown" ||
+        fact.kind === "return" ||
+        conflicts.has(key),
+    )
+    .map(([, fact]) => fact);
   facts.sort(
     (left, right) =>
       left.source.localeCompare(right.source) ||

@@ -10,11 +10,9 @@ import { injectViewImports } from "./imports.js";
 import { readSemanticManifest, writeSemanticManifest } from "./manifest.js";
 import { optimizeSources } from "./optimizer.js";
 import { OptimizationDiagnostic, OptimizationResult } from "./model.js";
+import { buildShadowSemanticManifest } from "./analysis.js";
 
 const DEBUG = /^(1|true|on|yes)$/i.test(process.env["STR_AS_DEBUG"] ?? "");
-const OPTIMIZE = /^(1|true|on|yes)$/i.test(
-  process.env["AS_STR_OPTIMIZE"] ?? "",
-);
 const ANALYZE_ONLY = /^(1|true|on|yes)$/i.test(
   process.env["AS_STR_ANALYZE_ONLY"] ?? "",
 );
@@ -23,6 +21,9 @@ const MANIFEST_OUT = process.env["AS_STR_MANIFEST_OUT"];
 const DUMP = /^(1|true|on|yes)$/i.test(process.env["STR_AS_DUMP"] ?? "");
 
 export default class StrAsTransform extends Transform {
+  protected optimize = false;
+  protected dualPass = false;
+
   afterParse(parser: Parser): void {
     const packageDir = path.resolve(
       fileURLToPath(import.meta.url),
@@ -32,9 +33,36 @@ export default class StrAsTransform extends Transform {
     );
     const baseCWD = path.join(process.cwd(), this.baseDir ?? ".");
 
+    const manifest = this.dualPass
+      ? buildShadowSemanticManifest(
+          this.program,
+          parser.sources,
+          (shadow) => {
+            const preliminary = optimizeSources(shadow.sources);
+            injectViewImports(shadow, {
+              baseCWD,
+              packageDir,
+              debug: false,
+              force: preliminary.changedSources,
+              log: () => {},
+            });
+          },
+          DEBUG
+            ? (reason) =>
+                this.log(`[as-str] semantic analysis failed: ${reason}`)
+            : undefined,
+        )
+      : readSemanticManifest(MANIFEST_IN);
+    if (DEBUG && this.dualPass) {
+      this.log(
+        manifest
+          ? `[as-str] semantic analysis: ${manifest.facts.length} facts`
+          : "[as-str] semantic analysis unavailable; using conservative syntax analysis",
+      );
+    }
     const optimization: OptimizationResult =
-      OPTIMIZE && !ANALYZE_ONLY
-        ? optimizeSources(parser.sources, readSemanticManifest(MANIFEST_IN))
+      this.optimize && !ANALYZE_ONLY
+        ? optimizeSources(parser.sources, manifest)
         : {
             changedSources: new Set<Source>(),
             diagnostics: [] as OptimizationDiagnostic[],

@@ -9,7 +9,8 @@ export const repo = path.resolve(
   "../..",
 );
 const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
-const transform = path.join(repo, "transform/lib/index.js");
+const globalTransform = path.join(repo, "transform/lib/index.js");
+const autoTransform = path.join(repo, "transform/lib/auto.js");
 
 export function compileFixture(name, { optimize, suffix, extra = [] }) {
   const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
@@ -22,7 +23,7 @@ export function compileFixture(name, { optimize, suffix, extra = [] }) {
       asc,
       input,
       "--transform",
-      transform,
+      optimize ? autoTransform : globalTransform,
       "--outFile",
       wasm,
       "--textFile",
@@ -34,7 +35,6 @@ export function compileFixture(name, { optimize, suffix, extra = [] }) {
       encoding: "utf8",
       env: {
         ...process.env,
-        AS_STR_OPTIMIZE: optimize ? "1" : "0",
         STR_AS_DEBUG: optimize ? "1" : "0",
       },
     },

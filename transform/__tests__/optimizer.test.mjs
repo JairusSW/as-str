@@ -9,8 +9,8 @@ const repo = path.resolve(
   "../..",
 );
 const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
-const transform = path.join(repo, "transform/lib/index.js");
-const wrapper = path.join(repo, "bin/as-strc.js");
+const globalTransform = path.join(repo, "transform/lib/index.js");
+const autoTransform = path.join(repo, "transform/lib/auto.js");
 const outDir = path.join(repo, "build");
 const operations = await import(
   pathToFileURL(path.join(repo, "transform/lib/operations.js"))
@@ -46,7 +46,7 @@ function compile(name, extra = []) {
       asc,
       input,
       "--transform",
-      transform,
+      autoTransform,
       "--outFile",
       wasm,
       "--textFile",
@@ -58,7 +58,6 @@ function compile(name, extra = []) {
       encoding: "utf8",
       env: {
         ...process.env,
-        AS_STR_OPTIMIZE: "1",
         STR_AS_DEBUG: "1",
       },
     },
@@ -70,6 +69,44 @@ function compile(name, extra = []) {
   );
   const output = result.stdout + result.stderr;
   return { output, wasm, wat: readFileSync(wat, "utf8") };
+}
+
+function compileAuto(name, extra = []) {
+  const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
+  const wasm = path.join(outDir, `${name}-auto.wasm`);
+  const wat = path.join(outDir, `${name}-auto.wat`);
+  const result = spawnSync(
+    process.execPath,
+    [
+      asc,
+      input,
+      "--transform",
+      autoTransform,
+      "--outFile",
+      wasm,
+      "--textFile",
+      wat,
+      ...extra,
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        STR_AS_DEBUG: "1",
+      },
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `asc auto transform failed for ${name}:\n${result.stdout}\n${result.stderr}`,
+  );
+  return {
+    output: result.stdout + result.stderr,
+    wasm,
+    wat: readFileSync(wat, "utf8"),
+  };
 }
 
 function functionBody(wat, name) {
@@ -235,6 +272,22 @@ assert.equal(instantiated.instance.exports.semanticCheck(), 103);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);
 assert.equal(instantiated.instance.exports.evaluationOrder(), 123);
 
+const auto = compileAuto("generic-conflict");
+assert.match(auto.output, /semantic analysis: \d+ facts/);
+assert.match(
+  auto.output,
+  /identity return -> unknown: tracked resolved conflicting generic instantiations/,
+);
+const autoModule = await WebAssembly.instantiate(readFileSync(auto.wasm), {
+  env: {
+    abort() {
+      throw new Error("AssemblyScript abort");
+    },
+  },
+});
+assert.equal(autoModule.instance.exports.stringInstantiation(), 5);
+assert.equal(autoModule.instance.exports.numberInstantiation(7), 7);
+
 const barriers = compile("safety-barriers");
 assert.match(barriers.output, /native string function parameter/);
 assert.match(barriers.output, /explicit cast or assertion/);
@@ -336,7 +389,7 @@ const disabled = spawnSync(
     asc,
     path.join(repo, "transform/__tests__/fixtures/branch-only.ts"),
     "--transform",
-    transform,
+    globalTransform,
     "--outFile",
     disabledWasm,
     "--textFile",
@@ -345,7 +398,7 @@ const disabled = spawnSync(
   {
     cwd: repo,
     encoding: "utf8",
-    env: { ...process.env, AS_STR_OPTIMIZE: "0", STR_AS_DEBUG: "1" },
+    env: { ...process.env, STR_AS_DEBUG: "1" },
   },
 );
 assert.equal(disabled.status, 0, disabled.stdout + disabled.stderr);
@@ -374,42 +427,5 @@ for (const choose of [0, 1]) {
     "optimized and unoptimized observable behavior must match",
   );
 }
-
-const wrapperWasm = path.join(outDir, "wrapper-test.wasm");
-const wrapperWat = path.join(outDir, "wrapper-test.wat");
-const wrapperResult = spawnSync(
-  process.execPath,
-  [
-    wrapper,
-    path.join(repo, "transform/__tests__/fixtures/local-promotion.ts"),
-    "--outFile",
-    wrapperWasm,
-    "--textFile",
-    wrapperWat,
-    "--exportRuntime",
-  ],
-  {
-    cwd: repo,
-    encoding: "utf8",
-    env: { ...process.env, STR_AS_DEBUG: "1" },
-  },
-);
-assert.equal(
-  wrapperResult.status,
-  0,
-  `as-strc failed:\n${wrapperResult.stdout}\n${wrapperResult.stderr}`,
-);
-assert.match(
-  wrapperResult.stdout + wrapperResult.stderr,
-  /tracked string; no profitable view operation/,
-);
-const wrapperModule = await WebAssembly.instantiate(readFileSync(wrapperWasm), {
-  env: {
-    abort() {
-      throw new Error("AssemblyScript abort");
-    },
-  },
-});
-assert.equal(wrapperModule.instance.exports.semanticCheck(), 103);
 
 console.log("transform optimizer fixtures passed");

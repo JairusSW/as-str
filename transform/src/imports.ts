@@ -10,11 +10,16 @@ import path from "path";
 
 export const PACKAGE_NAME = "as-str";
 export const VIEW_NAME = "str";
+export const VIEW_CLASS_NAME = "Str";
 
-const USES =
-  /(?:\bstr\s*\.|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
-const BINDS =
+const VIEW_USES =
+  /(?:\bstr\s*[.(]|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
+const VIEW_BINDS =
   /(?:\b(?:const|let|var|function|class|namespace|type)\s+str\b|\(\s*str\s*:|,\s*str\s*:)/;
+const VIEW_CLASS_USES =
+  /(?:\bStr\s*\.|:\s*Str\b|\bnew\s+Str\b|<\s*Str\s*>|\bStr\s*\[\s*\])/;
+const VIEW_CLASS_BINDS =
+  /(?:\b(?:const|let|var|function|class|namespace|type)\s+Str\b|\(\s*Str\s*:|,\s*Str\s*:)/;
 const OWN_SOURCES = new Set([
   "assembly/index.ts",
   "assembly/str.ts",
@@ -25,7 +30,14 @@ const OWN_SOURCES = new Set([
 ]);
 
 export function isPackageSource(source: Source): boolean {
-  return OWN_SOURCES.has(source.normalizedPath);
+  if (OWN_SOURCES.has(source.normalizedPath)) return true;
+  const internalPath = source.internalPath.replace(/\.ts$/, "");
+  if (internalPath === `~lib/${PACKAGE_NAME}/index`) return true;
+  const libraryPrefix = `~lib/${PACKAGE_NAME}/`;
+  return (
+    internalPath.startsWith(libraryPrefix) &&
+    OWN_SOURCES.has(internalPath.slice(libraryPrefix.length) + ".ts")
+  );
 }
 
 export function normalizeBaseRel(baseRel: string): string {
@@ -70,7 +82,27 @@ function importedNames(source: Source): Set<string> {
 }
 
 export function viewNameAvailable(source: Source): boolean {
-  return importedNames(source).has(VIEW_NAME) || !BINDS.test(source.text);
+  return importedNames(source).has(VIEW_NAME) || !VIEW_BINDS.test(source.text);
+}
+
+function requestedViewNames(source: Source, forced: boolean): string[] {
+  const already = importedNames(source);
+  const names: string[] = [];
+  if (
+    !already.has(VIEW_NAME) &&
+    !VIEW_BINDS.test(source.text) &&
+    (forced || VIEW_USES.test(source.text))
+  ) {
+    names.push(VIEW_NAME);
+  }
+  if (
+    !already.has(VIEW_CLASS_NAME) &&
+    !VIEW_CLASS_BINDS.test(source.text) &&
+    VIEW_CLASS_USES.test(source.text)
+  ) {
+    names.push(VIEW_CLASS_NAME);
+  }
+  return names;
 }
 
 export interface ImportInjectionOptions {
@@ -137,6 +169,7 @@ function seedUtfAsSources(parser: Parser): void {
   }
   const utfDir = path.dirname(utfPackage);
   const files = [
+    "index.ts",
     "assembly/index.ts",
     "assembly/utf/index.ts",
     "assembly/utf/common.ts",
@@ -178,44 +211,44 @@ export function injectViewImports(
   const injected: InjectedImport[] = [];
 
   for (const source of parser.sources) {
-    if (source.isLibrary || source.internalPath.startsWith("~lib")) continue;
     if (isPackageSource(source)) continue;
 
-    const already = importedNames(source);
-    if (
-      already.has(VIEW_NAME) ||
-      (!USES.test(source.text) && !options.force?.has(source)) ||
-      BINDS.test(source.text)
-    ) {
-      continue;
-    }
-
-    let fromPath = source.normalizedPath.replaceAll("/", path.sep);
-    fromPath = fromPath.startsWith("~lib")
-      ? fromPath.slice(5)
-      : path.join(options.baseCWD, fromPath);
-
-    const baseRel = computeImportBaseRel(
-      path.dirname(fromPath),
-      options.packageDir,
+    const names = requestedViewNames(
+      source,
+      options.force?.has(source) ?? false,
     );
-    const specifier =
-      baseRel === PACKAGE_NAME
-        ? PACKAGE_NAME
-        : path.posix.join(baseRel, "assembly", "index");
+    if (!names.length) continue;
+
+    const librarySource =
+      source.isLibrary || source.internalPath.startsWith("~lib");
+    let specifier = PACKAGE_NAME;
+    if (!librarySource) {
+      const fromPath = path.join(
+        options.baseCWD,
+        source.normalizedPath.replaceAll("/", path.sep),
+      );
+      const baseRel = computeImportBaseRel(
+        path.dirname(fromPath),
+        options.packageDir,
+      );
+      specifier =
+        baseRel === PACKAGE_NAME
+          ? PACKAGE_NAME
+          : path.posix.join(baseRel, "assembly", "index");
+    }
     specifiers.add(specifier);
     injected.push({ source, specifier });
 
     const range = source.range;
     source.statements.unshift(
       Node.createImportStatement(
-        [
+        names.map((name) =>
           Node.createImportDeclaration(
-            Node.createIdentifierExpression(VIEW_NAME, range, false),
+            Node.createIdentifierExpression(name, range, false),
             null,
             range,
           ),
-        ],
+        ),
         Node.createStringLiteralExpression(specifier, range),
         range,
       ),
@@ -223,7 +256,7 @@ export function injectViewImports(
 
     if (options.debug) {
       options.log(
-        `[as-str] inject { ${VIEW_NAME} } from "${specifier}" -> ${source.normalizedPath}`,
+        `[as-str] inject { ${names.join(", ")} } from "${specifier}" -> ${source.normalizedPath}`,
       );
     }
   }

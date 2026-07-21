@@ -4,10 +4,6 @@
   "author": "Jairus Tanaka <me@jairus.dev>",
   "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without allocating",
   "types": "assembly/index.ts",
-  "main": "transform/lib/index.js",
-  "bin": {
-    "as-strc": "bin/as-strc.js"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JairusSW/as-str.git"
@@ -40,9 +36,9 @@
     "assembly/util8.ts",
     "assembly/tsconfig.json",
     "index.ts",
+    "auto/package.json",
+    "global/package.json",
     "transform/lib/",
-    "transform/package.json",
-    "bin/as-strc.js",
     "globals/index.d.ts",
     "globals.json",
     "README.md",
@@ -58,16 +54,14 @@
     "lint:fix": "eslint . --fix --no-warn-ignored",
     "typecheck": "asc assembly/index.ts --noEmit",
     "typecheck:transform": "tsc -p ./transform --noEmit",
-    "typecheck:cli": "tsc -p ./cli --noEmit",
-    "build:transform": "tsc -p ./transform",
-    "build:cli": "tsc -p ./cli",
-    "build": "npm run build:transform && npm run build:cli",
-    "test:transform": "npm run build && node transform/__tests__/imports.test.mjs && node transform/__tests__/optimizer.test.mjs && node transform/__tests__/differential.test.mjs && node transform/__tests__/allocation-report.mjs && node cli/__tests__/cli.test.mjs",
+    "build:transform": "tsc -p ./transform && prettier --write transform/lib",
+    "build": "npm run build:transform",
+    "test:transform": "npm run build && node transform/__tests__/imports.test.mjs && node transform/__tests__/optimizer.test.mjs && node transform/__tests__/differential.test.mjs && node transform/__tests__/allocation-report.mjs",
     "test:consumer": "npm run build && node transform/__tests__/consumer.test.mjs",
     "test:differential": "npm run build && node transform/__tests__/differential.test.mjs",
     "bench:transform": "npm run build && node transform/__tests__/allocation-report.mjs",
     "prepublishOnly": "npm run check && npm run test:ci && npm run test:transform && npm run test:consumer",
-    "check": "npm run lint && npm run typecheck && npm run typecheck:transform && npm run typecheck:cli",
+    "check": "npm run lint && npm run typecheck && npm run typecheck:transform",
     "bench": "asb run",
     "bench:full": "asb run --mode full",
     "charts": "bun run charts:build && bun run charts:serve",
@@ -107,6 +101,6 @@
     "utf-as": "^0.3.1"
   },
   "peerDependencies": {
-    "assemblyscript": ">=0.28.18"
+    "assemblyscript": ">=0.28.10"
   }
 }
