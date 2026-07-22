@@ -127,7 +127,7 @@ export function buildSemanticManifest(program) {
       left.start - right.start ||
       left.kind.localeCompare(right.kind),
   );
-  return { version: 1, facts };
+  return { version: 1, facts, complete: true };
 }
 export function writeSemanticManifest(program, filename) {
   writeFileSync(

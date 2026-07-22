@@ -23,6 +23,7 @@ export interface SemanticFact {
 export interface SemanticManifest {
   version: 1;
   facts: SemanticFact[];
+  complete?: boolean;
 }
 
 function representationOfResolvedType(type: string): Representation {
@@ -154,7 +155,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       left.start - right.start ||
       left.kind.localeCompare(right.kind),
   );
-  return { version: 1, facts };
+  return { version: 1, facts, complete: true };
 }
 
 export function writeSemanticManifest(

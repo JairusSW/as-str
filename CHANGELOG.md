@@ -21,6 +21,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its entrypoint.
 - The `as-strc` wrapper. Use `asc --transform as-str/auto` directly.
 
+### Fixed
+
+- Automatic mode now retains resolved semantic facts when a shadow compile has
+  unrelated errors, while disabling parameter and return promotion for the
+  incomplete analysis.
+- Locals remain native when a view-producing method result flows into a native
+  assignment, an unknown external call, or an operator that cannot safely mix
+  native strings and views.
+
 ## [0.4.0] - 2026-07-21
 
 ### Added

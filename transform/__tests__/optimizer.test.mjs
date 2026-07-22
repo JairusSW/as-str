@@ -295,6 +295,12 @@ assert.match(barriers.output, /raw-memory or representation intrinsic/);
 assert.match(barriers.output, /unknown or external call/);
 assert.match(barriers.output, /operator use/);
 assert.match(barriers.output, /unsupported or escaping use/);
+assert.match(barriers.output, /derived view assigned to native string/);
+assert.match(
+  barriers.output,
+  /derived view passed to unknown or external call/,
+);
+assert.match(barriers.output, /derived view used by operator/);
 assert.match(
   barriers.output,
   /preferred -> native: raw-memory or representation intrinsic/,
@@ -312,6 +318,9 @@ for (const name of [
   "templateBoundary",
   "concatBoundary",
   "preferredUnsafe",
+  "derivedAssignment",
+  "derivedExternalCall",
+  "derivedOperator",
 ]) {
   const body = functionBody(
     barriers.wat,
@@ -320,6 +329,13 @@ for (const name of [
   assert.match(body, /call \$~lib\/string\/String#slice/);
   assert.doesNotMatch(body, /\$assembly\/str\/Str\.slice/);
 }
+
+const derivedParameter = functionBody(
+  barriers.wat,
+  "transform/__tests__/fixtures/safety-barriers/derivedParameter",
+);
+assert.match(derivedParameter, /call \$~lib\/string\/String#substring/);
+assert.doesNotMatch(derivedParameter, /\$assembly\/str\/Str\.substring/);
 
 const crossModule = compile("cross-module");
 const convertedCrossCall = functionBody(

@@ -226,6 +226,21 @@ function parameterHasProfitableUse(body: Statement, name: string): boolean {
   return profitable;
 }
 
+function viewReceiverRoot(expression: Expression): IdentifierExpression | null {
+  if (expression instanceof IdentifierExpression) return expression;
+  if (expression instanceof ParenthesizedExpression) {
+    return viewReceiverRoot(expression.expression);
+  }
+  if (expression instanceof CallExpression) {
+    const property = propertyCall(expression);
+    if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+      return null;
+    }
+    return viewReceiverRoot(property.expression);
+  }
+  return null;
+}
+
 function analyzeParameterPromotions(
   context: FunctionContext,
   signature: FunctionSignature | undefined,
@@ -272,6 +287,18 @@ function analyzeParameterPromotions(
         return;
       }
       reason ??= reasonForUse(node, ref, context, signatures);
+    });
+
+    walk(body, (node, ref): boolean | void => {
+      if (node instanceof FunctionDeclaration && node !== declaration)
+        return false;
+      if (!(node instanceof CallExpression)) return;
+      const property = propertyCall(node);
+      if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+        return;
+      }
+      if (viewReceiverRoot(property.expression)?.text !== name) return;
+      reason ??= derivedViewUseReason(node, ref, context, signatures);
     });
 
     const promoted = reason === null;
@@ -626,6 +653,89 @@ function reasonForUse(
   return "unsupported or escaping use";
 }
 
+function derivedViewUseReason(
+  call: CallExpression,
+  ref: WalkRef,
+  context: FunctionContext,
+  signatures: Map<string, FunctionSignature>,
+): string | null {
+  const parent = ref.parent;
+
+  if (
+    parent instanceof PropertyAccessExpression &&
+    parent.expression === call &&
+    isKnownViewMember(parent.property.text)
+  ) {
+    return null;
+  }
+  if (parent instanceof ElementAccessExpression && parent.expression === call) {
+    return null;
+  }
+  if (parent instanceof VariableDeclaration && parent.initializer === call) {
+    const target = context.bindings.get(parent.name.text);
+    if (target?.candidate || target?.declared === "view") return null;
+    return target?.declared === "native" || target?.semantic === "native"
+      ? "derived view assigned to native string"
+      : "derived view assigned to unknown target";
+  }
+  if (parent instanceof CallExpression) {
+    if (
+      parent.expression instanceof IdentifierExpression &&
+      parent.expression.text === context.declaration?.name.text &&
+      parent.args.includes(call)
+    ) {
+      return null;
+    }
+    const index = parent.args.indexOf(call);
+    if (index >= 0) {
+      const expected = expectedCallArgument(parent, index, signatures, context);
+      if (expected === "view") return null;
+      return expected === "native"
+        ? "derived view passed to native string parameter"
+        : "derived view passed to unknown or external call";
+    }
+  }
+  if (parent instanceof ReturnStatement) {
+    const result = representationOfType(
+      context.declaration?.signature.returnType ?? null,
+    );
+    if (result === "view") return null;
+    return result === "native"
+      ? "derived view reaches native string return"
+      : "derived view reaches inferred or unknown return";
+  }
+  if (parent instanceof BinaryExpression) {
+    if (
+      parent.operator === Token.Equals &&
+      parent.right === call &&
+      parent.left instanceof IdentifierExpression
+    ) {
+      const target = context.bindings.get(parent.left.text);
+      if (target?.candidate || target?.declared === "view") return null;
+      return target?.declared === "native" || target?.semantic === "native"
+        ? "derived view assigned to native string"
+        : "derived view assigned to unknown target";
+    }
+    return "derived view used by operator";
+  }
+  if (parent instanceof TernaryExpression)
+    return "derived view used by conditional merge";
+  if (parent instanceof CommaExpression) return "derived view used by comma";
+  if (parent instanceof ThrowStatement) return "derived view reaches throw";
+
+  return "derived view reaches unsupported or escaping use";
+}
+
+function candidateReceiver(
+  expression: Expression,
+  context: FunctionContext,
+): Binding | null {
+  const root = viewReceiverRoot(expression);
+  if (!root) return null;
+  const binding = context.bindings.get(root.text);
+  return binding?.candidate ? binding : null;
+}
+
 function analyzeCandidates(
   context: FunctionContext,
   signatures: Map<string, FunctionSignature>,
@@ -655,6 +765,23 @@ function analyzeCandidates(
     binding.uses++;
     const reason = reasonForUse(node, ref, context, signatures);
     if (reason && !binding.forcedReason) binding.forcedReason = reason;
+  });
+
+  // A candidate can be safe as a receiver while the view produced by one of
+  // its methods is not. Keep the receiver native when that derived value
+  // crosses a boundary the rewriter cannot prove to accept a view.
+  walk(body, (node, ref): boolean | void => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    if (!(node instanceof CallExpression)) return;
+    const property = propertyCall(node);
+    if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+      return;
+    }
+    const binding = candidateReceiver(property.expression, context);
+    if (!binding || binding.forcedReason) return;
+    const reason = derivedViewUseReason(node, ref, context, signatures);
+    if (reason) binding.forcedReason = reason;
   });
 
   for (const binding of context.bindings.values()) {
@@ -872,6 +999,7 @@ export function optimizeSource(
   const signatures =
     sharedSignatures ?? collectFunctionSignatures(source, semanticFacts);
   const fields = collectFieldRepresentations(source);
+  const canPromoteBoundaries = manifest?.complete !== false;
 
   const functions = collectFunctions(source);
   const contexts = new Map<FunctionDeclaration, FunctionContext>();
@@ -898,11 +1026,9 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
     const signature = signatures.get(declaration.name.text);
-    const promotions = analyzeParameterPromotions(
-      context,
-      signature,
-      signatures,
-    );
+    const promotions = canPromoteBoundaries
+      ? analyzeParameterPromotions(context, signature, signatures)
+      : [];
     for (const promotion of promotions) {
       const parameter = declaration.signature.parameters[promotion.index];
       const location = parameter.range.source;
@@ -925,12 +1051,9 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
     const signature = signatures.get(declaration.name.text);
-    const promotion = analyzeReturnPromotion(
-      context,
-      signature,
-      source,
-      signatures,
-    );
+    const promotion = canPromoteBoundaries
+      ? analyzeReturnPromotion(context, signature, source, signatures)
+      : null;
     if (!promotion) continue;
     const range = declaration.signature.returnType.range;
     const location = range.source;

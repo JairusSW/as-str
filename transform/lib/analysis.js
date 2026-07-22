@@ -39,15 +39,18 @@ export function buildShadowSemanticManifest(
     const errors = analysis.diagnostics.filter(
       (diagnostic) => diagnostic.category === 3,
     );
+    const manifest = buildSemanticManifest(analysis);
     if (errors.length) {
+      manifest.complete = false;
       const shown = errors.slice(0, 3).map((diagnostic) => diagnostic.message);
       if (errors.length > shown.length) {
         shown.push(`${errors.length - shown.length} more errors`);
       }
-      onFailure?.(shown.join("; "));
-      return null;
+      onFailure?.(
+        `${shown.join("; ")}; continuing with ${manifest.facts.length} resolved facts`,
+      );
     }
-    return buildSemanticManifest(analysis);
+    return manifest;
   } catch (error) {
     const backlog = analysis.parser.backlog.length
       ? ` (${analysis.parser.backlog.length} unresolved sources)`

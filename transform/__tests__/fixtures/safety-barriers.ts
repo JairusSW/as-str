@@ -72,3 +72,28 @@ export function preferredUnsafe(input: string): usize {
   const preferred = input.slice(1, 4);
   return changetype<usize>(preferred);
 }
+
+export function derivedAssignment(input: string): string {
+  const part = input.slice(1, 4);
+  let native: string = input;
+  if (input.length > 0) native = part.substring(1);
+  return native;
+}
+
+export function derivedExternalCall(input: string): f64 {
+  const part = input.slice(1, 4);
+  return parseInt(part.substring(0, 1));
+}
+
+export function derivedOperator(input: string): bool {
+  const part = input.slice(1, 4);
+  return part.charAt(0) === "x";
+}
+
+function derivedParameter(input: string): f64 {
+  return parseInt(input.substring(0, 1));
+}
+
+export function derivedParameterBoundary(input: string): f64 {
+  return derivedParameter(input);
+}
