@@ -97,3 +97,17 @@ function derivedParameter(input: string): f64 {
 export function derivedParameterBoundary(input: string): f64 {
   return derivedParameter(input);
 }
+
+interface NativeVisitor {
+  visit(path: string): bool;
+}
+
+class Visitor implements NativeVisitor {
+  visit(path: string): bool {
+    return path.substring(1).length > 0;
+  }
+}
+
+export function interfaceMethodBoundary(input: string): bool {
+  return new Visitor().visit(input);
+}

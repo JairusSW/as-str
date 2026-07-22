@@ -2,6 +2,7 @@ import {
   AssertionExpression,
   BinaryExpression,
   CallExpression,
+  ClassDeclaration,
   CommaExpression,
   CommonFlags,
   DecoratorNode,
@@ -30,6 +31,7 @@ import {
 import {
   isKnownViewMember,
   LENGTH_FUSIBLE_METHODS,
+  SPAN_SCALAR_METHODS,
   VIEW_PRODUCING_METHODS,
 } from "./operations.js";
 import { factsForSource, SemanticFact, SemanticManifest } from "./manifest.js";
@@ -69,7 +71,8 @@ function summarize(diagnostics: OptimizationDiagnostic[]): OptimizationSummary {
       promoted++;
       if (
         diagnostic.reason.includes("view-producing") ||
-        diagnostic.reason.includes("profitable view")
+        diagnostic.reason.includes("profitable view") ||
+        diagnostic.reason.includes("scalarized")
       ) {
         estimatedAllocationsRemoved++;
       }
@@ -128,15 +131,21 @@ function isUnsafeIntrinsic(call: CallExpression): boolean {
   );
 }
 
-function functionIsClosed(declaration: FunctionDeclaration): boolean {
-  return !declaration.isAny(
-    CommonFlags.Export |
-      CommonFlags.Import |
-      CommonFlags.Declare |
-      CommonFlags.Ambient |
-      CommonFlags.Public |
-      CommonFlags.Override |
-      CommonFlags.Closure,
+function functionIsClosed(
+  declaration: FunctionDeclaration,
+  owner: ClassDeclaration | null,
+): boolean {
+  return (
+    !owner?.implementsTypes?.length &&
+    !declaration.isAny(
+      CommonFlags.Export |
+        CommonFlags.Import |
+        CommonFlags.Declare |
+        CommonFlags.Ambient |
+        CommonFlags.Public |
+        CommonFlags.Override |
+        CommonFlags.Closure,
+    )
   );
 }
 
@@ -147,7 +156,7 @@ function collectFunctionSignatures(
   const signatures = new Map<string, FunctionSignature>();
   const ambiguous = new Set<string>();
 
-  walk(source, (node): boolean | void => {
+  walk(source, (node, ref): boolean | void => {
     if (!(node instanceof FunctionDeclaration)) return;
     const name = node.name.text;
     if (signatures.has(name)) {
@@ -166,7 +175,10 @@ function collectFunctionSignatures(
             "unknown")
           : annotatedResult,
       callable: true,
-      promotable: functionIsClosed(node),
+      promotable: functionIsClosed(
+        node,
+        ref.parent instanceof ClassDeclaration ? ref.parent : null,
+      ),
     });
   });
 
@@ -881,7 +893,19 @@ function analyzeCandidates(
           ref.parent instanceof PropertyAccessExpression &&
           ref.key === "expression"
         ) {
-          if (ref.parent.property.text === "length") return;
+          if (
+            ref.parent.property.text === "length" ||
+            ref.parent.property.text === "isEmpty"
+          ) {
+            return;
+          }
+          if (
+            ref.grandparent instanceof CallExpression &&
+            ref.grandparent.expression === ref.parent &&
+            SPAN_SCALAR_METHODS.has(ref.parent.property.text)
+          ) {
+            return;
+          }
           if (
             ref.grandparent instanceof CallExpression &&
             ref.grandparent.expression === ref.parent &&
@@ -1077,21 +1101,6 @@ export function optimizeSource(
     const context = contexts.get(declaration)!;
     analyzeCandidates(context, signatures);
 
-    let changed = false;
-    for (const binding of context.bindings.values()) {
-      if (binding.candidate && binding.decision === "view") changed = true;
-    }
-
-    // Explicit string/view conversions can be required even without promotion.
-    if (
-      [...context.bindings.values()].some(
-        (binding) =>
-          binding.declared !== "unknown" && binding.declaration.initializer,
-      )
-    ) {
-      changed = true;
-    }
-
     rewriteStatement(declaration.body, context, signatures);
     for (const binding of context.bindings.values()) {
       if (binding.candidate) {
@@ -1106,7 +1115,6 @@ export function optimizeSource(
         diagnostics.push(tracked);
       }
     }
-    if (changed) changedSources.add(source);
   }
 
   if (sourceUsesViewName(source)) changedSources.add(source);

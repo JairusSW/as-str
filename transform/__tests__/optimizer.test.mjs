@@ -261,6 +261,23 @@ const provenNullable = functionBody(
 assert.match(provenNullable, /\$assembly\/str\/Str\.slice/);
 assert.doesNotMatch(provenNullable, /call \$~lib\/string\/String#slice/);
 
+const scalarSpanConsumers = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/scalarSpanConsumers",
+);
+assert.doesNotMatch(
+  scalarSpanConsumers,
+  /call \$~lib\/string\/String#substring/,
+);
+assert.doesNotMatch(
+  scalarSpanConsumers,
+  /call \$assembly\/str\/Str#constructor/,
+);
+assert.match(
+  local.output,
+  /scalarized non-escaping view into a packed pointer span/,
+);
+
 const instantiated = await WebAssembly.instantiate(readFileSync(local.wasm), {
   env: {
     abort() {
@@ -271,6 +288,7 @@ const instantiated = await WebAssembly.instantiate(readFileSync(local.wasm), {
 assert.equal(instantiated.instance.exports.semanticCheck(), 103);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);
 assert.equal(instantiated.instance.exports.evaluationOrder(), 123);
+assert.equal(instantiated.instance.exports.scalarSpanSemanticCheck(), 205);
 
 const auto = compileAuto("generic-conflict");
 assert.match(auto.output, /semantic analysis: \d+ facts/);
@@ -288,6 +306,12 @@ const autoModule = await WebAssembly.instantiate(readFileSync(auto.wasm), {
 assert.equal(autoModule.instance.exports.stringInstantiation(), 5);
 assert.equal(autoModule.instance.exports.numberInstantiation(7), 7);
 
+const noOp = compile("no-op");
+assert.doesNotMatch(
+  noOp.output,
+  /inject \{ str \}/,
+  "a source with only rejected promotions must not import the view runtime",
+);
 const barriers = compile("safety-barriers");
 assert.match(barriers.output, /native string function parameter/);
 assert.match(barriers.output, /explicit cast or assertion/);
@@ -301,6 +325,11 @@ assert.match(
   /derived view passed to unknown or external call/,
 );
 assert.match(barriers.output, /derived view used by operator/);
+assert.doesNotMatch(
+  barriers.output,
+  /path -> view: closed-world parameter/,
+  "methods implementing native-string interfaces must retain their ABI",
+);
 assert.match(
   barriers.output,
   /preferred -> native: raw-memory or representation intrinsic/,

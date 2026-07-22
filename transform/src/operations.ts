@@ -43,6 +43,17 @@ export const SCALAR_MEMBERS = new Set([
   "greaterThanOrEqual",
 ]);
 
+/** Scalar methods that can consume an optimizer-packed pointer span. */
+export const SPAN_SCALAR_METHODS = new Set([
+  "charCodeAt",
+  "codePointAt",
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "startsWith",
+  "endsWith",
+]);
+
 /** Members available on Str whose result is a newly allocated native string. */
 export const NATIVE_PRODUCING_METHODS = new Set([
   "concat",

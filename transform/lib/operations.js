@@ -37,6 +37,15 @@ export const SCALAR_MEMBERS = new Set([
   "greaterThan",
   "greaterThanOrEqual",
 ]);
+export const SPAN_SCALAR_METHODS = new Set([
+  "charCodeAt",
+  "codePointAt",
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "startsWith",
+  "endsWith",
+]);
 export const NATIVE_PRODUCING_METHODS = new Set([
   "concat",
   "repeat",

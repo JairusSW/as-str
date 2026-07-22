@@ -42,6 +42,7 @@ import {
   LENGTH_FUSIBLE_METHODS,
   NATIVE_PRODUCING_METHODS,
   SCALAR_MEMBERS,
+  SPAN_SCALAR_METHODS,
   VIEW_PRODUCING_METHODS,
 } from "./operations.js";
 import { expressionCanProduceView } from "./expressions.js";
@@ -292,13 +293,14 @@ function rewriteExpression(expression, expected, context, signatures) {
   }
   if (
     expression instanceof PropertyAccessExpression &&
-    expression.property.text === "length" &&
+    (expression.property.text === "length" ||
+      expression.property.text === "isEmpty") &&
     expression.expression instanceof IdentifierExpression
   ) {
     const binding = context.bindings.get(expression.expression.text);
     if (binding?.scalarizedSpan && binding.spanOwner) {
       return staticViewCall(
-        "spanLength",
+        expression.property.text === "length" ? "spanLength" : "isEmptySpan",
         identifier(binding.spanOwner, expression.range),
         [expression.expression],
       );
@@ -406,6 +408,29 @@ function rewriteExpression(expression, expected, context, signatures) {
     const property = propertyCall(expression);
     if (property) {
       const method = property.property.text;
+      const spanBinding =
+        property.expression instanceof IdentifierExpression
+          ? context.bindings.get(property.expression.text)
+          : null;
+      if (
+        spanBinding?.scalarizedSpan &&
+        spanBinding.spanOwner &&
+        SPAN_SCALAR_METHODS.has(method)
+      ) {
+        const args = expression.args.map((argument) =>
+          rewriteExpression(argument, "unknown", context, signatures),
+        );
+        return convertExpression(
+          staticViewCall(
+            `${method}Span`,
+            identifier(spanBinding.spanOwner, expression.range),
+            [property.expression, ...args],
+          ),
+          expected,
+          context,
+          signatures,
+        );
+      }
       const containerElement =
         property.expression instanceof IdentifierExpression
           ? (context.bindings.get(property.expression.text)?.element ??
@@ -414,7 +439,8 @@ function rewriteExpression(expression, expected, context, signatures) {
       let receiverExpected = "unknown";
       if (
         expressionCanProduceView(property.expression) &&
-        (VIEW_PRODUCING_METHODS.has(method) || SCALAR_MEMBERS.has(method))
+        (SCALAR_MEMBERS.has(method) ||
+          (VIEW_PRODUCING_METHODS.has(method) && expected === "view"))
       ) {
         receiverExpected = "view";
       }

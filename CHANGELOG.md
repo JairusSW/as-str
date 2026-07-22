@@ -29,6 +29,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Locals remain native when a view-producing method result flows into a native
   assignment, an unknown external call, or an operator that cannot safely mix
   native strings and views.
+- Automatic mode no longer injects the view runtime into sources where every
+  proposed optimization was rejected.
+- Native-result method chains remain native instead of allocating intermediate
+  view objects only to materialize them back into a string.
+- Non-escaping views consumed by scalar methods such as `indexOf`,
+  `charCodeAt`, `startsWith`, and `endsWith` are packed into pointer spans,
+  eliminating both the native-string copy and the intermediate view object.
+- Methods implementing interfaces retain their native-string ABI instead of
+  being treated as closed-world specialization candidates.
 
 ## [0.4.0] - 2026-07-21
 

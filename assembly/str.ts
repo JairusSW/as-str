@@ -955,6 +955,101 @@ import { Str8 } from "./str8";
   }
 
   // @ts-ignore: decorator
+  @inline static isEmptySpan<T>(owner: T, value: u64): bool {
+    bData(owner);
+    return Str.spanStart(value) == Str.spanEnd(value);
+  }
+
+  // @ts-ignore: decorator
+  @inline static charCodeAtSpan<T>(owner: T, value: u64, index: i32): i32 {
+    bData(owner);
+    return Str.charCodeAtRange(Str.spanStart(value), Str.spanEnd(value), index);
+  }
+
+  // @ts-ignore: decorator
+  @inline static codePointAtSpan<T>(owner: T, value: u64, index: i32): i32 {
+    bData(owner);
+    return Str.codePointAtRange(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      index,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static indexOfSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    start: i32 = 0,
+  ): i32 {
+    bData(owner);
+    return rangeIndexOf(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      start,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static lastIndexOfSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    start: i32 = i32.MAX_VALUE,
+  ): i32 {
+    bData(owner);
+    return rangeLastIndexOf(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      start,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static includesSpan<T, U>(owner: T, value: u64, search: U): bool {
+    return Str.indexOfSpan(owner, value, search) != -1;
+  }
+
+  // @ts-ignore: decorator
+  @inline static startsWithSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    start: i32 = 0,
+  ): bool {
+    bData(owner);
+    return Str.startsWithRange(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      start,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static endsWithSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    end: i32 = i32.MAX_VALUE,
+  ): bool {
+    bData(owner);
+    return Str.endsWithRange(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      end,
+    );
+  }
+
+  // @ts-ignore: decorator
   @inline static sliceSpan<T>(
     s: T,
     start0: i32 = 0,
