@@ -38,6 +38,7 @@
     "index.ts",
     "auto/package.json",
     "global/package.json",
+    "single/package.json",
     "transform/lib/",
     "globals/index.d.ts",
     "globals.json",

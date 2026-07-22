@@ -165,6 +165,30 @@ const knownSafe = input;
 Benchmark automatic mode against your workload when compile time, wall time,
 memory use, or Wasm size matters.
 
+**Single-Pass Automatic Mode**
+
+Single-pass mode skips the shadow semantic compilation and only applies
+syntax-proven local optimizations. It does not promote function parameters or
+returns, making it faster to compile but potentially less aggressive than
+`as-str/auto` on codebases where complete semantic analysis succeeds.
+
+```bash
+--transform as-str/single
+```
+
+```json
+{ "options": { "transform": ["as-str/single"] } }
+```
+
+Source still uses native strings:
+
+```ts
+export function containsMarker(value: string): bool {
+  const compact = value.trim().slice(0, 12);
+  return compact.includes("marker");
+}
+```
+
 ## Docs
 
 Full documentation lives at:

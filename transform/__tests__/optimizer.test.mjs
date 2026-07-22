@@ -11,6 +11,7 @@ const repo = path.resolve(
 const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
 const globalTransform = path.join(repo, "transform/lib/index.js");
 const autoTransform = path.join(repo, "transform/lib/auto.js");
+const singleTransform = path.join(repo, "transform/lib/single.js");
 const outDir = path.join(repo, "build");
 const operations = await import(
   pathToFileURL(path.join(repo, "transform/lib/operations.js"))
@@ -101,6 +102,44 @@ function compileAuto(name, extra = []) {
     result.status,
     0,
     `asc auto transform failed for ${name}:\n${result.stdout}\n${result.stderr}`,
+  );
+  return {
+    output: result.stdout + result.stderr,
+    wasm,
+    wat: readFileSync(wat, "utf8"),
+  };
+}
+
+function compileSingle(name, extra = []) {
+  const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
+  const wasm = path.join(outDir, `${name}-single.wasm`);
+  const wat = path.join(outDir, `${name}-single.wat`);
+  const result = spawnSync(
+    process.execPath,
+    [
+      asc,
+      input,
+      "--transform",
+      singleTransform,
+      "--outFile",
+      wasm,
+      "--textFile",
+      wat,
+      ...extra,
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        STR_AS_DEBUG: "1",
+      },
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `asc single-pass transform failed for ${name}:\n${result.stdout}\n${result.stderr}`,
   );
   return {
     output: result.stdout + result.stderr,
@@ -276,6 +315,25 @@ assert.doesNotMatch(
 assert.match(
   local.output,
   /scalarized non-escaping view into a packed pointer span/,
+);
+
+const single = compileSingle("local-promotion");
+const singleScalarSpanConsumers = functionBody(
+  single.wat,
+  "transform/__tests__/fixtures/local-promotion/scalarSpanConsumers",
+);
+assert.doesNotMatch(
+  singleScalarSpanConsumers,
+  /call \$assembly\/str\/Str#constructor/,
+);
+assert.match(
+  single.output,
+  /scalarized non-escaping view into a packed pointer span/,
+);
+assert.doesNotMatch(
+  single.output,
+  /closed-world (?:parameter|return)/,
+  "single-pass mode must not promote function boundaries without semantic facts",
 );
 
 const instantiated = await WebAssembly.instantiate(readFileSync(local.wasm), {

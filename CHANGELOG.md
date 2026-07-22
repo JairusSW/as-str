@@ -12,6 +12,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Str` import injection.
 - `--transform as-str/auto` as the direct, environment-free entry point for
   automatic in-process dual-pass native-string view optimization.
+- `--transform as-str/single` as a faster syntax-only automatic mode that
+  optimizes safe locals without promoting function parameters or returns.
 
 ### Removed
 
@@ -38,6 +40,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   eliminating both the native-string copy and the intermediate view object.
 - Methods implementing interfaces retain their native-string ABI instead of
   being treated as closed-world specialization candidates.
+- Function-boundary promotion now requires a complete semantic manifest, so
+  syntax-only optimization cannot change an inferred ABI.
 
 ## [0.4.0] - 2026-07-21
 

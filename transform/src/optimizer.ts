@@ -1023,7 +1023,7 @@ export function optimizeSource(
   const signatures =
     sharedSignatures ?? collectFunctionSignatures(source, semanticFacts);
   const fields = collectFieldRepresentations(source);
-  const canPromoteBoundaries = manifest?.complete !== false;
+  const canPromoteBoundaries = manifest?.complete === true;
 
   const functions = collectFunctions(source);
   const contexts = new Map<FunctionDeclaration, FunctionContext>();
