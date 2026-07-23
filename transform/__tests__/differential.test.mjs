@@ -20,6 +20,7 @@ for (const [name, inputs] of [
   ["boundsPipeline", [[]]],
   ["scalarLengthPipeline", [[]]],
   ["scalarSpanPipeline", [[]]],
+  ["packedCaseFoldPipeline", [[]]],
 ]) {
   for (const args of inputs) {
     assert.equal(

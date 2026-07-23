@@ -165,13 +165,11 @@ export function injectViewImports(parser, options) {
   const injected = [];
   for (const source of parser.sources) {
     if (isPackageSource(source)) continue;
-    const names = requestedViewNames(
-      source,
-      options.force?.has(source) ?? false,
-    );
-    if (!names.length) continue;
+    const forced = options.force?.has(source) ?? false;
     const librarySource =
       source.isLibrary || source.internalPath.startsWith("~lib");
+    const names = requestedViewNames(source, forced);
+    if (!names.length) continue;
     let specifier = PACKAGE_NAME;
     if (!librarySource) {
       const fromPath = path.join(

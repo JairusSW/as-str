@@ -1,0 +1,4 @@
+{
+  "main": "../transform/lib/single.js",
+  "type": "module"
+}

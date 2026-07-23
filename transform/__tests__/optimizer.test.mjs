@@ -11,6 +11,7 @@ const repo = path.resolve(
 const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
 const globalTransform = path.join(repo, "transform/lib/index.js");
 const autoTransform = path.join(repo, "transform/lib/auto.js");
+const singleTransform = path.join(repo, "transform/lib/single.js");
 const outDir = path.join(repo, "build");
 const operations = await import(
   pathToFileURL(path.join(repo, "transform/lib/operations.js"))
@@ -109,6 +110,44 @@ function compileAuto(name, extra = []) {
   };
 }
 
+function compileSingle(name, extra = []) {
+  const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
+  const wasm = path.join(outDir, `${name}-single.wasm`);
+  const wat = path.join(outDir, `${name}-single.wat`);
+  const result = spawnSync(
+    process.execPath,
+    [
+      asc,
+      input,
+      "--transform",
+      singleTransform,
+      "--outFile",
+      wasm,
+      "--textFile",
+      wat,
+      ...extra,
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        STR_AS_DEBUG: "1",
+      },
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `asc single-pass transform failed for ${name}:\n${result.stdout}\n${result.stderr}`,
+  );
+  return {
+    output: result.stdout + result.stderr,
+    wasm,
+    wat: readFileSync(wat, "utf8"),
+  };
+}
+
 function functionBody(wat, name) {
   const start = wat.indexOf(`(func $${name}`);
   assert.notEqual(start, -1, `missing WAT function ${name}`);
@@ -148,6 +187,39 @@ const promoted = functionBody(
 assert.match(promoted, /\$assembly\/str\/Str\.slice/);
 assert.doesNotMatch(promoted, /call \$~lib\/string\/String#slice/);
 assert.doesNotMatch(promoted, /call \$assembly\/str\/Str#constructor/);
+
+const promotedAnnotated = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/promotedAnnotatedLength",
+);
+assert.doesNotMatch(
+  promotedAnnotated,
+  /call \$~lib\/string\/String#slice/,
+);
+
+const promotedEquality = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/promotedEquality",
+);
+assert.match(promotedEquality, /Str\.(?:notEqualsSpan|equalsSpan)/);
+assert.doesNotMatch(
+  promotedEquality,
+  /call \$~lib\/string\/String#slice/,
+);
+assert.doesNotMatch(
+  promotedEquality,
+  /call \$assembly\/str\/Str#constructor/,
+);
+
+const directEquality = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/directEquality",
+);
+assert.match(directEquality, /Str\.equalsSpan/);
+assert.doesNotMatch(
+  directEquality,
+  /call \$~lib\/string\/String#slice/,
+);
 
 const unsafe = functionBody(
   local.wat,
@@ -261,6 +333,42 @@ const provenNullable = functionBody(
 assert.match(provenNullable, /\$assembly\/str\/Str\.slice/);
 assert.doesNotMatch(provenNullable, /call \$~lib\/string\/String#slice/);
 
+const scalarSpanConsumers = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/scalarSpanConsumers",
+);
+assert.doesNotMatch(
+  scalarSpanConsumers,
+  /call \$~lib\/string\/String#substring/,
+);
+assert.doesNotMatch(
+  scalarSpanConsumers,
+  /call \$assembly\/str\/Str#constructor/,
+);
+assert.match(
+  local.output,
+  /scalarized non-escaping view into a packed pointer span/,
+);
+
+const single = compileSingle("local-promotion");
+const singleScalarSpanConsumers = functionBody(
+  single.wat,
+  "transform/__tests__/fixtures/local-promotion/scalarSpanConsumers",
+);
+assert.doesNotMatch(
+  singleScalarSpanConsumers,
+  /call \$assembly\/str\/Str#constructor/,
+);
+assert.match(
+  single.output,
+  /scalarized non-escaping view into a packed pointer span/,
+);
+assert.doesNotMatch(
+  single.output,
+  /closed-world (?:parameter|return)/,
+  "single-pass mode must not promote function boundaries without semantic facts",
+);
+
 const instantiated = await WebAssembly.instantiate(readFileSync(local.wasm), {
   env: {
     abort() {
@@ -271,6 +379,7 @@ const instantiated = await WebAssembly.instantiate(readFileSync(local.wasm), {
 assert.equal(instantiated.instance.exports.semanticCheck(), 103);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);
 assert.equal(instantiated.instance.exports.evaluationOrder(), 123);
+assert.equal(instantiated.instance.exports.scalarSpanSemanticCheck(), 205);
 
 const auto = compileAuto("generic-conflict");
 assert.match(auto.output, /semantic analysis: \d+ facts/);
@@ -288,6 +397,12 @@ const autoModule = await WebAssembly.instantiate(readFileSync(auto.wasm), {
 assert.equal(autoModule.instance.exports.stringInstantiation(), 5);
 assert.equal(autoModule.instance.exports.numberInstantiation(7), 7);
 
+const noOp = compile("no-op");
+assert.doesNotMatch(
+  noOp.output,
+  /inject \{ str \}/,
+  "a source with only rejected promotions must not import the view runtime",
+);
 const barriers = compile("safety-barriers");
 assert.match(barriers.output, /native string function parameter/);
 assert.match(barriers.output, /explicit cast or assertion/);
@@ -295,6 +410,17 @@ assert.match(barriers.output, /raw-memory or representation intrinsic/);
 assert.match(barriers.output, /unknown or external call/);
 assert.match(barriers.output, /operator use/);
 assert.match(barriers.output, /unsupported or escaping use/);
+assert.match(barriers.output, /derived view assigned to native string/);
+assert.match(
+  barriers.output,
+  /derived view passed to unknown or external call/,
+);
+assert.match(barriers.output, /derived view used by operator/);
+assert.doesNotMatch(
+  barriers.output,
+  /path -> view: closed-world parameter/,
+  "methods implementing native-string interfaces must retain their ABI",
+);
 assert.match(
   barriers.output,
   /preferred -> native: raw-memory or representation intrinsic/,
@@ -312,6 +438,9 @@ for (const name of [
   "templateBoundary",
   "concatBoundary",
   "preferredUnsafe",
+  "derivedAssignment",
+  "derivedExternalCall",
+  "derivedOperator",
 ]) {
   const body = functionBody(
     barriers.wat,
@@ -320,6 +449,13 @@ for (const name of [
   assert.match(body, /call \$~lib\/string\/String#slice/);
   assert.doesNotMatch(body, /\$assembly\/str\/Str\.slice/);
 }
+
+const derivedParameter = functionBody(
+  barriers.wat,
+  "transform/__tests__/fixtures/safety-barriers/derivedParameter",
+);
+assert.match(derivedParameter, /call \$~lib\/string\/String#substring/);
+assert.doesNotMatch(derivedParameter, /\$assembly\/str\/Str\.substring/);
 
 const crossModule = compile("cross-module");
 const convertedCrossCall = functionBody(
@@ -333,6 +469,18 @@ const nativeCrossBarrier = functionBody(
 );
 assert.match(nativeCrossBarrier, /call \$~lib\/string\/String#slice/);
 assert.doesNotMatch(nativeCrossBarrier, /\$assembly\/str\/Str\.slice/);
+const packedSpanCall = functionBody(
+  crossModule.wat,
+  "transform/__tests__/fixtures/cross-module/packedSpanCall",
+);
+assert.doesNotMatch(packedSpanCall, /call \$~lib\/string\/String#slice/);
+assert.doesNotMatch(packedSpanCall, /call \$assembly\/str\/Str#constructor/);
+const packedLowerCall = functionBody(
+  crossModule.wat,
+  "transform/__tests__/fixtures/cross-module/packedLowerCall",
+);
+assert.doesNotMatch(packedLowerCall, /call \$~lib\/string\/String#slice/);
+assert.doesNotMatch(packedLowerCall, /call \$~lib\/string\/String#toLowerCase/);
 
 const knownCalls = compile("known-calls");
 for (const name of ["knownCallback", "knownMethod"]) {

@@ -2,27 +2,35 @@ import {
   AssertionExpression,
   BinaryExpression,
   CallExpression,
+  ClassDeclaration,
   CommaExpression,
   ElementAccessExpression,
   FieldDeclaration,
   FunctionDeclaration,
   IdentifierExpression,
   NewExpression,
+  Node,
   ParenthesizedExpression,
   PropertyAccessExpression,
   ReturnStatement,
+  StringLiteralExpression,
   TernaryExpression,
   ThrowStatement,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
+  identifier,
   representationOfType,
+  u64Type,
   viewType,
 } from "./ast.js";
 import {
   isKnownViewMember,
   LENGTH_FUSIBLE_METHODS,
+  SPAN_PRODUCING_METHODS,
+  SPAN_SCALAR_METHODS,
+  VIEW_CONTAINER_METHODS,
   VIEW_PRODUCING_METHODS,
 } from "./operations.js";
 import { factsForSource } from "./manifest.js";
@@ -39,6 +47,7 @@ import {
   expressionCanProduceView,
   expressionIsExplicitView,
 } from "./expressions.js";
+import { sourceIsOptimizable } from "./sources.js";
 function summarize(diagnostics) {
   let promoted = 0;
   let rejected = 0;
@@ -50,7 +59,8 @@ function summarize(diagnostics) {
       promoted++;
       if (
         diagnostic.reason.includes("view-producing") ||
-        diagnostic.reason.includes("profitable view")
+        diagnostic.reason.includes("profitable view") ||
+        diagnostic.reason.includes("scalarized")
       ) {
         estimatedAllocationsRemoved++;
       }
@@ -98,13 +108,16 @@ function isUnsafeIntrinsic(call) {
     name === "__new"
   );
 }
-function functionIsClosed(declaration) {
-  return !declaration.isAny(2 | 1 | 4 | 32768 | 256 | 8192 | 536870912);
+function functionIsClosed(declaration, owner) {
+  if (declaration.is(2) && !declaration.range.source.isLibrary) {
+    return false;
+  }
+  return !owner && !declaration.isAny(1 | 4 | 32768 | 256 | 8192 | 536870912);
 }
 function collectFunctionSignatures(source, semanticFacts) {
   const signatures = new Map();
   const ambiguous = new Set();
-  walk(source, (node) => {
+  walk(source, (node, ref) => {
     if (!(node instanceof FunctionDeclaration)) return;
     const name = node.name.text;
     if (signatures.has(name)) {
@@ -114,6 +127,7 @@ function collectFunctionSignatures(source, semanticFacts) {
     const annotatedResult = representationOfType(node.signature.returnType);
     signatures.set(name, {
       declaration: node,
+      declarations: new Set([node]),
       parameters: node.signature.parameters.map((parameter) =>
         representationOfType(parameter.type),
       ),
@@ -123,7 +137,16 @@ function collectFunctionSignatures(source, semanticFacts) {
             "unknown")
           : annotatedResult,
       callable: true,
-      promotable: functionIsClosed(node),
+      promotable: functionIsClosed(
+        node,
+        ref.parent instanceof ClassDeclaration ? ref.parent : null,
+      ),
+      viewArgumentParameters: new Set(),
+      spanArgumentCounts: new Map(),
+      directCallCount: 0,
+      spanParameters: new Map(),
+      caseInsensitiveSpanParameters: new Set(),
+      spanAppliedDeclarations: new Set(),
     });
   });
   for (const name of ambiguous) signatures.delete(name);
@@ -174,16 +197,194 @@ function parameterHasProfitableUse(body, name) {
   });
   return profitable;
 }
+function parameterCanUsePackedSpan(body, name) {
+  let safe = true;
+  let uses = 0;
+  let firstLowercase = Number.MAX_SAFE_INTEGER;
+  walk(body, (node) => {
+    if (
+      node instanceof BinaryExpression &&
+      node.operator === 101 &&
+      node.left instanceof IdentifierExpression &&
+      node.left.text === name &&
+      node.right instanceof CallExpression
+    ) {
+      const property = propertyCall(node.right);
+      if (
+        property?.property.text === "toLowerCase" &&
+        property.expression instanceof IdentifierExpression &&
+        property.expression.text === name
+      ) {
+        firstLowercase = Math.min(firstLowercase, node.range.start);
+      }
+    }
+  });
+  walk(body, (node, ref) => {
+    if (
+      !(node instanceof IdentifierExpression) ||
+      node.text !== name ||
+      isDeclarationIdentifier(node, ref)
+    ) {
+      return;
+    }
+    uses++;
+    if (ref.parent instanceof BinaryExpression) {
+      const binary = ref.parent;
+      if (
+        binary.operator === 101 &&
+        binary.left instanceof IdentifierExpression &&
+        binary.left.text === name &&
+        binary.right instanceof CallExpression
+      ) {
+        const property = propertyCall(binary.right);
+        if (
+          property?.property.text === "toLowerCase" &&
+          property.expression instanceof IdentifierExpression &&
+          property.expression.text === name
+        ) {
+          return;
+        }
+      }
+      if (
+        (binary.operator === 76 ||
+          binary.operator === 78 ||
+          binary.operator === 77 ||
+          binary.operator === 79) &&
+        firstLowercase !== Number.MAX_SAFE_INTEGER
+      ) {
+        const other = binary.left === node ? binary.right : binary.left;
+        if (
+          binary.range.start < firstLowercase &&
+          other instanceof StringLiteralExpression &&
+          /[A-Za-z]/.test(other.value)
+        ) {
+          safe = false;
+        }
+        return;
+      }
+    }
+    if (
+      ref.parent instanceof PropertyAccessExpression &&
+      ref.key === "expression"
+    ) {
+      const member = ref.parent.property.text;
+      if (member === "length" || member === "isEmpty") return;
+      if (
+        member === "toLowerCase" &&
+        firstLowercase !== Number.MAX_SAFE_INTEGER
+      ) {
+        return;
+      }
+      if (
+        SPAN_SCALAR_METHODS.has(member) &&
+        ref.grandparent instanceof CallExpression &&
+        ref.grandparent.expression === ref.parent
+      ) {
+        return;
+      }
+    }
+    if (
+      ref.parent instanceof BinaryExpression &&
+      (ref.parent.operator === 76 ||
+        ref.parent.operator === 78 ||
+        ref.parent.operator === 77 ||
+        ref.parent.operator === 79)
+    ) {
+      return;
+    }
+    safe = false;
+  });
+  return {
+    safe: safe && uses > 0,
+    caseInsensitive: firstLowercase !== Number.MAX_SAFE_INTEGER,
+  };
+}
+function selectPackedSpanParameters(context, signature) {
+  const declaration = context.declaration;
+  const body = declaration?.body;
+  if (!declaration || !body || !signature?.promotable) return;
+  if (signature.directCallCount === 0) return;
+  declaration.signature.parameters.forEach((parameter, index) => {
+    if (representationOfType(parameter.type) !== "native") return;
+    const packed = parameterCanUsePackedSpan(body, parameter.name.text);
+    if (
+      signature.spanArgumentCounts.get(index) !== signature.directCallCount ||
+      !packed.safe
+    ) {
+      return;
+    }
+    signature.spanParameters.set(
+      index,
+      `__as_str_owner_${parameter.name.text}`,
+    );
+    if (packed.caseInsensitive) {
+      signature.caseInsensitiveSpanParameters.add(index);
+    }
+  });
+}
+function applyPackedSpanParameters(context, signature) {
+  const declaration = context.declaration;
+  if (signature.spanAppliedDeclarations.has(declaration)) return;
+  const parameters = declaration.signature.parameters;
+  const entries = [...signature.spanParameters.entries()].sort(
+    ([left], [right]) => right - left,
+  );
+  for (const [index, ownerName] of entries) {
+    const parameter = parameters[index];
+    if (!parameter || parameter.name.text === ownerName) continue;
+    const nativeType = parameter.type;
+    parameter.type = u64Type(parameter.range);
+    parameters.splice(
+      index + 1,
+      0,
+      Node.createParameter(
+        0,
+        identifier(ownerName, parameter.range),
+        nativeType,
+        null,
+        parameter.range,
+      ),
+    );
+    context.parameters.set(parameter.name.text, "unknown");
+    context.parameters.set(ownerName, "native");
+    context.parameterSpans.set(parameter.name.text, ownerName);
+    if (signature.caseInsensitiveSpanParameters.has(index)) {
+      context.caseInsensitiveSpans.add(parameter.name.text);
+    }
+  }
+  signature.spanAppliedDeclarations.add(declaration);
+}
+function viewReceiverRoot(expression) {
+  if (expression instanceof IdentifierExpression) return expression;
+  if (expression instanceof ParenthesizedExpression) {
+    return viewReceiverRoot(expression.expression);
+  }
+  if (expression instanceof CallExpression) {
+    const property = propertyCall(expression);
+    if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+      return null;
+    }
+    return viewReceiverRoot(property.expression);
+  }
+  return null;
+}
 function analyzeParameterPromotions(context, signature, signatures) {
   const declaration = context.declaration;
   if (!declaration) return [];
   const body = declaration.body;
-  if (!body || !signature?.promotable) return [];
+  if (!body || !signature?.promotable || declaration.is(2)) {
+    return [];
+  }
   const promotions = [];
   declaration.signature.parameters.forEach((parameter, index) => {
+    if (signature.spanParameters.has(index)) return;
     if (representationOfType(parameter.type) !== "native") return;
     const name = parameter.name.text;
-    if (context.bindings.has(name) || !parameterHasProfitableUse(body, name)) {
+    if (
+      context.bindings.has(name) ||
+      (!parameterHasProfitableUse(body, name) &&
+        !signature.viewArgumentParameters.has(index))
+    ) {
       return;
     }
     let reason = null;
@@ -214,6 +415,17 @@ function analyzeParameterPromotions(context, signature, signatures) {
         return;
       }
       reason ??= reasonForUse(node, ref, context, signatures);
+    });
+    walk(body, (node, ref) => {
+      if (node instanceof FunctionDeclaration && node !== declaration)
+        return false;
+      if (!(node instanceof CallExpression)) return;
+      const property = propertyCall(node);
+      if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+        return;
+      }
+      if (viewReceiverRoot(property.expression)?.text !== name) return;
+      reason ??= derivedViewUseReason(node, ref, context, signatures);
     });
     const promoted = reason === null;
     if (promoted) {
@@ -265,7 +477,12 @@ function returnCallUseReason(call, ref, declaration, signatures) {
 function analyzeReturnPromotion(context, signature, source, signatures) {
   const declaration = context.declaration;
   const body = declaration.body;
-  if (!body || !signature?.promotable || signature.result === "view")
+  if (
+    !body ||
+    !signature?.promotable ||
+    signature.result === "view" ||
+    declaration.is(2)
+  )
     return null;
   let profitable = false;
   let hasValueReturn = false;
@@ -340,7 +557,7 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
       const candidate =
         !noView &&
         !explicitView &&
-        declared === "unknown" &&
+        (declared === "unknown" || declared === "native") &&
         !!node.initializer &&
         (expressionCanProduceView(node.initializer) || preferView);
       bindings.set(name, {
@@ -390,7 +607,15 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
       }
     }
   }
-  return { declaration, bindings, parameters, fields, duplicateNames };
+  return {
+    declaration,
+    bindings,
+    parameters,
+    parameterSpans: new Map(),
+    caseInsensitiveSpans: new Set(),
+    fields,
+    duplicateNames,
+  };
 }
 function collectFieldRepresentations(source) {
   const fields = new Map();
@@ -441,6 +666,9 @@ function reasonForUse(node, ref, context, signatures) {
     break;
   }
   if (parent instanceof PropertyAccessExpression && ref.key === "expression") {
+    if (VIEW_CONTAINER_METHODS.has(parent.property.text)) {
+      return `view container result from .${parent.property.text} is not yet modeled`;
+    }
     return isKnownViewMember(parent.property.text)
       ? null
       : `unknown member .${parent.property.text}`;
@@ -494,6 +722,14 @@ function reasonForUse(node, ref, context, signatures) {
           : "assignment to unknown target";
       }
     }
+    if (
+      parent.operator === 76 ||
+      parent.operator === 78 ||
+      parent.operator === 77 ||
+      parent.operator === 79
+    ) {
+      return null;
+    }
     return "operator use";
   }
   if (parent instanceof TernaryExpression) return "conditional merge";
@@ -510,6 +746,77 @@ function reasonForUse(node, ref, context, signatures) {
     }
   }
   return "unsupported or escaping use";
+}
+function derivedViewUseReason(call, ref, context, signatures) {
+  const parent = ref.parent;
+  if (
+    parent instanceof PropertyAccessExpression &&
+    parent.expression === call &&
+    isKnownViewMember(parent.property.text)
+  ) {
+    return null;
+  }
+  if (parent instanceof ElementAccessExpression && parent.expression === call) {
+    return null;
+  }
+  if (parent instanceof VariableDeclaration && parent.initializer === call) {
+    const target = context.bindings.get(parent.name.text);
+    if (target?.candidate || target?.declared === "view") return null;
+    return target?.declared === "native" || target?.semantic === "native"
+      ? "derived view assigned to native string"
+      : "derived view assigned to unknown target";
+  }
+  if (parent instanceof CallExpression) {
+    if (
+      parent.expression instanceof IdentifierExpression &&
+      parent.expression.text === context.declaration?.name.text &&
+      parent.args.includes(call)
+    ) {
+      return null;
+    }
+    const index = parent.args.indexOf(call);
+    if (index >= 0) {
+      const expected = expectedCallArgument(parent, index, signatures, context);
+      if (expected === "view") return null;
+      return expected === "native"
+        ? "derived view passed to native string parameter"
+        : "derived view passed to unknown or external call";
+    }
+  }
+  if (parent instanceof ReturnStatement) {
+    const result = representationOfType(
+      context.declaration?.signature.returnType ?? null,
+    );
+    if (result === "view") return null;
+    return result === "native"
+      ? "derived view reaches native string return"
+      : "derived view reaches inferred or unknown return";
+  }
+  if (parent instanceof BinaryExpression) {
+    if (
+      parent.operator === 101 &&
+      parent.right === call &&
+      parent.left instanceof IdentifierExpression
+    ) {
+      const target = context.bindings.get(parent.left.text);
+      if (target?.candidate || target?.declared === "view") return null;
+      return target?.declared === "native" || target?.semantic === "native"
+        ? "derived view assigned to native string"
+        : "derived view assigned to unknown target";
+    }
+    return "derived view used by operator";
+  }
+  if (parent instanceof TernaryExpression)
+    return "derived view used by conditional merge";
+  if (parent instanceof CommaExpression) return "derived view used by comma";
+  if (parent instanceof ThrowStatement) return "derived view reaches throw";
+  return "derived view reaches unsupported or escaping use";
+}
+function candidateReceiver(expression, context) {
+  const root = viewReceiverRoot(expression);
+  if (!root) return null;
+  const binding = context.bindings.get(root.text);
+  return binding?.candidate ? binding : null;
 }
 function analyzeCandidates(context, signatures) {
   const declaration = context.declaration;
@@ -536,6 +843,19 @@ function analyzeCandidates(context, signatures) {
     binding.uses++;
     const reason = reasonForUse(node, ref, context, signatures);
     if (reason && !binding.forcedReason) binding.forcedReason = reason;
+  });
+  walk(body, (node, ref) => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    if (!(node instanceof CallExpression)) return;
+    const property = propertyCall(node);
+    if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+      return;
+    }
+    const binding = candidateReceiver(property.expression, context);
+    if (!binding || binding.forcedReason) return;
+    const reason = derivedViewUseReason(node, ref, context, signatures);
+    if (reason) binding.forcedReason = reason;
   });
   for (const binding of context.bindings.values()) {
     if (!binding.candidate) continue;
@@ -577,16 +897,6 @@ function analyzeCandidates(context, signatures) {
     });
     binding.scalarizedLength = onlyLengthReads;
   }
-  const spanMethods = new Set([
-    "slice",
-    "substring",
-    "substr",
-    "trim",
-    "trimStart",
-    "trimEnd",
-    "trimLeft",
-    "trimRight",
-  ]);
   const consumers = new Map();
   for (const target of context.bindings.values()) {
     if (target.declaration.initializer instanceof CallExpression) {
@@ -606,7 +916,11 @@ function analyzeCandidates(context, signatures) {
         continue;
       }
       const initializer = propertyCall(binding.declaration.initializer);
-      if (!initializer || !spanMethods.has(initializer.property.text)) continue;
+      if (
+        !initializer ||
+        !SPAN_PRODUCING_METHODS.has(initializer.property.text)
+      )
+        continue;
       const receiver = isStrStaticCall(binding.declaration.initializer)
         ? binding.declaration.initializer.args[0]
         : initializer.expression;
@@ -631,15 +945,36 @@ function analyzeCandidates(context, signatures) {
           ref.parent instanceof PropertyAccessExpression &&
           ref.key === "expression"
         ) {
-          if (ref.parent.property.text === "length") return;
+          if (
+            ref.parent.property.text === "length" ||
+            ref.parent.property.text === "isEmpty"
+          ) {
+            return;
+          }
           if (
             ref.grandparent instanceof CallExpression &&
             ref.grandparent.expression === ref.parent &&
-            spanMethods.has(ref.parent.property.text)
+            SPAN_SCALAR_METHODS.has(ref.parent.property.text)
+          ) {
+            return;
+          }
+          if (
+            ref.grandparent instanceof CallExpression &&
+            ref.grandparent.expression === ref.parent &&
+            SPAN_PRODUCING_METHODS.has(ref.parent.property.text)
           ) {
             const target = consumers.get(ref.grandparent);
             if (target?.scalarizedLength || target?.scalarizedSpan) return;
           }
+        }
+        if (
+          ref.parent instanceof BinaryExpression &&
+          (ref.parent.operator === 76 ||
+            ref.parent.operator === 78 ||
+            ref.parent.operator === 77 ||
+            ref.parent.operator === 79)
+        ) {
+          return;
         }
         scalarUsesOnly = false;
       });
@@ -741,9 +1076,20 @@ export function optimizeSource(
       conversions: 0,
     });
   }
-  const signatures =
-    sharedSignatures ?? collectFunctionSignatures(source, semanticFacts);
+  const localSignatures = collectFunctionSignatures(source, semanticFacts);
+  const signatures = sharedSignatures
+    ? new Map(sharedSignatures)
+    : localSignatures;
+  if (sharedSignatures) {
+    for (const [name, local] of localSignatures) {
+      const shared = sharedSignatures.get(name);
+      if (!shared || !shared.declarations.has(local.declaration)) {
+        signatures.set(name, local);
+      }
+    }
+  }
   const fields = collectFieldRepresentations(source);
+  const canPromoteBoundaries = manifest?.complete === true;
   const functions = collectFunctions(source);
   const contexts = new Map();
   for (const declaration of functions) {
@@ -758,6 +1104,8 @@ export function optimizeSource(
       declaration: null,
       bindings: new Map(),
       parameters: new Map(),
+      parameterSpans: new Map(),
+      caseInsensitiveSpans: new Set(),
       fields,
       duplicateNames: new Set(),
     },
@@ -766,11 +1114,16 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration);
     const signature = signatures.get(declaration.name.text);
-    const promotions = analyzeParameterPromotions(
-      context,
-      signature,
-      signatures,
-    );
+    if (canPromoteBoundaries) {
+      selectPackedSpanParameters(context, signature);
+    }
+    const promotions = canPromoteBoundaries
+      ? analyzeParameterPromotions(context, signature, signatures)
+      : [];
+    if (signature && signature.spanParameters.size > 0) {
+      applyPackedSpanParameters(context, signature);
+      changedSources.add(source);
+    }
     for (const promotion of promotions) {
       const parameter = declaration.signature.parameters[promotion.index];
       const location = parameter.range.source;
@@ -792,12 +1145,9 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration);
     const signature = signatures.get(declaration.name.text);
-    const promotion = analyzeReturnPromotion(
-      context,
-      signature,
-      source,
-      signatures,
-    );
+    const promotion = canPromoteBoundaries
+      ? analyzeReturnPromotion(context, signature, source, signatures)
+      : null;
     if (!promotion) continue;
     const range = declaration.signature.returnType.range;
     const location = range.source;
@@ -819,18 +1169,6 @@ export function optimizeSource(
     if (!declaration.body) continue;
     const context = contexts.get(declaration);
     analyzeCandidates(context, signatures);
-    let changed = false;
-    for (const binding of context.bindings.values()) {
-      if (binding.candidate && binding.decision === "view") changed = true;
-    }
-    if (
-      [...context.bindings.values()].some(
-        (binding) =>
-          binding.declared !== "unknown" && binding.declaration.initializer,
-      )
-    ) {
-      changed = true;
-    }
     rewriteStatement(declaration.body, context, signatures);
     for (const binding of context.bindings.values()) {
       if (binding.candidate) {
@@ -845,7 +1183,6 @@ export function optimizeSource(
         diagnostics.push(tracked);
       }
     }
-    if (changed) changedSources.add(source);
   }
   if (sourceUsesViewName(source)) changedSources.add(source);
   return { changedSources, diagnostics, summary: summarize(diagnostics) };
@@ -855,8 +1192,7 @@ export function optimizeSources(sources, manifest = null) {
   const diagnostics = [];
   const userSources = sources.filter(
     (source) =>
-      !source.isLibrary &&
-      !source.internalPath.startsWith("~lib") &&
+      sourceIsOptimizable(source) &&
       !isPackageSource(source) &&
       viewNameAvailable(source),
   );
@@ -868,11 +1204,64 @@ export function optimizeSources(sources, manifest = null) {
       factsForSource(manifest, source),
     );
     for (const [name, signature] of sourceSignatures) {
-      if (sharedSignatures.has(name)) ambiguous.add(name);
-      else sharedSignatures.set(name, signature);
+      const existing = sharedSignatures.get(name);
+      if (!existing) {
+        sharedSignatures.set(name, signature);
+      } else if (
+        existing.declaration.range.start ===
+          signature.declaration.range.start &&
+        existing.declaration.range.source.text ===
+          signature.declaration.range.source.text
+      ) {
+        for (const declaration of signature.declarations) {
+          existing.declarations.add(declaration);
+        }
+      } else if (existing.declaration !== signature.declaration) {
+        ambiguous.add(name);
+      }
     }
   }
   for (const name of ambiguous) sharedSignatures.delete(name);
+  for (const source of sources) {
+    walk(source, (node, ref) => {
+      if (!(node instanceof IdentifierExpression)) return;
+      const signature = sharedSignatures.get(node.text);
+      if (
+        !signature ||
+        [...signature.declarations].some(
+          (declaration) => node === declaration.name,
+        )
+      ) {
+        return;
+      }
+      if (isDeclarationIdentifier(node, ref)) return;
+      const call =
+        ref.parent instanceof CallExpression && ref.parent.expression === node
+          ? ref.parent
+          : null;
+      if (!call || !userSources.includes(source)) {
+        signature.promotable = false;
+      } else {
+        signature.directCallCount++;
+        call.args.forEach((argument, index) => {
+          if (expressionCanProduceView(argument)) {
+            signature.viewArgumentParameters.add(index);
+          }
+          if (
+            argument instanceof CallExpression &&
+            SPAN_PRODUCING_METHODS.has(
+              propertyCall(argument)?.property.text ?? "",
+            )
+          ) {
+            signature.spanArgumentCounts.set(
+              index,
+              (signature.spanArgumentCounts.get(index) ?? 0) + 1,
+            );
+          }
+        });
+      }
+    });
+  }
   for (let round = 0; round < 2; round++) {
     for (const source of userSources) {
       const result = optimizeSource(source, manifest, sharedSignatures);

@@ -6,12 +6,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-23
+
 ### Added
 
 - `--transform as-str/global` as the explicit entry point for global `str` and
   `Str` import injection.
 - `--transform as-str/auto` as the direct, environment-free entry point for
   automatic in-process dual-pass native-string view optimization.
+- `--transform as-str/single` as a faster syntax-only automatic mode that
+  optimizes safe locals without promoting function parameters or returns.
+- Allocation-free packed-span specialization across exported dependency
+  helpers when every whole-program reference is a direct, rewritable call.
+- Packed-span ASCII-insensitive literal comparison, allowing proven
+  `toLowerCase()`-then-compare paths to avoid both allocations.
 
 ### Removed
 
@@ -20,6 +28,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `AS_STR_OPTIMIZE` mode switch. Transform behavior is selected solely by
   its entrypoint.
 - The `as-strc` wrapper. Use `asc --transform as-str/auto` directly.
+
+### Fixed
+
+- Automatic mode now retains resolved semantic facts when a shadow compile has
+  unrelated errors, while disabling parameter and return promotion for the
+  incomplete analysis.
+- Locals remain native when a view-producing method result flows into a native
+  assignment, an unknown external call, or an operator that cannot safely mix
+  native strings and views.
+- Automatic mode no longer injects the view runtime into sources where every
+  proposed optimization was rejected.
+- Native-result method chains remain native instead of allocating intermediate
+  view objects only to materialize them back into a string.
+- Non-escaping views consumed by scalar methods such as `indexOf`,
+  `charCodeAt`, `startsWith`, and `endsWith` are packed into pointer spans,
+  eliminating both the native-string copy and the intermediate view object.
+- Methods implementing interfaces retain their native-string ABI instead of
+  being treated as closed-world specialization candidates.
+- Function-boundary promotion now requires a complete semantic manifest, so
+  syntax-only optimization cannot change an inferred ABI.
+- Equivalent dependency aliases share specialization decisions without
+  producing mismatched call signatures; ambiguous definitions remain native.
+- Ordinary class-backed views do not cross exported dependency boundaries,
+  preventing speculative view-object regressions in unrelated rules.
+- Transform settings are read per compilation, enabling isolated external
+  semantic-analysis and optimized passes in long-lived compiler processes.
 
 ## [0.4.0] - 2026-07-21
 

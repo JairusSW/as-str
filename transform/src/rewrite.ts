@@ -47,6 +47,8 @@ import {
   LENGTH_FUSIBLE_METHODS,
   NATIVE_PRODUCING_METHODS,
   SCALAR_MEMBERS,
+  SPAN_PRODUCING_METHODS,
+  SPAN_SCALAR_METHODS,
   VIEW_PRODUCING_METHODS,
 } from "./operations.js";
 import { expressionCanProduceView } from "./expressions.js";
@@ -130,6 +132,17 @@ function bindingRepresentation(
   if (!binding) return context.parameters.get(name) ?? "unknown";
   if (binding.decision !== "unknown") return binding.decision;
   return binding.declared === "unknown" ? binding.semantic : binding.declared;
+}
+
+function packedSpanOwner(
+  name: string,
+  context: FunctionContext,
+): string | null {
+  return (
+    context.bindings.get(name)?.spanOwner ??
+    context.parameterSpans.get(name) ??
+    null
+  );
 }
 
 function expressionRepresentation(
@@ -340,14 +353,15 @@ function rewriteExpression(
 
   if (
     expression instanceof PropertyAccessExpression &&
-    expression.property.text === "length" &&
+    (expression.property.text === "length" ||
+      expression.property.text === "isEmpty") &&
     expression.expression instanceof IdentifierExpression
   ) {
-    const binding = context.bindings.get(expression.expression.text);
-    if (binding?.scalarizedSpan && binding.spanOwner) {
+    const owner = packedSpanOwner(expression.expression.text, context);
+    if (owner) {
       return staticViewCall(
-        "spanLength",
-        identifier(binding.spanOwner, expression.range),
+        expression.property.text === "length" ? "spanLength" : "isEmptySpan",
+        identifier(owner, expression.range),
         [expression.expression],
       );
     }
@@ -396,6 +410,128 @@ function rewriteExpression(
   }
 
   if (expression instanceof BinaryExpression) {
+    if (
+      expression.operator === Token.Equals &&
+      expression.left instanceof IdentifierExpression &&
+      context.caseInsensitiveSpans.has(expression.left.text) &&
+      expression.right instanceof CallExpression
+    ) {
+      const lower = propertyCall(expression.right);
+      if (
+        lower?.property.text === "toLowerCase" &&
+        lower.expression instanceof IdentifierExpression &&
+        lower.expression.text === expression.left.text
+      ) {
+        return expression.left;
+      }
+    }
+    const equality =
+      expression.operator === Token.Equals_Equals ||
+      expression.operator === Token.Equals_Equals_Equals ||
+      expression.operator === Token.Exclamation_Equals ||
+      expression.operator === Token.Exclamation_Equals_Equals;
+    if (equality) {
+      const directView =
+        expression.left instanceof CallExpression &&
+        SPAN_PRODUCING_METHODS.has(
+          propertyCall(expression.left)?.property.text ?? "",
+        )
+          ? expression.left
+          : expression.right instanceof CallExpression &&
+              SPAN_PRODUCING_METHODS.has(
+                propertyCall(expression.right)?.property.text ?? "",
+              )
+            ? expression.right
+            : null;
+      if (directView) {
+        const parts = viewCallParts(directView);
+        if (
+          parts &&
+          (parts.receiver instanceof IdentifierExpression ||
+            parts.receiver instanceof PropertyAccessExpression)
+        ) {
+          const other =
+            directView === expression.left
+              ? expression.right
+              : expression.left;
+          return staticViewCall(
+            expression.operator === Token.Exclamation_Equals ||
+              expression.operator === Token.Exclamation_Equals_Equals
+              ? "notEqualsSpan"
+              : "equalsSpan",
+            parts.receiver,
+            [
+              scalarizeSpanInitializer(directView, context),
+              rewriteExpression(other, "unknown", context, signatures),
+            ],
+          );
+        }
+      }
+      const leftOwner =
+        expression.left instanceof IdentifierExpression
+          ? packedSpanOwner(expression.left.text, context)
+          : null;
+      const rightOwner =
+        expression.right instanceof IdentifierExpression
+          ? packedSpanOwner(expression.right.text, context)
+          : null;
+      const spanExpression = leftOwner
+        ? expression.left
+        : rightOwner
+          ? expression.right
+          : null;
+      const spanOwner = leftOwner ?? rightOwner;
+      if (spanExpression instanceof IdentifierExpression && spanOwner) {
+        const other =
+          spanExpression === expression.left
+            ? expression.right
+            : expression.left;
+        const ignoreCase =
+          context.caseInsensitiveSpans.has(spanExpression.text) &&
+          other instanceof StringLiteralExpression &&
+          /[A-Za-z]/.test(other.value);
+        return staticViewCall(
+          expression.operator === Token.Exclamation_Equals ||
+            expression.operator === Token.Exclamation_Equals_Equals
+            ? ignoreCase
+              ? "notEqualsIgnoreCaseSpan"
+              : "notEqualsSpan"
+            : ignoreCase
+              ? "equalsIgnoreCaseSpan"
+              : "equalsSpan",
+          identifier(spanOwner, expression.range),
+          [
+            spanExpression,
+            rewriteExpression(other, "unknown", context, signatures),
+          ],
+        );
+      }
+      const leftRepresentation = expressionRepresentation(
+        expression.left,
+        context,
+        signatures,
+      );
+      const rightRepresentation = expressionRepresentation(
+        expression.right,
+        context,
+        signatures,
+      );
+      if (leftRepresentation === "view" || rightRepresentation === "view") {
+        expression.left = rewriteExpression(
+          expression.left,
+          "view",
+          context,
+          signatures,
+        );
+        expression.right = rewriteExpression(
+          expression.right,
+          "view",
+          context,
+          signatures,
+        );
+        return expression;
+      }
+    }
     if (expression.operator === Token.Equals) {
       let target: Representation = "unknown";
       if (expression.left instanceof IdentifierExpression) {
@@ -459,6 +595,36 @@ function rewriteExpression(
     const property = propertyCall(expression);
     if (property) {
       const method = property.property.text;
+      const spanBinding =
+        property.expression instanceof IdentifierExpression
+          ? context.bindings.get(property.expression.text)
+          : null;
+      const parameterSpanOwner =
+        property.expression instanceof IdentifierExpression
+          ? context.parameterSpans.get(property.expression.text)
+          : null;
+      if (
+        ((spanBinding?.scalarizedSpan && spanBinding.spanOwner) ||
+          parameterSpanOwner) &&
+        SPAN_SCALAR_METHODS.has(method)
+      ) {
+        const args = expression.args.map((argument) =>
+          rewriteExpression(argument, "unknown", context, signatures),
+        );
+        return convertExpression(
+          staticViewCall(
+            `${method}Span`,
+            identifier(
+              spanBinding?.spanOwner ?? parameterSpanOwner!,
+              expression.range,
+            ),
+            [property.expression, ...args],
+          ),
+          expected,
+          context,
+          signatures,
+        );
+      }
       const containerElement =
         property.expression instanceof IdentifierExpression
           ? (context.bindings.get(property.expression.text)?.element ??
@@ -467,7 +633,8 @@ function rewriteExpression(
       let receiverExpected: Representation = "unknown";
       if (
         expressionCanProduceView(property.expression) &&
-        (VIEW_PRODUCING_METHODS.has(method) || SCALAR_MEMBERS.has(method))
+        (SCALAR_MEMBERS.has(method) ||
+          (VIEW_PRODUCING_METHODS.has(method) && expected === "view"))
       ) {
         receiverExpected = "view";
       }
@@ -510,16 +677,44 @@ function rewriteExpression(
     } else {
       const name = calleeName(expression.expression);
       const signature = name ? signatures.get(name) : null;
-      expression.args = expression.args.map((argument, index) =>
-        rewriteExpression(
-          argument,
-          signature?.callable
-            ? (signature.parameters[index] ?? "unknown")
-            : "unknown",
-          context,
-          signatures,
-        ),
-      );
+      const rewrittenArgs: Expression[] = [];
+      expression.args.forEach((argument, index) => {
+        if (
+          signature?.callable &&
+          signature.spanParameters.has(index) &&
+          argument instanceof CallExpression
+        ) {
+          const parts = viewCallParts(argument);
+          if (parts && SPAN_PRODUCING_METHODS.has(parts.method)) {
+            rewrittenArgs.push(
+              rewriteExpression(
+                scalarizeSpanInitializer(argument, context),
+                "unknown",
+                context,
+                signatures,
+              ),
+              rewriteExpression(
+                parts.receiver,
+                "native",
+                context,
+                signatures,
+              ),
+            );
+            return;
+          }
+        }
+        rewrittenArgs.push(
+          rewriteExpression(
+            argument,
+            signature?.callable
+              ? (signature.parameters[index] ?? "unknown")
+              : "unknown",
+            context,
+            signatures,
+          ),
+        );
+      });
+      expression.args = rewrittenArgs;
     }
     return convertExpression(expression, expected, context, signatures);
   }

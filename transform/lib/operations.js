@@ -17,6 +17,16 @@ export const VIEW_PRODUCING_METHODS = new Set([
   "betweenLast",
 ]);
 export const LENGTH_FUSIBLE_METHODS = new Set(VIEW_PRODUCING_METHODS);
+export const SPAN_PRODUCING_METHODS = new Set([
+  "slice",
+  "substring",
+  "substr",
+  "trim",
+  "trimStart",
+  "trimEnd",
+  "trimLeft",
+  "trimRight",
+]);
 export const SCALAR_MEMBERS = new Set([
   "length",
   "isEmpty",
@@ -37,6 +47,15 @@ export const SCALAR_MEMBERS = new Set([
   "greaterThan",
   "greaterThanOrEqual",
 ]);
+export const SPAN_SCALAR_METHODS = new Set([
+  "charCodeAt",
+  "codePointAt",
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "startsWith",
+  "endsWith",
+]);
 export const NATIVE_PRODUCING_METHODS = new Set([
   "concat",
   "repeat",
@@ -54,6 +73,7 @@ export const OTHER_SAFE_VIEW_METHODS = new Set([
   "toStr8",
   "set",
 ]);
+export const VIEW_CONTAINER_METHODS = new Set(["split"]);
 export function isKnownViewMember(name) {
   return (
     VIEW_PRODUCING_METHODS.has(name) ||

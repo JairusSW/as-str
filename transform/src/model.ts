@@ -7,10 +7,17 @@ import { Representation } from "./ast.js";
 
 export interface FunctionSignature {
   declaration: FunctionDeclaration;
+  declarations: Set<FunctionDeclaration>;
   parameters: Representation[];
   result: Representation;
   callable: boolean;
   promotable: boolean;
+  viewArgumentParameters: Set<number>;
+  spanArgumentCounts: Map<number, number>;
+  directCallCount: number;
+  spanParameters: Map<number, string>;
+  caseInsensitiveSpanParameters: Set<number>;
+  spanAppliedDeclarations: Set<FunctionDeclaration>;
 }
 
 export interface Binding {
@@ -34,6 +41,8 @@ export interface FunctionContext {
   declaration: FunctionDeclaration | null;
   bindings: Map<string, Binding>;
   parameters: Map<string, Representation>;
+  parameterSpans: Map<string, string>;
+  caseInsensitiveSpans: Set<string>;
   fields: Map<string, Representation>;
   duplicateNames: Set<string>;
 }

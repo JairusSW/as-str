@@ -91,6 +91,7 @@ try {
     ["manual", "Manual Mode (default)", null, false],
     ["global-readme", "Global Mode", "as-str/global", false],
     ["auto-readme", "Automatic Mode", "as-str/auto", true],
+    ["single-readme", "Single-Pass Automatic Mode", "as-str/single", true],
   ]) {
     const exampleInput = path.join(scratch, `${name}.ts`);
     const exampleWasm = path.join(scratch, `${name}.wasm`);

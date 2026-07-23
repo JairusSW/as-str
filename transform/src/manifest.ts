@@ -9,6 +9,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import { readFileSync, writeFileSync } from "fs";
 import { Representation } from "./ast.js";
+import { sourceIsOptimizable } from "./sources.js";
 
 export interface SemanticFact {
   source: string;
@@ -23,6 +24,7 @@ export interface SemanticFact {
 export interface SemanticManifest {
   version: 1;
   facts: SemanticFact[];
+  complete?: boolean;
 }
 
 function representationOfResolvedType(type: string): Representation {
@@ -36,10 +38,6 @@ function representationOfResolvedType(type: string): Representation {
     return "view";
   }
   return "unknown";
-}
-
-function sourceIsUser(source: Source): boolean {
-  return !source.isLibrary && !source.internalPath.startsWith("~lib");
 }
 
 export function buildSemanticManifest(program: Program): SemanticManifest {
@@ -67,7 +65,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       if (!element.declaration) continue;
       const range = element.declaration.range;
       const source = range.source;
-      if (!sourceIsUser(source)) continue;
+      if (!sourceIsOptimizable(source)) continue;
       const resolvedType = element.type.toString();
       const representation = representationOfResolvedType(resolvedType);
       const kind = element instanceof Property ? "field" : "global";
@@ -85,7 +83,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
     }
     if (!(element instanceof ASFunction)) continue;
     const functionSource = element.prototype.declaration.range.source;
-    if (!sourceIsUser(functionSource)) continue;
+    if (!sourceIsOptimizable(functionSource)) continue;
 
     const functionRange = element.prototype.declaration.range;
     const returnType = element.signature.returnType.toString();
@@ -124,7 +122,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       if (!(local instanceof Local) || !local.declaration) continue;
       const range = local.declaration.range;
       const source = range.source;
-      if (!sourceIsUser(source)) continue;
+      if (!sourceIsOptimizable(source)) continue;
       const resolvedType = local.type.toString();
       const representation = representationOfResolvedType(resolvedType);
       const key = `${source.normalizedPath}:${range.start}:local`;
@@ -154,7 +152,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       left.start - right.start ||
       left.kind.localeCompare(right.kind),
   );
-  return { version: 1, facts };
+  return { version: 1, facts, complete: true };
 }
 
 export function writeSemanticManifest(

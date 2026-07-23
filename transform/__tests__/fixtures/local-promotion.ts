@@ -6,6 +6,20 @@ export function promotedLength(input: string): i32 {
   return part.length;
 }
 
+export function promotedAnnotatedLength(input: string): i32 {
+  const part: string = input.slice(1, 4);
+  return part.length;
+}
+
+export function promotedEquality(input: string): bool {
+  const part = input.slice(1, 4);
+  return part === "bcd" || part !== "xyz";
+}
+
+export function directEquality(input: string): bool {
+  return input.slice(1, 4) === "bcd";
+}
+
 export function unsafePointer(input: string): usize {
   const part = input.slice(1, 4);
   return changetype<usize>(part);
@@ -156,4 +170,23 @@ export function provenNullable(input: string | null): i32 {
   if (input === null) return 0;
   const part = input!.slice(1, 4);
   return part.length;
+}
+
+export function scalarSpanConsumers(input: string): i32 {
+  const part = input.substring(1, 5);
+  return (
+    part.indexOf("c") +
+    part.lastIndexOf("c") +
+    part.charCodeAt(0) +
+    part.codePointAt(0) +
+    (part.includes("cd") ? 1 : 0) +
+    (part.startsWith("b") ? 1 : 0) +
+    (part.endsWith("e") ? 1 : 0) +
+    (part.isEmpty ? 1 : 0) +
+    part.length
+  );
+}
+
+export function scalarSpanSemanticCheck(): i32 {
+  return scalarSpanConsumers("abcdef");
 }

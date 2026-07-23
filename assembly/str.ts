@@ -955,6 +955,150 @@ import { Str8 } from "./str8";
   }
 
   // @ts-ignore: decorator
+  @inline static isEmptySpan<T>(owner: T, value: u64): bool {
+    bData(owner);
+    return Str.spanStart(value) == Str.spanEnd(value);
+  }
+
+  // @ts-ignore: decorator
+  @inline static equalsSpan<T, U>(owner: T, value: u64, other: U): bool {
+    bData(owner);
+    return rangeEquals(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(other),
+      bEnd(other),
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsSpan<T, U>(owner: T, value: u64, other: U): bool {
+    return !Str.equalsSpan(owner, value, other);
+  }
+
+  // @ts-ignore: decorator
+  @inline static equalsIgnoreCaseSpan<T, U>(
+    owner: T,
+    value: u64,
+    other: U,
+  ): bool {
+    bData(owner);
+    let left = Str.spanStart(value);
+    const leftEnd = Str.spanEnd(value);
+    let right = bStart(other);
+    const rightEnd = bEnd(other);
+    if (leftEnd - left != rightEnd - right) return false;
+    while (left < leftEnd) {
+      let a = load<u16>(left);
+      let b = load<u16>(right);
+      if (a >= 0x41 && a <= 0x5a) a += 0x20;
+      if (b >= 0x41 && b <= 0x5a) b += 0x20;
+      if (a != b) return false;
+      left += 2;
+      right += 2;
+    }
+    return true;
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsIgnoreCaseSpan<T, U>(
+    owner: T,
+    value: u64,
+    other: U,
+  ): bool {
+    return !Str.equalsIgnoreCaseSpan(owner, value, other);
+  }
+
+  // @ts-ignore: decorator
+  @inline static charCodeAtSpan<T>(owner: T, value: u64, index: i32): i32 {
+    bData(owner);
+    return Str.charCodeAtRange(Str.spanStart(value), Str.spanEnd(value), index);
+  }
+
+  // @ts-ignore: decorator
+  @inline static codePointAtSpan<T>(owner: T, value: u64, index: i32): i32 {
+    bData(owner);
+    return Str.codePointAtRange(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      index,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static indexOfSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    start: i32 = 0,
+  ): i32 {
+    bData(owner);
+    return rangeIndexOf(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      start,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static lastIndexOfSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    start: i32 = i32.MAX_VALUE,
+  ): i32 {
+    bData(owner);
+    return rangeLastIndexOf(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      start,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static includesSpan<T, U>(owner: T, value: u64, search: U): bool {
+    return Str.indexOfSpan(owner, value, search) != -1;
+  }
+
+  // @ts-ignore: decorator
+  @inline static startsWithSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    start: i32 = 0,
+  ): bool {
+    bData(owner);
+    return Str.startsWithRange(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      start,
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static endsWithSpan<T, U>(
+    owner: T,
+    value: u64,
+    search: U,
+    end: i32 = i32.MAX_VALUE,
+  ): bool {
+    bData(owner);
+    return Str.endsWithRange(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(search),
+      bEnd(search),
+      end,
+    );
+  }
+
+  // @ts-ignore: decorator
   @inline static sliceSpan<T>(
     s: T,
     start0: i32 = 0,
