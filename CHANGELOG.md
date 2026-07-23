@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-23
+
 ### Added
 
 - `--transform as-str/global` as the explicit entry point for global `str` and
@@ -14,6 +16,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   automatic in-process dual-pass native-string view optimization.
 - `--transform as-str/single` as a faster syntax-only automatic mode that
   optimizes safe locals without promoting function parameters or returns.
+- Allocation-free packed-span specialization across exported dependency
+  helpers when every whole-program reference is a direct, rewritable call.
+- Packed-span ASCII-insensitive literal comparison, allowing proven
+  `toLowerCase()`-then-compare paths to avoid both allocations.
 
 ### Removed
 
@@ -42,6 +48,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   being treated as closed-world specialization candidates.
 - Function-boundary promotion now requires a complete semantic manifest, so
   syntax-only optimization cannot change an inferred ABI.
+- Equivalent dependency aliases share specialization decisions without
+  producing mismatched call signatures; ambiguous definitions remain native.
+- Ordinary class-backed views do not cross exported dependency boundaries,
+  preventing speculative view-object regressions in unrelated rules.
+- Transform settings are read per compilation, enabling isolated external
+  semantic-analysis and optimized passes in long-lived compiler processes.
 
 ## [0.4.0] - 2026-07-21
 

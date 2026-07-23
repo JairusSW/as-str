@@ -65,3 +65,17 @@ export function scalarSpanPipeline(): i32 {
     rightSliced.length
   );
 }
+
+function asciiLowerMatch(value: string): bool {
+  value = value.toLowerCase();
+  return value === "abc";
+}
+
+export function packedCaseFoldPipeline(): i32 {
+  let result = 0;
+  if (asciiLowerMatch("xABCy".slice(1, 4))) result |= 1;
+  if (asciiLowerMatch("xAbDy".slice(1, 4))) result |= 2;
+  if (asciiLowerMatch("xäBCy".slice(1, 4))) result |= 4;
+  if (asciiLowerMatch("xabcY".slice(1, 4))) result |= 8;
+  return result;
+}

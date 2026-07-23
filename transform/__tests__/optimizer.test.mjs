@@ -188,6 +188,39 @@ assert.match(promoted, /\$assembly\/str\/Str\.slice/);
 assert.doesNotMatch(promoted, /call \$~lib\/string\/String#slice/);
 assert.doesNotMatch(promoted, /call \$assembly\/str\/Str#constructor/);
 
+const promotedAnnotated = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/promotedAnnotatedLength",
+);
+assert.doesNotMatch(
+  promotedAnnotated,
+  /call \$~lib\/string\/String#slice/,
+);
+
+const promotedEquality = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/promotedEquality",
+);
+assert.match(promotedEquality, /Str\.(?:notEqualsSpan|equalsSpan)/);
+assert.doesNotMatch(
+  promotedEquality,
+  /call \$~lib\/string\/String#slice/,
+);
+assert.doesNotMatch(
+  promotedEquality,
+  /call \$assembly\/str\/Str#constructor/,
+);
+
+const directEquality = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/directEquality",
+);
+assert.match(directEquality, /Str\.equalsSpan/);
+assert.doesNotMatch(
+  directEquality,
+  /call \$~lib\/string\/String#slice/,
+);
+
 const unsafe = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/unsafePointer",
@@ -436,6 +469,18 @@ const nativeCrossBarrier = functionBody(
 );
 assert.match(nativeCrossBarrier, /call \$~lib\/string\/String#slice/);
 assert.doesNotMatch(nativeCrossBarrier, /\$assembly\/str\/Str\.slice/);
+const packedSpanCall = functionBody(
+  crossModule.wat,
+  "transform/__tests__/fixtures/cross-module/packedSpanCall",
+);
+assert.doesNotMatch(packedSpanCall, /call \$~lib\/string\/String#slice/);
+assert.doesNotMatch(packedSpanCall, /call \$assembly\/str\/Str#constructor/);
+const packedLowerCall = functionBody(
+  crossModule.wat,
+  "transform/__tests__/fixtures/cross-module/packedLowerCall",
+);
+assert.doesNotMatch(packedLowerCall, /call \$~lib\/string\/String#slice/);
+assert.doesNotMatch(packedLowerCall, /call \$~lib\/string\/String#toLowerCase/);
 
 const knownCalls = compile("known-calls");
 for (const name of ["knownCallback", "knownMethod"]) {

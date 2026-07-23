@@ -60,7 +60,28 @@ injectViewImports(parser, {
   },
 });
 const dependencyText = ASTBuilder.build(dependencySource);
-assert.match(dependencyText, /import \{\s*str,\s*Str\s*\} from "as-str";/);
+assert.match(
+  dependencyText,
+  /import \{\s*str,\s*Str\s*\} from "as-str";/,
+);
+assert.deepEqual(messages, [
+  '[as-str] inject { str, Str } from "as-str" -> ~lib/example/assembly/index.ts',
+]);
+
+injectViewImports(parser, {
+  baseCWD: repo,
+  packageDir: repo,
+  debug: true,
+  force: new Set([dependencySource]),
+  log(message) {
+    messages.push(message);
+  },
+});
+const forcedDependencyText = ASTBuilder.build(dependencySource);
+assert.match(
+  forcedDependencyText,
+  /import \{\s*str,\s*Str\s*\} from "as-str";/,
+);
 assert.deepEqual(messages, [
   '[as-str] inject { str, Str } from "as-str" -> ~lib/example/assembly/index.ts',
 ]);

@@ -3,6 +3,7 @@ import {
   Expression,
   FunctionDeclaration,
   IdentifierExpression,
+  ImportDeclaration,
   NamespaceDeclaration,
   PropertyAccessExpression,
   VariableDeclaration,
@@ -56,11 +57,12 @@ export function isDeclarationIdentifier(node, ref) {
   const parent = ref.parent;
   if (!parent) return false;
   if (
-    (parent instanceof VariableDeclaration ||
+    parent instanceof ImportDeclaration ||
+    ((parent instanceof VariableDeclaration ||
       parent instanceof FunctionDeclaration ||
       parent instanceof ClassDeclaration ||
       parent instanceof NamespaceDeclaration) &&
-    ref.key === "name"
+      ref.key === "name")
   ) {
     return true;
   }

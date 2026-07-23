@@ -21,6 +21,18 @@ export const VIEW_PRODUCING_METHODS = new Set([
 /** View-producing methods that have an allocation-free `*Length` specialization. */
 export const LENGTH_FUSIBLE_METHODS = new Set(VIEW_PRODUCING_METHODS);
 
+/** View-producing methods representable as a packed pointer span. */
+export const SPAN_PRODUCING_METHODS = new Set([
+  "slice",
+  "substring",
+  "substr",
+  "trim",
+  "trimStart",
+  "trimEnd",
+  "trimLeft",
+  "trimRight",
+]);
+
 /** Properties and methods whose result is not a string-like reference. */
 export const SCALAR_MEMBERS = new Set([
   "length",
@@ -73,6 +85,9 @@ export const OTHER_SAFE_VIEW_METHODS = new Set([
   "toStr8",
   "set",
 ]);
+
+/** View methods whose container result needs element-flow analysis before promotion. */
+export const VIEW_CONTAINER_METHODS = new Set(["split"]);
 
 export function isKnownViewMember(name: string): boolean {
   return (

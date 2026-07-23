@@ -9,22 +9,24 @@ import { fileURLToPath } from "url";
 import { injectViewImports } from "./imports.js";
 import { readSemanticManifest, writeSemanticManifest } from "./manifest.js";
 import { optimizeSources } from "./optimizer.js";
+import { sourceIsOptimizable } from "./sources.js";
 import { OptimizationDiagnostic, OptimizationResult } from "./model.js";
 import { buildShadowSemanticManifest } from "./analysis.js";
 
-const DEBUG = /^(1|true|on|yes)$/i.test(process.env["STR_AS_DEBUG"] ?? "");
-const ANALYZE_ONLY = /^(1|true|on|yes)$/i.test(
-  process.env["AS_STR_ANALYZE_ONLY"] ?? "",
-);
-const MANIFEST_IN = process.env["AS_STR_MANIFEST_IN"];
-const MANIFEST_OUT = process.env["AS_STR_MANIFEST_OUT"];
-const DUMP = /^(1|true|on|yes)$/i.test(process.env["STR_AS_DUMP"] ?? "");
+function enabled(name: string): boolean {
+  return /^(1|true|on|yes)$/i.test(process.env[name] ?? "");
+}
 
 export default class StrAsTransform extends Transform {
   protected optimize = false;
   protected dualPass = false;
 
   afterParse(parser: Parser): void {
+    const debug = enabled("STR_AS_DEBUG");
+    const analyzeOnly = enabled("AS_STR_ANALYZE_ONLY");
+    const dump = enabled("STR_AS_DUMP");
+    const debugSources = enabled("STR_AS_DEBUG_SOURCES");
+    const manifestIn = process.env["AS_STR_MANIFEST_IN"];
     const packageDir = path.resolve(
       fileURLToPath(import.meta.url),
       "..",
@@ -32,6 +34,14 @@ export default class StrAsTransform extends Transform {
       "..",
     );
     const baseCWD = path.join(process.cwd(), this.baseDir ?? ".");
+    if (debugSources) {
+      for (const source of parser.sources) {
+        this.log(
+          `[as-str] source normalized=${source.normalizedPath} internal=${source.internalPath} ` +
+            `library=${source.isLibrary} optimizable=${sourceIsOptimizable(source)}`,
+        );
+      }
+    }
 
     const manifest = this.dualPass
       ? buildShadowSemanticManifest(
@@ -47,13 +57,13 @@ export default class StrAsTransform extends Transform {
               log: () => {},
             });
           },
-          DEBUG
+          debug
             ? (reason) =>
                 this.log(`[as-str] semantic analysis failed: ${reason}`)
             : undefined,
         )
-      : readSemanticManifest(MANIFEST_IN);
-    if (DEBUG && this.dualPass) {
+      : readSemanticManifest(manifestIn);
+    if (debug && this.dualPass) {
       this.log(
         manifest
           ? `[as-str] semantic analysis: ${manifest.facts.length} facts`
@@ -61,7 +71,7 @@ export default class StrAsTransform extends Transform {
       );
     }
     const optimization: OptimizationResult =
-      this.optimize && !ANALYZE_ONLY
+      this.optimize && !analyzeOnly
         ? optimizeSources(parser.sources, manifest)
         : {
             changedSources: new Set<Source>(),
@@ -78,12 +88,12 @@ export default class StrAsTransform extends Transform {
     injectViewImports(parser, {
       baseCWD,
       packageDir,
-      debug: DEBUG,
+      debug,
       force: optimization.changedSources,
       log: (message) => this.log(message),
     });
 
-    if (DEBUG) {
+    if (debug) {
       for (const diagnostic of optimization.diagnostics) {
         this.log(
           `[as-str] ${diagnostic.source}:${diagnostic.line}:${diagnostic.column} ` +
@@ -98,7 +108,7 @@ export default class StrAsTransform extends Transform {
           `estimated-allocations-removed=${summary.estimatedAllocationsRemoved}`,
       );
     }
-    if (DUMP) {
+    if (dump) {
       for (const source of optimization.changedSources) {
         this.log(
           `[as-str] rewritten ${source.normalizedPath}\n${ASTBuilder.build(source)}`,
@@ -108,6 +118,7 @@ export default class StrAsTransform extends Transform {
   }
 
   afterCompile(): void {
-    if (MANIFEST_OUT) writeSemanticManifest(this.program, MANIFEST_OUT);
+    const manifestOut = process.env["AS_STR_MANIFEST_OUT"];
+    if (manifestOut) writeSemanticManifest(this.program, manifestOut);
   }
 }

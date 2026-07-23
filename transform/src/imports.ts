@@ -213,14 +213,18 @@ export function injectViewImports(
   for (const source of parser.sources) {
     if (isPackageSource(source)) continue;
 
-    const names = requestedViewNames(
-      source,
-      options.force?.has(source) ?? false,
-    );
-    if (!names.length) continue;
-
+    const forced = options.force?.has(source) ?? false;
     const librarySource =
       source.isLibrary || source.internalPath.startsWith("~lib");
+    const names = requestedViewNames(source, forced);
+    // Existing dependency sources may already obtain as-str through
+    // AssemblyScript's package globals. Injecting a new explicit import into
+    // those modules can create dependency cycles and change static
+    // initialization order. Only touch a dependency when optimization has
+    // introduced a new view reference or the source already contains an
+    // otherwise-unresolved explicit `str` / `Str` reference.
+    if (!names.length) continue;
+
     let specifier = PACKAGE_NAME;
     if (!librarySource) {
       const fromPath = path.join(

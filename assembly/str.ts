@@ -961,6 +961,55 @@ import { Str8 } from "./str8";
   }
 
   // @ts-ignore: decorator
+  @inline static equalsSpan<T, U>(owner: T, value: u64, other: U): bool {
+    bData(owner);
+    return rangeEquals(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      bStart(other),
+      bEnd(other),
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsSpan<T, U>(owner: T, value: u64, other: U): bool {
+    return !Str.equalsSpan(owner, value, other);
+  }
+
+  // @ts-ignore: decorator
+  @inline static equalsIgnoreCaseSpan<T, U>(
+    owner: T,
+    value: u64,
+    other: U,
+  ): bool {
+    bData(owner);
+    let left = Str.spanStart(value);
+    const leftEnd = Str.spanEnd(value);
+    let right = bStart(other);
+    const rightEnd = bEnd(other);
+    if (leftEnd - left != rightEnd - right) return false;
+    while (left < leftEnd) {
+      let a = load<u16>(left);
+      let b = load<u16>(right);
+      if (a >= 0x41 && a <= 0x5a) a += 0x20;
+      if (b >= 0x41 && b <= 0x5a) b += 0x20;
+      if (a != b) return false;
+      left += 2;
+      right += 2;
+    }
+    return true;
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsIgnoreCaseSpan<T, U>(
+    owner: T,
+    value: u64,
+    other: U,
+  ): bool {
+    return !Str.equalsIgnoreCaseSpan(owner, value, other);
+  }
+
+  // @ts-ignore: decorator
   @inline static charCodeAtSpan<T>(owner: T, value: u64, index: i32): i32 {
     bData(owner);
     return Str.charCodeAtRange(Str.spanStart(value), Str.spanEnd(value), index);
