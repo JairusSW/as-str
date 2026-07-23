@@ -1,4 +1,4 @@
-export const VIEW_PRODUCING_METHODS = new Set([
+const VIEW_PRODUCING_METHODS = new Set([
   "slice",
   "substring",
   "substr",
@@ -16,8 +16,7 @@ export const VIEW_PRODUCING_METHODS = new Set([
   "afterLast",
   "betweenLast",
 ]);
-export const LENGTH_FUSIBLE_METHODS = new Set(VIEW_PRODUCING_METHODS);
-export const SPAN_PRODUCING_METHODS = new Set([
+const SPAN_PRODUCING_METHODS = new Set([
   "slice",
   "substring",
   "substr",
@@ -27,7 +26,7 @@ export const SPAN_PRODUCING_METHODS = new Set([
   "trimLeft",
   "trimRight",
 ]);
-export const SCALAR_MEMBERS = new Set([
+const SCALAR_MEMBERS = new Set([
   "length",
   "isEmpty",
   "charCodeAt",
@@ -47,7 +46,7 @@ export const SCALAR_MEMBERS = new Set([
   "greaterThan",
   "greaterThanOrEqual",
 ]);
-export const SPAN_SCALAR_METHODS = new Set([
+const SPAN_SCALAR_METHODS = new Set([
   "charCodeAt",
   "codePointAt",
   "indexOf",
@@ -56,7 +55,7 @@ export const SPAN_SCALAR_METHODS = new Set([
   "startsWith",
   "endsWith",
 ]);
-export const NATIVE_PRODUCING_METHODS = new Set([
+const NATIVE_PRODUCING_METHODS = new Set([
   "concat",
   "repeat",
   "padStart",
@@ -67,18 +66,42 @@ export const NATIVE_PRODUCING_METHODS = new Set([
   "toLowerCase",
   "toString",
 ]);
-export const OTHER_SAFE_VIEW_METHODS = new Set([
-  "split",
-  "toStr",
-  "toStr8",
-  "set",
-]);
-export const VIEW_CONTAINER_METHODS = new Set(["split"]);
-export function isKnownViewMember(name) {
-  return (
-    VIEW_PRODUCING_METHODS.has(name) ||
-    SCALAR_MEMBERS.has(name) ||
-    NATIVE_PRODUCING_METHODS.has(name) ||
-    OTHER_SAFE_VIEW_METHODS.has(name)
-  );
+const OTHER_SAFE_VIEW_METHODS = new Set(["split", "toStr", "toStr8", "set"]);
+const VIEW_CONTAINER_METHODS = new Set(["split"]);
+const SEMANTICS = new Map();
+const UNKNOWN_SEMANTICS = {
+  result: "unknown",
+  lengthFusible: false,
+  spanProducing: false,
+  spanScalar: false,
+  container: false,
+  normalizedSpanName: "",
+};
+function resultFor(name) {
+  if (VIEW_PRODUCING_METHODS.has(name)) return "view";
+  if (SCALAR_MEMBERS.has(name)) return "scalar";
+  if (NATIVE_PRODUCING_METHODS.has(name)) return "native";
+  if (OTHER_SAFE_VIEW_METHODS.has(name)) return "other-safe";
+  return "unknown";
+}
+export function operationSemantics(name) {
+  const cached = SEMANTICS.get(name);
+  if (cached) return cached;
+  const result = resultFor(name);
+  if (result === "unknown") return UNKNOWN_SEMANTICS;
+  const semantics = {
+    result,
+    lengthFusible: VIEW_PRODUCING_METHODS.has(name),
+    spanProducing: SPAN_PRODUCING_METHODS.has(name),
+    spanScalar: SPAN_SCALAR_METHODS.has(name),
+    container: VIEW_CONTAINER_METHODS.has(name),
+    normalizedSpanName:
+      name === "trimLeft"
+        ? "trimStart"
+        : name === "trimRight"
+          ? "trimEnd"
+          : name,
+  };
+  SEMANTICS.set(name, semantics);
+  return semantics;
 }

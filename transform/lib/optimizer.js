@@ -9,32 +9,22 @@ import {
   FunctionDeclaration,
   IdentifierExpression,
   NewExpression,
-  Node,
   ParenthesizedExpression,
   PropertyAccessExpression,
   ReturnStatement,
-  StringLiteralExpression,
   TernaryExpression,
   ThrowStatement,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
-  identifier,
   representationOfType,
-  u64Type,
   viewType,
 } from "./ast.js";
-import {
-  isKnownViewMember,
-  LENGTH_FUSIBLE_METHODS,
-  SPAN_PRODUCING_METHODS,
-  SPAN_SCALAR_METHODS,
-  VIEW_CONTAINER_METHODS,
-  VIEW_PRODUCING_METHODS,
-} from "./operations.js";
+import { operationSemantics } from "./operations.js";
+import { planPackedSpanParameters } from "./packed-span.js";
 import { factsForSource } from "./manifest.js";
-import { isPackageSource, viewNameAvailable } from "./imports.js";
+import { admitSource } from "./source-admission.js";
 import {
   calleeName,
   isDeclarationIdentifier,
@@ -47,7 +37,6 @@ import {
   expressionCanProduceView,
   expressionIsExplicitView,
 } from "./expressions.js";
-import { sourceIsOptimizable } from "./sources.js";
 function summarize(diagnostics) {
   let promoted = 0;
   let rejected = 0;
@@ -190,169 +179,12 @@ function parameterHasProfitableUse(body, name) {
       node.text === name &&
       ref.parent instanceof PropertyAccessExpression &&
       ref.key === "expression" &&
-      VIEW_PRODUCING_METHODS.has(ref.parent.property.text)
+      operationSemantics(ref.parent.property.text).result === "view"
     ) {
       profitable = true;
     }
   });
   return profitable;
-}
-function parameterCanUsePackedSpan(body, name) {
-  let safe = true;
-  let uses = 0;
-  let firstLowercase = Number.MAX_SAFE_INTEGER;
-  walk(body, (node) => {
-    if (
-      node instanceof BinaryExpression &&
-      node.operator === 101 &&
-      node.left instanceof IdentifierExpression &&
-      node.left.text === name &&
-      node.right instanceof CallExpression
-    ) {
-      const property = propertyCall(node.right);
-      if (
-        property?.property.text === "toLowerCase" &&
-        property.expression instanceof IdentifierExpression &&
-        property.expression.text === name
-      ) {
-        firstLowercase = Math.min(firstLowercase, node.range.start);
-      }
-    }
-  });
-  walk(body, (node, ref) => {
-    if (
-      !(node instanceof IdentifierExpression) ||
-      node.text !== name ||
-      isDeclarationIdentifier(node, ref)
-    ) {
-      return;
-    }
-    uses++;
-    if (ref.parent instanceof BinaryExpression) {
-      const binary = ref.parent;
-      if (
-        binary.operator === 101 &&
-        binary.left instanceof IdentifierExpression &&
-        binary.left.text === name &&
-        binary.right instanceof CallExpression
-      ) {
-        const property = propertyCall(binary.right);
-        if (
-          property?.property.text === "toLowerCase" &&
-          property.expression instanceof IdentifierExpression &&
-          property.expression.text === name
-        ) {
-          return;
-        }
-      }
-      if (
-        (binary.operator === 76 ||
-          binary.operator === 78 ||
-          binary.operator === 77 ||
-          binary.operator === 79) &&
-        firstLowercase !== Number.MAX_SAFE_INTEGER
-      ) {
-        const other = binary.left === node ? binary.right : binary.left;
-        if (
-          binary.range.start < firstLowercase &&
-          other instanceof StringLiteralExpression &&
-          /[A-Za-z]/.test(other.value)
-        ) {
-          safe = false;
-        }
-        return;
-      }
-    }
-    if (
-      ref.parent instanceof PropertyAccessExpression &&
-      ref.key === "expression"
-    ) {
-      const member = ref.parent.property.text;
-      if (member === "length" || member === "isEmpty") return;
-      if (
-        member === "toLowerCase" &&
-        firstLowercase !== Number.MAX_SAFE_INTEGER
-      ) {
-        return;
-      }
-      if (
-        SPAN_SCALAR_METHODS.has(member) &&
-        ref.grandparent instanceof CallExpression &&
-        ref.grandparent.expression === ref.parent
-      ) {
-        return;
-      }
-    }
-    if (
-      ref.parent instanceof BinaryExpression &&
-      (ref.parent.operator === 76 ||
-        ref.parent.operator === 78 ||
-        ref.parent.operator === 77 ||
-        ref.parent.operator === 79)
-    ) {
-      return;
-    }
-    safe = false;
-  });
-  return {
-    safe: safe && uses > 0,
-    caseInsensitive: firstLowercase !== Number.MAX_SAFE_INTEGER,
-  };
-}
-function selectPackedSpanParameters(context, signature) {
-  const declaration = context.declaration;
-  const body = declaration?.body;
-  if (!declaration || !body || !signature?.promotable) return;
-  if (signature.directCallCount === 0) return;
-  declaration.signature.parameters.forEach((parameter, index) => {
-    if (representationOfType(parameter.type) !== "native") return;
-    const packed = parameterCanUsePackedSpan(body, parameter.name.text);
-    if (
-      signature.spanArgumentCounts.get(index) !== signature.directCallCount ||
-      !packed.safe
-    ) {
-      return;
-    }
-    signature.spanParameters.set(
-      index,
-      `__as_str_owner_${parameter.name.text}`,
-    );
-    if (packed.caseInsensitive) {
-      signature.caseInsensitiveSpanParameters.add(index);
-    }
-  });
-}
-function applyPackedSpanParameters(context, signature) {
-  const declaration = context.declaration;
-  if (signature.spanAppliedDeclarations.has(declaration)) return;
-  const parameters = declaration.signature.parameters;
-  const entries = [...signature.spanParameters.entries()].sort(
-    ([left], [right]) => right - left,
-  );
-  for (const [index, ownerName] of entries) {
-    const parameter = parameters[index];
-    if (!parameter || parameter.name.text === ownerName) continue;
-    const nativeType = parameter.type;
-    parameter.type = u64Type(parameter.range);
-    parameters.splice(
-      index + 1,
-      0,
-      Node.createParameter(
-        0,
-        identifier(ownerName, parameter.range),
-        nativeType,
-        null,
-        parameter.range,
-      ),
-    );
-    context.parameters.set(parameter.name.text, "unknown");
-    context.parameters.set(ownerName, "native");
-    context.parameterSpans.set(parameter.name.text, ownerName);
-    if (signature.caseInsensitiveSpanParameters.has(index)) {
-      context.caseInsensitiveSpans.add(parameter.name.text);
-    }
-  }
-  signature.spanAppliedDeclarations.add(declaration);
 }
 function viewReceiverRoot(expression) {
   if (expression instanceof IdentifierExpression) return expression;
@@ -361,7 +193,10 @@ function viewReceiverRoot(expression) {
   }
   if (expression instanceof CallExpression) {
     const property = propertyCall(expression);
-    if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+    if (
+      !property ||
+      operationSemantics(property.property.text).result !== "view"
+    ) {
       return null;
     }
     return viewReceiverRoot(property.expression);
@@ -421,7 +256,10 @@ function analyzeParameterPromotions(context, signature, signatures) {
         return false;
       if (!(node instanceof CallExpression)) return;
       const property = propertyCall(node);
-      if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+      if (
+        !property ||
+        operationSemantics(property.property.text).result !== "view"
+      ) {
         return;
       }
       if (viewReceiverRoot(property.expression)?.text !== name) return;
@@ -449,7 +287,7 @@ function returnCallUseReason(call, ref, declaration, signatures) {
   if (
     parent instanceof PropertyAccessExpression &&
     parent.expression === call &&
-    isKnownViewMember(parent.property.text)
+    operationSemantics(parent.property.text).result !== "unknown"
   ) {
     return null;
   }
@@ -649,7 +487,7 @@ function expectedCallArgument(call, index, signatures, context) {
   }
   const name =
     calleeName(call.expression) ??
-    (property && !isKnownViewMember(property.property.text)
+    (property && operationSemantics(property.property.text).result === "unknown"
       ? property.property.text
       : null);
   if (!name) return "unknown";
@@ -666,10 +504,10 @@ function reasonForUse(node, ref, context, signatures) {
     break;
   }
   if (parent instanceof PropertyAccessExpression && ref.key === "expression") {
-    if (VIEW_CONTAINER_METHODS.has(parent.property.text)) {
+    if (operationSemantics(parent.property.text).container) {
       return `view container result from .${parent.property.text} is not yet modeled`;
     }
-    return isKnownViewMember(parent.property.text)
+    return operationSemantics(parent.property.text).result !== "unknown"
       ? null
       : `unknown member .${parent.property.text}`;
   }
@@ -740,7 +578,7 @@ function reasonForUse(node, ref, context, signatures) {
     if (
       property instanceof PropertyAccessExpression &&
       grandparent.expression === property &&
-      isKnownViewMember(property.property.text)
+      operationSemantics(property.property.text).result !== "unknown"
     ) {
       return null;
     }
@@ -752,7 +590,7 @@ function derivedViewUseReason(call, ref, context, signatures) {
   if (
     parent instanceof PropertyAccessExpression &&
     parent.expression === call &&
-    isKnownViewMember(parent.property.text)
+    operationSemantics(parent.property.text).result !== "unknown"
   ) {
     return null;
   }
@@ -849,7 +687,10 @@ function analyzeCandidates(context, signatures) {
       return false;
     if (!(node instanceof CallExpression)) return;
     const property = propertyCall(node);
-    if (!property || !VIEW_PRODUCING_METHODS.has(property.property.text)) {
+    if (
+      !property ||
+      operationSemantics(property.property.text).result !== "view"
+    ) {
       return;
     }
     const binding = candidateReceiver(property.expression, context);
@@ -870,7 +711,7 @@ function analyzeCandidates(context, signatures) {
     const initializer = propertyCall(binding.declaration.initializer);
     if (
       !initializer ||
-      !LENGTH_FUSIBLE_METHODS.has(initializer.property.text)
+      !operationSemantics(initializer.property.text).lengthFusible
     ) {
       continue;
     }
@@ -918,7 +759,7 @@ function analyzeCandidates(context, signatures) {
       const initializer = propertyCall(binding.declaration.initializer);
       if (
         !initializer ||
-        !SPAN_PRODUCING_METHODS.has(initializer.property.text)
+        !operationSemantics(initializer.property.text).spanProducing
       )
         continue;
       const receiver = isStrStaticCall(binding.declaration.initializer)
@@ -954,14 +795,14 @@ function analyzeCandidates(context, signatures) {
           if (
             ref.grandparent instanceof CallExpression &&
             ref.grandparent.expression === ref.parent &&
-            SPAN_SCALAR_METHODS.has(ref.parent.property.text)
+            operationSemantics(ref.parent.property.text).spanScalar
           ) {
             return;
           }
           if (
             ref.grandparent instanceof CallExpression &&
             ref.grandparent.expression === ref.parent &&
-            SPAN_PRODUCING_METHODS.has(ref.parent.property.text)
+            operationSemantics(ref.parent.property.text).spanProducing
           ) {
             const target = consumers.get(ref.grandparent);
             if (target?.scalarizedLength || target?.scalarizedSpan) return;
@@ -1114,16 +955,13 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration);
     const signature = signatures.get(declaration.name.text);
-    if (canPromoteBoundaries) {
-      selectPackedSpanParameters(context, signature);
-    }
+    const packedSpanPlan = canPromoteBoundaries
+      ? planPackedSpanParameters(context, signature)
+      : null;
     const promotions = canPromoteBoundaries
       ? analyzeParameterPromotions(context, signature, signatures)
       : [];
-    if (signature && signature.spanParameters.size > 0) {
-      applyPackedSpanParameters(context, signature);
-      changedSources.add(source);
-    }
+    if (packedSpanPlan?.apply()) changedSources.add(source);
     for (const promotion of promotions) {
       const parameter = declaration.signature.parameters[promotion.index];
       const location = parameter.range.source;
@@ -1191,10 +1029,7 @@ export function optimizeSources(sources, manifest = null) {
   const changedSources = new Set();
   const diagnostics = [];
   const userSources = sources.filter(
-    (source) =>
-      sourceIsOptimizable(source) &&
-      !isPackageSource(source) &&
-      viewNameAvailable(source),
+    (source) => admitSource(source).optimization,
   );
   const sharedSignatures = new Map();
   const ambiguous = new Set();
@@ -1249,9 +1084,8 @@ export function optimizeSources(sources, manifest = null) {
           }
           if (
             argument instanceof CallExpression &&
-            SPAN_PRODUCING_METHODS.has(
-              propertyCall(argument)?.property.text ?? "",
-            )
+            operationSemantics(propertyCall(argument)?.property.text ?? "")
+              .spanProducing
           ) {
             signature.spanArgumentCounts.set(
               index,

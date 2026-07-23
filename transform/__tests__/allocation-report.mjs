@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { compileFixture } from "./harness.mjs";
 
 const baseline = compileFixture("allocation-corpus", {
-  optimize: false,
+  mode: "global",
   suffix: "baseline",
 });
 const optimized = compileFixture("allocation-corpus", {
-  optimize: true,
+  mode: "auto",
   suffix: "optimized",
 });
 

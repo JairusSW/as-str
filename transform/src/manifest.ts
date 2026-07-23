@@ -9,7 +9,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import { readFileSync, writeFileSync } from "fs";
 import { Representation } from "./ast.js";
-import { sourceIsOptimizable } from "./sources.js";
+import { admitSource } from "./source-admission.js";
 
 export interface SemanticFact {
   source: string;
@@ -65,7 +65,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       if (!element.declaration) continue;
       const range = element.declaration.range;
       const source = range.source;
-      if (!sourceIsOptimizable(source)) continue;
+      if (!admitSource(source).semanticFacts) continue;
       const resolvedType = element.type.toString();
       const representation = representationOfResolvedType(resolvedType);
       const kind = element instanceof Property ? "field" : "global";
@@ -83,7 +83,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
     }
     if (!(element instanceof ASFunction)) continue;
     const functionSource = element.prototype.declaration.range.source;
-    if (!sourceIsOptimizable(functionSource)) continue;
+    if (!admitSource(functionSource).semanticFacts) continue;
 
     const functionRange = element.prototype.declaration.range;
     const returnType = element.signature.returnType.toString();
@@ -122,7 +122,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       if (!(local instanceof Local) || !local.declaration) continue;
       const range = local.declaration.range;
       const source = range.source;
-      if (!sourceIsOptimizable(source)) continue;
+      if (!admitSource(source).semanticFacts) continue;
       const resolvedType = local.type.toString();
       const representation = representationOfResolvedType(resolvedType);
       const key = `${source.normalizedPath}:${range.start}:local`;

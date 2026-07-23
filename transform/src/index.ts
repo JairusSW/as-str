@@ -9,7 +9,7 @@ import { fileURLToPath } from "url";
 import { injectViewImports } from "./imports.js";
 import { readSemanticManifest, writeSemanticManifest } from "./manifest.js";
 import { optimizeSources } from "./optimizer.js";
-import { sourceIsOptimizable } from "./sources.js";
+import { admitSource } from "./source-admission.js";
 import { OptimizationDiagnostic, OptimizationResult } from "./model.js";
 import { buildShadowSemanticManifest } from "./analysis.js";
 
@@ -38,7 +38,8 @@ export default class StrAsTransform extends Transform {
       for (const source of parser.sources) {
         this.log(
           `[as-str] source normalized=${source.normalizedPath} internal=${source.internalPath} ` +
-            `library=${source.isLibrary} optimizable=${sourceIsOptimizable(source)}`,
+            `library=${source.isLibrary} optimizable=${admitSource(source).optimization} ` +
+            `reason="${admitSource(source).reason}"`,
         );
       }
     }

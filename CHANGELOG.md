@@ -29,6 +29,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its entrypoint.
 - The `as-strc` wrapper. Use `asc --transform as-str/auto` directly.
 
+### Changed
+
+- Transform internals now centralize operation semantics, packed-span planning
+  and lowering, and source admission so every optimization pass uses the same
+  safety and capability decisions.
+- Global, automatic, and single-pass transform fixtures now compile through one
+  shared harness with consistent environment, artifact, and diagnostic handling.
+
 ### Fixed
 
 - Automatic mode now retains resolved semantic facts when a shadow compile has
@@ -54,6 +62,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preventing speculative view-object regressions in unrelated rules.
 - Transform settings are read per compilation, enabling isolated external
   semantic-analysis and optimized passes in long-lived compiler processes.
+- Debug source reports now reflect the complete source-admission decision,
+  including package self-exclusion and `str` name conflicts.
 
 ## [0.4.0] - 2026-07-21
 

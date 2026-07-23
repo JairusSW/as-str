@@ -5,7 +5,7 @@ import {
   ParenthesizedExpression,
   TernaryExpression,
 } from "assemblyscript/dist/assemblyscript.js";
-import { VIEW_PRODUCING_METHODS } from "./operations.js";
+import { operationSemantics } from "./operations.js";
 import { calleeName, propertyCall } from "./visitor.js";
 
 export function expressionCanProduceView(
@@ -31,10 +31,10 @@ export function expressionCanProduceView(
   ) {
     return (
       property.property.text === "from" ||
-      VIEW_PRODUCING_METHODS.has(property.property.text)
+      operationSemantics(property.property.text).result === "view"
     );
   }
-  return VIEW_PRODUCING_METHODS.has(property.property.text);
+  return operationSemantics(property.property.text).result === "view";
 }
 
 export function expressionIsExplicitView(
@@ -52,6 +52,6 @@ export function expressionIsExplicitView(
     property.expression instanceof IdentifierExpression &&
     property.expression.text === "str" &&
     (property.property.text === "from" ||
-      VIEW_PRODUCING_METHODS.has(property.property.text))
+      operationSemantics(property.property.text).result === "view")
   );
 }

@@ -9,10 +9,18 @@ export const repo = path.resolve(
   "../..",
 );
 const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
-const globalTransform = path.join(repo, "transform/lib/index.js");
-const autoTransform = path.join(repo, "transform/lib/auto.js");
+const transforms = {
+  global: path.join(repo, "transform/lib/index.js"),
+  auto: path.join(repo, "transform/lib/auto.js"),
+  single: path.join(repo, "transform/lib/single.js"),
+};
 
-export function compileFixture(name, { optimize, suffix, extra = [] }) {
+export function compileFixture(
+  name,
+  { mode = "auto", suffix = mode, extra = [], debug = mode !== "global" } = {},
+) {
+  const transform = transforms[mode];
+  assert.ok(transform, `unknown transform mode: ${mode}`);
   const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
   const base = path.join(repo, "build", `${name}-${suffix}`);
   const wasm = `${base}.wasm`;
@@ -23,7 +31,7 @@ export function compileFixture(name, { optimize, suffix, extra = [] }) {
       asc,
       input,
       "--transform",
-      optimize ? autoTransform : globalTransform,
+      transform,
       "--outFile",
       wasm,
       "--textFile",
@@ -35,7 +43,7 @@ export function compileFixture(name, { optimize, suffix, extra = [] }) {
       encoding: "utf8",
       env: {
         ...process.env,
-        STR_AS_DEBUG: optimize ? "1" : "0",
+        STR_AS_DEBUG: debug ? "1" : "0",
       },
     },
   );
@@ -49,6 +57,13 @@ export function compileFixture(name, { optimize, suffix, extra = [] }) {
     wasm,
     wat: readFileSync(watPath, "utf8"),
   };
+}
+
+export function functionBody(wat, name) {
+  const start = wat.indexOf(`(func $${name}`);
+  assert.notEqual(start, -1, `missing WAT function ${name}`);
+  const next = wat.indexOf("\n (func $", start + 1);
+  return wat.slice(start, next < 0 ? wat.length : next);
 }
 
 export async function instantiate(filename) {

@@ -1,36 +1,13 @@
-import { ImportStatement, Node } from "assemblyscript/dist/assemblyscript.js";
+import { Node } from "assemblyscript/dist/assemblyscript.js";
 import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
-export const PACKAGE_NAME = "as-str";
-export const VIEW_NAME = "str";
-export const VIEW_CLASS_NAME = "Str";
-const VIEW_USES =
-  /(?:\bstr\s*[.(]|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
-const VIEW_BINDS =
-  /(?:\b(?:const|let|var|function|class|namespace|type)\s+str\b|\(\s*str\s*:|,\s*str\s*:)/;
-const VIEW_CLASS_USES =
-  /(?:\bStr\s*\.|:\s*Str\b|\bnew\s+Str\b|<\s*Str\s*>|\bStr\s*\[\s*\])/;
-const VIEW_CLASS_BINDS =
-  /(?:\b(?:const|let|var|function|class|namespace|type)\s+Str\b|\(\s*Str\s*:|,\s*Str\s*:)/;
-const OWN_SOURCES = new Set([
-  "assembly/index.ts",
-  "assembly/str.ts",
-  "assembly/str8.ts",
-  "assembly/util.ts",
-  "assembly/util8.ts",
-  "index.ts",
-]);
-export function isPackageSource(source) {
-  if (OWN_SOURCES.has(source.normalizedPath)) return true;
-  const internalPath = source.internalPath.replace(/\.ts$/, "");
-  if (internalPath === `~lib/${PACKAGE_NAME}/index`) return true;
-  const libraryPrefix = `~lib/${PACKAGE_NAME}/`;
-  return (
-    internalPath.startsWith(libraryPrefix) &&
-    OWN_SOURCES.has(internalPath.slice(libraryPrefix.length) + ".ts")
-  );
-}
+import { admitSource, PACKAGE_NAME } from "./source-admission.js";
+export {
+  PACKAGE_NAME,
+  VIEW_CLASS_NAME,
+  VIEW_NAME,
+} from "./source-admission.js";
 export function normalizeBaseRel(baseRel) {
   if (baseRel.endsWith(PACKAGE_NAME)) {
     return (
@@ -51,41 +28,6 @@ export function computeImportBaseRel(fromDir, packageDir, p = path) {
   return normalizeBaseRel(
     path.posix.join(...p.relative(fromDir, packageDir).split(p.sep)),
   );
-}
-function importedNames(source) {
-  const names = new Set();
-  for (const stmt of source.statements) {
-    if (!(stmt instanceof ImportStatement)) continue;
-    if (stmt.namespaceName) names.add(stmt.namespaceName.text);
-    if (stmt.declarations) {
-      for (const declaration of stmt.declarations) {
-        names.add(declaration.name.text);
-      }
-    }
-  }
-  return names;
-}
-export function viewNameAvailable(source) {
-  return importedNames(source).has(VIEW_NAME) || !VIEW_BINDS.test(source.text);
-}
-function requestedViewNames(source, forced) {
-  const already = importedNames(source);
-  const names = [];
-  if (
-    !already.has(VIEW_NAME) &&
-    !VIEW_BINDS.test(source.text) &&
-    (forced || VIEW_USES.test(source.text))
-  ) {
-    names.push(VIEW_NAME);
-  }
-  if (
-    !already.has(VIEW_CLASS_NAME) &&
-    !VIEW_CLASS_BINDS.test(source.text) &&
-    VIEW_CLASS_USES.test(source.text)
-  ) {
-    names.push(VIEW_CLASS_NAME);
-  }
-  return names;
 }
 function parseIfMissing(parser, file, internalPath) {
   const normalizedInternal = internalPath.replace(/\.ts$/, "");
@@ -164,11 +106,12 @@ export function injectViewImports(parser, options) {
   const specifiers = new Set();
   const injected = [];
   for (const source of parser.sources) {
-    if (isPackageSource(source)) continue;
     const forced = options.force?.has(source) ?? false;
+    const admission = admitSource(source, forced);
+    if (admission.packageSource) continue;
     const librarySource =
       source.isLibrary || source.internalPath.startsWith("~lib");
-    const names = requestedViewNames(source, forced);
+    const names = admission.requestedViewNames;
     if (!names.length) continue;
     let specifier = PACKAGE_NAME;
     if (!librarySource) {

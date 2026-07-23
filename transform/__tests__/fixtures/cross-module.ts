@@ -1,7 +1,4 @@
-import {
-  nativeArgument,
-  viewArgument,
-} from "./cross-module-api";
+import { nativeArgument, viewArgument } from "./cross-module-api";
 
 function packedSpanArgument(value: string): i32 {
   return value.length + value.charCodeAt(0);

@@ -1,18 +1,8 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
-const repo = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../..",
-);
-const asc = path.join(repo, "node_modules/assemblyscript/bin/asc.js");
-const globalTransform = path.join(repo, "transform/lib/index.js");
-const autoTransform = path.join(repo, "transform/lib/auto.js");
-const singleTransform = path.join(repo, "transform/lib/single.js");
-const outDir = path.join(repo, "build");
+import { pathToFileURL } from "node:url";
+import { compileFixture, functionBody, instantiate, repo } from "./harness.mjs";
 const operations = await import(
   pathToFileURL(path.join(repo, "transform/lib/operations.js"))
 );
@@ -31,131 +21,30 @@ const instanceMethods = [
   .filter((name) => name !== "constructor");
 for (const method of instanceMethods) {
   assert.equal(
-    operations.isKnownViewMember(method),
+    operations.operationSemantics(method).result !== "unknown",
     true,
     `Str instance method is missing from transform semantics: ${method}`,
   );
 }
+assert.deepEqual(operations.operationSemantics("slice"), {
+  result: "view",
+  lengthFusible: true,
+  spanProducing: true,
+  spanScalar: false,
+  container: false,
+  normalizedSpanName: "slice",
+});
+assert.equal(operations.operationSemantics("indexOf").spanScalar, true);
+assert.equal(operations.operationSemantics("concat").result, "native");
+assert.equal(operations.operationSemantics("split").container, true);
+assert.equal(
+  operations.operationSemantics("notAStringOperation").result,
+  "unknown",
+);
 
-function compile(name, extra = []) {
-  const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
-  const wasm = path.join(outDir, `${name}.wasm`);
-  const wat = path.join(outDir, `${name}.wat`);
-  const result = spawnSync(
-    process.execPath,
-    [
-      asc,
-      input,
-      "--transform",
-      autoTransform,
-      "--outFile",
-      wasm,
-      "--textFile",
-      wat,
-      ...extra,
-    ],
-    {
-      cwd: repo,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        STR_AS_DEBUG: "1",
-      },
-    },
-  );
-  assert.equal(
-    result.status,
-    0,
-    `asc failed for ${name}:\n${result.stdout}\n${result.stderr}`,
-  );
-  const output = result.stdout + result.stderr;
-  return { output, wasm, wat: readFileSync(wat, "utf8") };
-}
-
-function compileAuto(name, extra = []) {
-  const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
-  const wasm = path.join(outDir, `${name}-auto.wasm`);
-  const wat = path.join(outDir, `${name}-auto.wat`);
-  const result = spawnSync(
-    process.execPath,
-    [
-      asc,
-      input,
-      "--transform",
-      autoTransform,
-      "--outFile",
-      wasm,
-      "--textFile",
-      wat,
-      ...extra,
-    ],
-    {
-      cwd: repo,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        STR_AS_DEBUG: "1",
-      },
-    },
-  );
-  assert.equal(
-    result.status,
-    0,
-    `asc auto transform failed for ${name}:\n${result.stdout}\n${result.stderr}`,
-  );
-  return {
-    output: result.stdout + result.stderr,
-    wasm,
-    wat: readFileSync(wat, "utf8"),
-  };
-}
-
-function compileSingle(name, extra = []) {
-  const input = path.join(repo, `transform/__tests__/fixtures/${name}.ts`);
-  const wasm = path.join(outDir, `${name}-single.wasm`);
-  const wat = path.join(outDir, `${name}-single.wat`);
-  const result = spawnSync(
-    process.execPath,
-    [
-      asc,
-      input,
-      "--transform",
-      singleTransform,
-      "--outFile",
-      wasm,
-      "--textFile",
-      wat,
-      ...extra,
-    ],
-    {
-      cwd: repo,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        STR_AS_DEBUG: "1",
-      },
-    },
-  );
-  assert.equal(
-    result.status,
-    0,
-    `asc single-pass transform failed for ${name}:\n${result.stdout}\n${result.stderr}`,
-  );
-  return {
-    output: result.stdout + result.stderr,
-    wasm,
-    wat: readFileSync(wat, "utf8"),
-  };
-}
-
-function functionBody(wat, name) {
-  const start = wat.indexOf(`(func $${name}`);
-  assert.notEqual(start, -1, `missing WAT function ${name}`);
-  const next = wat.indexOf("\n (func $", start + 1);
-  return wat.slice(start, next < 0 ? wat.length : next);
-}
-
-const local = compile("local-promotion", ["--exportRuntime"]);
+const local = compileFixture("local-promotion", {
+  extra: ["--exportRuntime"],
+});
 assert.match(local.output, /part -> view: view-producing local/);
 assert.match(
   local.output,
@@ -192,34 +81,22 @@ const promotedAnnotated = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/promotedAnnotatedLength",
 );
-assert.doesNotMatch(
-  promotedAnnotated,
-  /call \$~lib\/string\/String#slice/,
-);
+assert.doesNotMatch(promotedAnnotated, /call \$~lib\/string\/String#slice/);
 
 const promotedEquality = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/promotedEquality",
 );
 assert.match(promotedEquality, /Str\.(?:notEqualsSpan|equalsSpan)/);
-assert.doesNotMatch(
-  promotedEquality,
-  /call \$~lib\/string\/String#slice/,
-);
-assert.doesNotMatch(
-  promotedEquality,
-  /call \$assembly\/str\/Str#constructor/,
-);
+assert.doesNotMatch(promotedEquality, /call \$~lib\/string\/String#slice/);
+assert.doesNotMatch(promotedEquality, /call \$assembly\/str\/Str#constructor/);
 
 const directEquality = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/directEquality",
 );
 assert.match(directEquality, /Str\.equalsSpan/);
-assert.doesNotMatch(
-  directEquality,
-  /call \$~lib\/string\/String#slice/,
-);
+assert.doesNotMatch(directEquality, /call \$~lib\/string\/String#slice/);
 
 const unsafe = functionBody(
   local.wat,
@@ -350,7 +227,7 @@ assert.match(
   /scalarized non-escaping view into a packed pointer span/,
 );
 
-const single = compileSingle("local-promotion");
+const single = compileFixture("local-promotion", { mode: "single" });
 const singleScalarSpanConsumers = functionBody(
   single.wat,
   "transform/__tests__/fixtures/local-promotion/scalarSpanConsumers",
@@ -369,41 +246,29 @@ assert.doesNotMatch(
   "single-pass mode must not promote function boundaries without semantic facts",
 );
 
-const instantiated = await WebAssembly.instantiate(readFileSync(local.wasm), {
-  env: {
-    abort() {
-      throw new Error("AssemblyScript abort");
-    },
-  },
-});
+const instantiated = await instantiate(local.wasm);
 assert.equal(instantiated.instance.exports.semanticCheck(), 103);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);
 assert.equal(instantiated.instance.exports.evaluationOrder(), 123);
 assert.equal(instantiated.instance.exports.scalarSpanSemanticCheck(), 205);
 
-const auto = compileAuto("generic-conflict");
+const auto = compileFixture("generic-conflict");
 assert.match(auto.output, /semantic analysis: \d+ facts/);
 assert.match(
   auto.output,
   /identity return -> unknown: tracked resolved conflicting generic instantiations/,
 );
-const autoModule = await WebAssembly.instantiate(readFileSync(auto.wasm), {
-  env: {
-    abort() {
-      throw new Error("AssemblyScript abort");
-    },
-  },
-});
+const autoModule = await instantiate(auto.wasm);
 assert.equal(autoModule.instance.exports.stringInstantiation(), 5);
 assert.equal(autoModule.instance.exports.numberInstantiation(7), 7);
 
-const noOp = compile("no-op");
+const noOp = compileFixture("no-op");
 assert.doesNotMatch(
   noOp.output,
   /inject \{ str \}/,
   "a source with only rejected promotions must not import the view runtime",
 );
-const barriers = compile("safety-barriers");
+const barriers = compileFixture("safety-barriers");
 assert.match(barriers.output, /native string function parameter/);
 assert.match(barriers.output, /explicit cast or assertion/);
 assert.match(barriers.output, /raw-memory or representation intrinsic/);
@@ -457,7 +322,7 @@ const derivedParameter = functionBody(
 assert.match(derivedParameter, /call \$~lib\/string\/String#substring/);
 assert.doesNotMatch(derivedParameter, /\$assembly\/str\/Str\.substring/);
 
-const crossModule = compile("cross-module");
+const crossModule = compileFixture("cross-module");
 const convertedCrossCall = functionBody(
   crossModule.wat,
   "transform/__tests__/fixtures/cross-module/convertedCall",
@@ -482,7 +347,7 @@ const packedLowerCall = functionBody(
 assert.doesNotMatch(packedLowerCall, /call \$~lib\/string\/String#slice/);
 assert.doesNotMatch(packedLowerCall, /call \$~lib\/string\/String#toLowerCase/);
 
-const knownCalls = compile("known-calls");
+const knownCalls = compileFixture("known-calls");
 for (const name of ["knownCallback", "knownMethod"]) {
   const body = functionBody(
     knownCalls.wat,
@@ -492,7 +357,7 @@ for (const name of ["knownCallback", "knownMethod"]) {
   assert.doesNotMatch(body, /call \$~lib\/string\/String#(?:slice|substring)/);
 }
 
-const viewOperations = compile("view-operations");
+const viewOperations = compileFixture("view-operations");
 const allViewOperations = functionBody(
   viewOperations.wat,
   "transform/__tests__/fixtures/view-operations/allViewOperations",
@@ -527,47 +392,17 @@ assert.doesNotMatch(
   /call \$~lib\/string\/String#(?:slice|substring|substr|trim|trimStart|trimEnd|charAt)/,
 );
 
-const branchEnabled = compile("branch-only");
-
-const disabledWasm = path.join(outDir, "optimizer-disabled.wasm");
-const disabledWatPath = path.join(outDir, "optimizer-disabled.wat");
-const disabled = spawnSync(
-  process.execPath,
-  [
-    asc,
-    path.join(repo, "transform/__tests__/fixtures/branch-only.ts"),
-    "--transform",
-    globalTransform,
-    "--outFile",
-    disabledWasm,
-    "--textFile",
-    disabledWatPath,
-  ],
-  {
-    cwd: repo,
-    encoding: "utf8",
-    env: { ...process.env, STR_AS_DEBUG: "1" },
-  },
-);
-assert.equal(disabled.status, 0, disabled.stdout + disabled.stderr);
-const disabledWat = readFileSync(disabledWatPath, "utf8");
+const branchEnabled = compileFixture("branch-only");
+const branchDisabled = compileFixture("branch-only", {
+  mode: "global",
+  suffix: "disabled",
+  debug: true,
+});
+const disabledWat = branchDisabled.wat;
 assert.match(disabledWat, /call \$~lib\/string\/String#slice/);
 assert.doesNotMatch(disabledWat, /assembly\/str\/Str\.slice/);
-const runtimeImports = {
-  env: {
-    abort() {
-      throw new Error("AssemblyScript abort");
-    },
-  },
-};
-const enabledBranchModule = await WebAssembly.instantiate(
-  readFileSync(branchEnabled.wasm),
-  runtimeImports,
-);
-const disabledBranchModule = await WebAssembly.instantiate(
-  readFileSync(disabledWasm),
-  runtimeImports,
-);
+const enabledBranchModule = await instantiate(branchEnabled.wasm);
+const disabledBranchModule = await instantiate(branchDisabled.wasm);
 for (const choose of [0, 1]) {
   assert.equal(
     enabledBranchModule.instance.exports.observable(choose),

@@ -79,11 +79,11 @@ export function isDeclarationIdentifier(
   if (!parent) return false;
   if (
     parent instanceof ImportDeclaration ||
-    (parent instanceof VariableDeclaration ||
+    ((parent instanceof VariableDeclaration ||
       parent instanceof FunctionDeclaration ||
       parent instanceof ClassDeclaration ||
       parent instanceof NamespaceDeclaration) &&
-    ref.key === "name"
+      ref.key === "name")
   ) {
     return true;
   }

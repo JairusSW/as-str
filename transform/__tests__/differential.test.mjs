@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { compileFixture, instantiate } from "./harness.mjs";
 
 const baseline = compileFixture("differential-corpus", {
-  optimize: false,
+  mode: "global",
   suffix: "baseline",
 });
 const optimized = compileFixture("differential-corpus", {
-  optimize: true,
+  mode: "auto",
   suffix: "optimized",
 });
 const baselineModule = await instantiate(baseline.wasm);

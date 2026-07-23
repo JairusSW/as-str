@@ -5,7 +5,6 @@ import { ASTBuilder, Parser } from "assemblyscript/dist/assemblyscript.js";
 import {
   computeImportBaseRel,
   injectViewImports,
-  isPackageSource,
   normalizeBaseRel,
 } from "../lib/imports.js";
 
@@ -60,10 +59,7 @@ injectViewImports(parser, {
   },
 });
 const dependencyText = ASTBuilder.build(dependencySource);
-assert.match(
-  dependencyText,
-  /import \{\s*str,\s*Str\s*\} from "as-str";/,
-);
+assert.match(dependencyText, /import \{\s*str,\s*Str\s*\} from "as-str";/);
 assert.deepEqual(messages, [
   '[as-str] inject { str, Str } from "as-str" -> ~lib/example/assembly/index.ts',
 ]);
@@ -111,7 +107,6 @@ packageParser.parseFile(
   false,
 );
 const packageSource = packageParser.sources[0];
-assert.equal(isPackageSource(packageSource), true);
 injectViewImports(packageParser, {
   baseCWD: repo,
   packageDir: repo,

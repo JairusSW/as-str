@@ -37,15 +37,12 @@ import {
   viewType,
   wrapAsView,
 } from "./ast.js";
+import { operationSemantics } from "./operations.js";
 import {
-  isKnownViewMember,
-  LENGTH_FUSIBLE_METHODS,
-  NATIVE_PRODUCING_METHODS,
-  SCALAR_MEMBERS,
-  SPAN_PRODUCING_METHODS,
-  SPAN_SCALAR_METHODS,
-  VIEW_PRODUCING_METHODS,
-} from "./operations.js";
+  lowerPackedLengthInitializer,
+  lowerPackedSpanInitializer,
+  packedSpanOwner,
+} from "./packed-span.js";
 import { expressionCanProduceView } from "./expressions.js";
 import { calleeName, isStrStaticCall, propertyCall } from "./visitor.js";
 function viewCallParts(expression) {
@@ -64,57 +61,11 @@ function viewCallParts(expression) {
     args: expression.args,
   };
 }
-function normalizedSpanMethod(method) {
-  return method === "trimLeft"
-    ? "trimStart"
-    : method === "trimRight"
-      ? "trimEnd"
-      : method;
-}
-function scalarizeSpanInitializer(expression, context) {
-  const parts = viewCallParts(expression);
-  if (!parts) return expression;
-  const method = normalizedSpanMethod(parts.method);
-  if (
-    parts.receiver instanceof IdentifierExpression &&
-    context.bindings.get(parts.receiver.text)?.scalarizedSpan
-  ) {
-    return staticViewCall(`${method}SpanOf`, parts.receiver, parts.args);
-  }
-  return staticViewCall(`${method}Span`, parts.receiver, parts.args);
-}
-function scalarizeLengthInitializer(expression, context) {
-  const parts = viewCallParts(expression);
-  if (!parts || !LENGTH_FUSIBLE_METHODS.has(parts.method)) return expression;
-  if (
-    parts.receiver instanceof IdentifierExpression &&
-    context.bindings.get(parts.receiver.text)?.scalarizedSpan
-  ) {
-    const receiver = context.bindings.get(parts.receiver.text);
-    const owner = receiver.spanOwner;
-    const span = staticViewCall(
-      `${normalizedSpanMethod(parts.method)}SpanOf`,
-      parts.receiver,
-      parts.args,
-    );
-    return staticViewCall("spanLength", identifier(owner, expression.range), [
-      span,
-    ]);
-  }
-  return staticViewCall(`${parts.method}Length`, parts.receiver, parts.args);
-}
 function bindingRepresentation(name, context) {
   const binding = context.bindings.get(name);
   if (!binding) return context.parameters.get(name) ?? "unknown";
   if (binding.decision !== "unknown") return binding.decision;
   return binding.declared === "unknown" ? binding.semantic : binding.declared;
-}
-function packedSpanOwner(name, context) {
-  return (
-    context.bindings.get(name)?.spanOwner ??
-    context.parameterSpans.get(name) ??
-    null
-  );
 }
 function expressionRepresentation(expression, context, signatures) {
   if (expression instanceof ParenthesizedExpression) {
@@ -174,13 +125,15 @@ function expressionRepresentation(expression, context, signatures) {
     ) {
       if (
         property.property.text === "from" ||
-        VIEW_PRODUCING_METHODS.has(property.property.text)
+        operationSemantics(property.property.text).result === "view"
       ) {
         return "view";
       }
-      if (NATIVE_PRODUCING_METHODS.has(property.property.text)) return "native";
+      if (operationSemantics(property.property.text).result === "native") {
+        return "native";
+      }
     }
-    if (VIEW_PRODUCING_METHODS.has(property.property.text)) {
+    if (operationSemantics(property.property.text).result === "view") {
       return expressionRepresentation(
         property.expression,
         context,
@@ -189,7 +142,9 @@ function expressionRepresentation(expression, context, signatures) {
         ? "view"
         : "native";
     }
-    if (NATIVE_PRODUCING_METHODS.has(property.property.text)) return "native";
+    if (operationSemantics(property.property.text).result === "native") {
+      return "native";
+    }
   }
   const name = calleeName(expression.expression);
   return name ? (signatures.get(name)?.result ?? "unknown") : "unknown";
@@ -202,9 +157,9 @@ function convertExpression(expression, expected, context, signatures) {
   ) {
     const call = expression.expression;
     const property = propertyCall(call);
-    if (property && LENGTH_FUSIBLE_METHODS.has(property.property.text)) {
+    if (property && operationSemantics(property.property.text).lengthFusible) {
       return rewriteExpression(
-        scalarizeLengthInitializer(call, context),
+        lowerPackedLengthInitializer(call, context),
         expected,
         context,
         signatures,
@@ -377,14 +332,13 @@ function rewriteExpression(expression, expected, context, signatures) {
     if (equality) {
       const directView =
         expression.left instanceof CallExpression &&
-        SPAN_PRODUCING_METHODS.has(
-          propertyCall(expression.left)?.property.text ?? "",
-        )
+        operationSemantics(propertyCall(expression.left)?.property.text ?? "")
+          .spanProducing
           ? expression.left
           : expression.right instanceof CallExpression &&
-              SPAN_PRODUCING_METHODS.has(
+              operationSemantics(
                 propertyCall(expression.right)?.property.text ?? "",
-              )
+              ).spanProducing
             ? expression.right
             : null;
       if (directView) {
@@ -402,7 +356,7 @@ function rewriteExpression(expression, expected, context, signatures) {
               : "equalsSpan",
             parts.receiver,
             [
-              scalarizeSpanInitializer(directView, context),
+              lowerPackedSpanInitializer(directView, context),
               rewriteExpression(other, "unknown", context, signatures),
             ],
           );
@@ -545,7 +499,7 @@ function rewriteExpression(expression, expected, context, signatures) {
       if (
         ((spanBinding?.scalarizedSpan && spanBinding.spanOwner) ||
           parameterSpanOwner) &&
-        SPAN_SCALAR_METHODS.has(method)
+        operationSemantics(method).spanScalar
       ) {
         const args = expression.args.map((argument) =>
           rewriteExpression(argument, "unknown", context, signatures),
@@ -572,8 +526,8 @@ function rewriteExpression(expression, expected, context, signatures) {
       let receiverExpected = "unknown";
       if (
         expressionCanProduceView(property.expression) &&
-        (SCALAR_MEMBERS.has(method) ||
-          (VIEW_PRODUCING_METHODS.has(method) && expected === "view"))
+        (operationSemantics(method).result === "scalar" ||
+          (operationSemantics(method).result === "view" && expected === "view"))
       ) {
         receiverExpected = "view";
       }
@@ -595,14 +549,14 @@ function rewriteExpression(expression, expected, context, signatures) {
             "lastIndexOf",
           ].includes(method)
             ? containerElement
-            : isKnownViewMember(method)
+            : operationSemantics(method).result !== "unknown"
               ? "unknown"
               : (signatures.get(method)?.parameters[index] ?? "unknown"),
           context,
           signatures,
         ),
       );
-      if (VIEW_PRODUCING_METHODS.has(method) && expected === "view") {
+      if (operationSemantics(method).result === "view" && expected === "view") {
         const receiverRep = expressionRepresentation(
           property.expression,
           context,
@@ -623,10 +577,10 @@ function rewriteExpression(expression, expected, context, signatures) {
           argument instanceof CallExpression
         ) {
           const parts = viewCallParts(argument);
-          if (parts && SPAN_PRODUCING_METHODS.has(parts.method)) {
+          if (parts && operationSemantics(parts.method).spanProducing) {
             rewrittenArgs.push(
               rewriteExpression(
-                scalarizeSpanInitializer(argument, context),
+                lowerPackedSpanInitializer(argument, context),
                 "unknown",
                 context,
                 signatures,
@@ -653,7 +607,7 @@ function rewriteExpression(expression, expected, context, signatures) {
   }
   if (expression instanceof PropertyAccessExpression) {
     const receiverExpected =
-      SCALAR_MEMBERS.has(expression.property.text) &&
+      operationSemantics(expression.property.text).result === "scalar" &&
       expressionCanProduceView(expression.expression)
         ? "view"
         : "unknown";
@@ -721,7 +675,7 @@ export function rewriteStatement(statement, context, signatures) {
       ) {
         declaration.type = i32Type(declaration.range);
         declaration.initializer = rewriteExpression(
-          scalarizeLengthInitializer(declaration.initializer, context),
+          lowerPackedLengthInitializer(declaration.initializer, context),
           "unknown",
           context,
           signatures,
@@ -734,7 +688,7 @@ export function rewriteStatement(statement, context, signatures) {
       ) {
         declaration.type = u64Type(declaration.range);
         declaration.initializer = rewriteExpression(
-          scalarizeSpanInitializer(declaration.initializer, context),
+          lowerPackedSpanInitializer(declaration.initializer, context),
           "unknown",
           context,
           signatures,

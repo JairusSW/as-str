@@ -1,5 +1,20 @@
-/** Methods that return a zero-copy UTF-16 view. */
-export const VIEW_PRODUCING_METHODS = new Set([
+export type OperationResult =
+  | "view"
+  | "native"
+  | "scalar"
+  | "other-safe"
+  | "unknown";
+
+export interface OperationSemantics {
+  readonly result: OperationResult;
+  readonly lengthFusible: boolean;
+  readonly spanProducing: boolean;
+  readonly spanScalar: boolean;
+  readonly container: boolean;
+  readonly normalizedSpanName: string;
+}
+
+const VIEW_PRODUCING_METHODS = new Set([
   "slice",
   "substring",
   "substr",
@@ -18,11 +33,7 @@ export const VIEW_PRODUCING_METHODS = new Set([
   "betweenLast",
 ]);
 
-/** View-producing methods that have an allocation-free `*Length` specialization. */
-export const LENGTH_FUSIBLE_METHODS = new Set(VIEW_PRODUCING_METHODS);
-
-/** View-producing methods representable as a packed pointer span. */
-export const SPAN_PRODUCING_METHODS = new Set([
+const SPAN_PRODUCING_METHODS = new Set([
   "slice",
   "substring",
   "substr",
@@ -33,8 +44,7 @@ export const SPAN_PRODUCING_METHODS = new Set([
   "trimRight",
 ]);
 
-/** Properties and methods whose result is not a string-like reference. */
-export const SCALAR_MEMBERS = new Set([
+const SCALAR_MEMBERS = new Set([
   "length",
   "isEmpty",
   "charCodeAt",
@@ -55,8 +65,7 @@ export const SCALAR_MEMBERS = new Set([
   "greaterThanOrEqual",
 ]);
 
-/** Scalar methods that can consume an optimizer-packed pointer span. */
-export const SPAN_SCALAR_METHODS = new Set([
+const SPAN_SCALAR_METHODS = new Set([
   "charCodeAt",
   "codePointAt",
   "indexOf",
@@ -66,8 +75,7 @@ export const SPAN_SCALAR_METHODS = new Set([
   "endsWith",
 ]);
 
-/** Members available on Str whose result is a newly allocated native string. */
-export const NATIVE_PRODUCING_METHODS = new Set([
+const NATIVE_PRODUCING_METHODS = new Set([
   "concat",
   "repeat",
   "padStart",
@@ -79,21 +87,49 @@ export const NATIVE_PRODUCING_METHODS = new Set([
   "toString",
 ]);
 
-export const OTHER_SAFE_VIEW_METHODS = new Set([
-  "split",
-  "toStr",
-  "toStr8",
-  "set",
-]);
+const OTHER_SAFE_VIEW_METHODS = new Set(["split", "toStr", "toStr8", "set"]);
+const VIEW_CONTAINER_METHODS = new Set(["split"]);
+const SEMANTICS = new Map<string, OperationSemantics>();
+const UNKNOWN_SEMANTICS: OperationSemantics = {
+  result: "unknown",
+  lengthFusible: false,
+  spanProducing: false,
+  spanScalar: false,
+  container: false,
+  normalizedSpanName: "",
+};
 
-/** View methods whose container result needs element-flow analysis before promotion. */
-export const VIEW_CONTAINER_METHODS = new Set(["split"]);
+function resultFor(name: string): OperationResult {
+  if (VIEW_PRODUCING_METHODS.has(name)) return "view";
+  if (SCALAR_MEMBERS.has(name)) return "scalar";
+  if (NATIVE_PRODUCING_METHODS.has(name)) return "native";
+  if (OTHER_SAFE_VIEW_METHODS.has(name)) return "other-safe";
+  return "unknown";
+}
 
-export function isKnownViewMember(name: string): boolean {
-  return (
-    VIEW_PRODUCING_METHODS.has(name) ||
-    SCALAR_MEMBERS.has(name) ||
-    NATIVE_PRODUCING_METHODS.has(name) ||
-    OTHER_SAFE_VIEW_METHODS.has(name)
-  );
+/**
+ * The single semantic authority for string operations understood by the
+ * optimizer. Callers ask what an operation means without learning how the
+ * overlapping runtime capability groups are represented.
+ */
+export function operationSemantics(name: string): OperationSemantics {
+  const cached = SEMANTICS.get(name);
+  if (cached) return cached;
+  const result = resultFor(name);
+  if (result === "unknown") return UNKNOWN_SEMANTICS;
+  const semantics = {
+    result,
+    lengthFusible: VIEW_PRODUCING_METHODS.has(name),
+    spanProducing: SPAN_PRODUCING_METHODS.has(name),
+    spanScalar: SPAN_SCALAR_METHODS.has(name),
+    container: VIEW_CONTAINER_METHODS.has(name),
+    normalizedSpanName:
+      name === "trimLeft"
+        ? "trimStart"
+        : name === "trimRight"
+          ? "trimEnd"
+          : name,
+  };
+  SEMANTICS.set(name, semantics);
+  return semantics;
 }

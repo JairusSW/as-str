@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { injectViewImports } from "./imports.js";
 import { readSemanticManifest, writeSemanticManifest } from "./manifest.js";
 import { optimizeSources } from "./optimizer.js";
-import { sourceIsOptimizable } from "./sources.js";
+import { admitSource } from "./source-admission.js";
 import { buildShadowSemanticManifest } from "./analysis.js";
 function enabled(name) {
   return /^(1|true|on|yes)$/i.test(process.env[name] ?? "");
@@ -30,7 +30,8 @@ export default class StrAsTransform extends Transform {
       for (const source of parser.sources) {
         this.log(
           `[as-str] source normalized=${source.normalizedPath} internal=${source.internalPath} ` +
-            `library=${source.isLibrary} optimizable=${sourceIsOptimizable(source)}`,
+            `library=${source.isLibrary} optimizable=${admitSource(source).optimization} ` +
+            `reason="${admitSource(source).reason}"`,
         );
       }
     }
