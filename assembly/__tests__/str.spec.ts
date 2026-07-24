@@ -209,6 +209,13 @@ describe("allocating helpers match native String", () => {
     const U = "héllo, 世界 ﬁ ß";
     expect(str.toUpperCase(U)).toBe(U.toUpperCase());
     expect(str.toLowerCase("HÉLLO, 世界")).toBe("HÉLLO, 世界".toLowerCase());
+
+    const alreadyLower = "already-lower";
+    expect(changetype<usize>(str.toLowerCaseIfNeeded(alreadyLower))).toBe(
+      changetype<usize>(alreadyLower),
+    );
+    expect(str.toLowerCaseIfNeeded("Mixed CASE")).toBe("mixed case");
+    expect(str.toLowerCaseIfNeeded("HÉLLO")).toBe("héllo");
     // a slice that is ASCII even though its backing string is not
     expect(str.slice(U, 0, 1).toUpperCase()).toBe("H");
   });

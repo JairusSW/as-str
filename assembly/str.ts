@@ -1703,6 +1703,24 @@ import { Str8 } from "./str8";
   }
 
   /**
+   * Return an already-lowercase ASCII native string unchanged. Values with an
+   * uppercase ASCII code unit or any non-ASCII code unit use the normal
+   * Unicode-aware lowercase implementation.
+   */
+  static toLowerCaseIfNeeded<T>(s: T): string {
+    const start = bStart(s);
+    const end = bEnd(s);
+    for (let p = start; p < end; p += 2) {
+      const c = load<u16>(p);
+      if ((c >= 0x41 && c <= 0x5a) || c > 0x7f) {
+        return Str.toLowerCase<T>(s);
+      }
+    }
+    if (isString<T>()) return changetype<string>(s);
+    return materialize(start, end);
+  }
+
+  /**
    * Free-function form of {@link Str#repeat}; `s` may be a `string` or a
    * `Str`.
    *

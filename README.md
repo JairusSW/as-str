@@ -122,7 +122,9 @@ Your source continues to use native `string` types:
 
 ```ts
 function compactLabel(value: string): string {
-  return value.trim().slice(0, 12);
+  const trimmed = value.trim();
+  const end = value.length < 12 ? value.length : 12;
+  return trimmed.slice(0, end);
 }
 
 export function formatLabel(value: string): string {
@@ -133,23 +135,29 @@ export function formatLabel(value: string): string {
 After optimization, the relevant source shape is:
 
 ```ts
-import { str } from "as-str";
+import { Str, str } from "as-str";
 
-function compactLabel(value: str): str {
-  return value.trim().slice(0, 12);
+function compactLabel(value: str): string {
+  const trimmed = value.trim();
+  const end = value.length < 12 ? value.length : 12;
+  return Str.slice(trimmed, 0, end).toString();
 }
 
 export function formatLabel(value: string): string {
-  return compactLabel(str.from(value)).toString();
+  return compactLabel(str.from(value));
 }
 ```
 
 The exported function keeps its native `string` signature while the internal
-helper operates entirely on views.
+helper uses views for its repeated string operations. The final value becomes a
+native string only where the helper's signature requires one.
 
 The optimizer leaves values native around raw loads, pointer casts, explicit
 assertions, native-string call parameters, unknown calls, containers, fields,
 nullable boundaries, and other operations it cannot prove safe.
+It also avoids the native allocation for `toLowerCase()` when the input is
+already lowercase ASCII, while retaining the normal Unicode-aware result for
+uppercase or non-ASCII input.
 
 Local overrides use comments because AssemblyScript does not allow decorators
 on local variables:
@@ -185,7 +193,11 @@ Source still uses native strings:
 ```ts
 export function containsMarker(value: string): bool {
   const compact = value.trim().slice(0, 12);
-  return compact.includes("marker");
+  return (
+    compact.includes("marker") ||
+    compact.startsWith("mark") ||
+    compact.length === 0
+  );
 }
 ```
 
