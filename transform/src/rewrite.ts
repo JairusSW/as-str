@@ -534,6 +534,11 @@ function rewriteExpression(
     const property = propertyCall(expression);
     if (property) {
       const method = property.property.text;
+      const originalReceiverRepresentation = expressionRepresentation(
+        property.expression,
+        context,
+        signatures,
+      );
       const spanBinding =
         property.expression instanceof IdentifierExpression
           ? context.bindings.get(property.expression.text)
@@ -602,6 +607,23 @@ function rewriteExpression(
           signatures,
         ),
       );
+
+      if (
+        method === "toLowerCase" &&
+        (originalReceiverRepresentation === "native" ||
+          originalReceiverRepresentation === "view")
+      ) {
+        return convertExpression(
+          staticViewCall(
+            "toLowerCaseIfNeeded",
+            property.expression,
+            expression.args,
+          ),
+          expected,
+          context,
+          signatures,
+        );
+      }
 
       if (operationSemantics(method).result === "view" && expected === "view") {
         const receiverRep = expressionRepresentation(

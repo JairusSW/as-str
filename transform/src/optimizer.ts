@@ -56,6 +56,12 @@ import {
   expressionIsExplicitView,
 } from "./expressions.js";
 
+// A class-backed Str trades the native substring allocation for a wrapper
+// allocation plus indirection on every use. Tiny one- and two-use values are
+// generally cheaper as native strings; packed spans and scalarized lengths do
+// not pay that wrapper cost and are handled separately below.
+const MIN_CLASS_VIEW_USES = 3;
+
 function summarize(diagnostics: OptimizationDiagnostic[]): OptimizationSummary {
   let promoted = 0;
   let rejected = 0;
@@ -334,6 +340,13 @@ function analyzeParameterPromotions(
       reason ??= derivedViewUseReason(node, ref, context, signatures);
     });
 
+    if (
+      reason === null &&
+      uses < MIN_CLASS_VIEW_USES &&
+      !signature.viewArgumentParameters.has(index)
+    ) {
+      reason = "class-backed parameter view does not amortize wrapper cost";
+    }
     const promoted = reason === null;
     if (promoted) {
       parameter.type = viewType(parameter.range);
@@ -431,6 +444,9 @@ function analyzeReturnPromotion(
   });
   if (uses === 0) reason = "no statically known call sites";
 
+  if (reason === null && uses < MIN_CLASS_VIEW_USES) {
+    reason = "class-backed return view does not amortize wrapper cost";
+  }
   const promoted = reason === null;
   if (promoted) {
     declaration.signature.returnType = viewType(
@@ -793,6 +809,35 @@ function candidateReceiver(
   return binding?.candidate ? binding : null;
 }
 
+function bindingFeedsViewBoundary(
+  body: Statement,
+  name: string,
+  context: FunctionContext,
+  signatures: Map<string, FunctionSignature>,
+): boolean {
+  let feedsView = false;
+  walk(body, (node, ref): boolean | void => {
+    if (feedsView) return false;
+    if (
+      !(node instanceof IdentifierExpression) ||
+      node.text !== name ||
+      isDeclarationIdentifier(node, ref) ||
+      !(ref.parent instanceof CallExpression)
+    ) {
+      return;
+    }
+    const index = ref.parent.args.indexOf(node);
+    if (
+      index >= 0 &&
+      expectedCallArgument(ref.parent, index, signatures, context) === "view"
+    ) {
+      feedsView = true;
+      return false;
+    }
+  });
+  return feedsView;
+}
+
 function analyzeCandidates(
   context: FunctionContext,
   signatures: Map<string, FunctionSignature>,
@@ -1000,6 +1045,22 @@ function analyzeCandidates(
         binding.spanOwner = receiverBinding.spanOwner;
         changed = true;
       }
+    }
+  }
+
+  for (const binding of context.bindings.values()) {
+    if (
+      binding.candidate &&
+      binding.decision === "view" &&
+      !binding.preferred &&
+      !binding.scalarizedLength &&
+      !binding.scalarizedSpan &&
+      !bindingFeedsViewBoundary(body, binding.name, context, signatures) &&
+      binding.uses < MIN_CLASS_VIEW_USES
+    ) {
+      binding.decision = "native";
+      binding.forcedReason =
+        "class-backed local view does not amortize wrapper cost";
     }
   }
 }

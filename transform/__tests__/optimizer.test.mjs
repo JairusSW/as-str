@@ -57,11 +57,11 @@ assert.match(
 );
 assert.match(
   local.output,
-  /value -> view: closed-world parameter with profitable view operations/,
+  /value -> native: class-backed parameter view does not amortize wrapper cost/,
 );
 assert.match(
   local.output,
-  /internalSliceReturn return -> view: closed-world return with profitable view result/,
+  /internalSliceReturn return -> native: class-backed return view does not amortize wrapper cost/,
 );
 assert.match(
   local.output,
@@ -121,22 +121,21 @@ const promotedParameter = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/promotedParameter",
 );
-assert.match(promotedParameter, /call \$assembly\/str\/Str\.from/);
+assert.doesNotMatch(promotedParameter, /call \$assembly\/str\/Str\.from/);
 const internalSlice = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/internalSliceLength",
 );
 assert.doesNotMatch(internalSlice, /call \$~lib\/string\/String#slice/);
+assert.match(internalSlice, /\$assembly\/str\/Str\.sliceLength/);
+assert.doesNotMatch(internalSlice, /call \$assembly\/str\/Str#constructor/);
 
 const branchAlias = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/branchAndAlias",
 );
-assert.match(branchAlias, /\$assembly\/str\/Str\.slice/);
-assert.doesNotMatch(
-  branchAlias,
-  /call \$~lib\/string\/String#(?:slice|substring)/,
-);
+assert.doesNotMatch(branchAlias, /\$assembly\/str\/Str\.slice/);
+assert.match(branchAlias, /call \$~lib\/string\/String#(?:slice|substring)/);
 
 const recursiveEntry = functionBody(
   local.wat,
@@ -158,7 +157,7 @@ const internalReturn = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/internalSliceReturn",
 );
-assert.doesNotMatch(internalReturn, /call \$~lib\/string\/String#slice/);
+assert.match(internalReturn, /call \$~lib\/string\/String#slice/);
 
 const directTemporary = functionBody(
   local.wat,

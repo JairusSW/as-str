@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-24
+
+### Added
+
+- A Unicode-correct `toLowerCase()` fast path that returns an
+  already-lowercase ASCII native string unchanged, avoiding the duplicate
+  allocation.
+- Automatic lowering of native and view-backed `toLowerCase()` calls through
+  the allocation-aware fast path.
+
+### Changed
+
+- Automatic mode now requires three profitable uses before introducing a
+  class-backed view for a parameter, return, or local. Allocation-free packed
+  spans, scalarized lengths, explicit preferences, and existing view boundaries
+  remain exempt.
+
+### Fixed
+
+- Low-use string values no longer replace a native substring allocation with an
+  equally costly wrapper allocation, eliminating downstream rule regressions
+  while retaining profitable zero-copy rewrites.
+
 ## [0.5.0] - 2026-07-23
 
 ### Added
