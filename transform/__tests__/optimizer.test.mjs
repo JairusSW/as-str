@@ -250,6 +250,7 @@ assert.equal(instantiated.instance.exports.semanticCheck(), 103);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);
 assert.equal(instantiated.instance.exports.evaluationOrder(), 123);
 assert.equal(instantiated.instance.exports.scalarSpanSemanticCheck(), 205);
+assert.equal(instantiated.instance.exports.unknownToViewCall(), 9);
 
 const auto = compileFixture("generic-conflict");
 assert.match(auto.output, /semantic analysis: \d+ facts/);

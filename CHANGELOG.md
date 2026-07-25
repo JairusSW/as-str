@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-24
+
+### Fixed
+
+- Function-boundary promotion now converts expressions whose string
+  representation cannot be recovered from syntax alone, including fields with
+  ambiguous names across classes. Generated callers therefore remain
+  type-correct when their callee is specialized from `string` to `str`.
+
 ## [0.5.1] - 2026-07-24
 
 ### Added

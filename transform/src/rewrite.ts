@@ -41,6 +41,7 @@ import {
   u64Type,
   viewType,
   wrapAsView,
+  wrapUnknownAsView,
 } from "./ast.js";
 import { operationSemantics } from "./operations.js";
 import {
@@ -267,6 +268,9 @@ function convertExpression(
       if (binding) binding.conversions++;
     }
     return wrapAsView(expression);
+  }
+  if (expected === "view" && actual === "unknown") {
+    return wrapUnknownAsView(expression);
   }
   if (expected === "native" && actual === "view") {
     if (expression instanceof IdentifierExpression) {

@@ -112,6 +112,16 @@ export function wrapAsView(expression: Expression): Expression {
   );
 }
 
+export function wrapUnknownAsView(expression: Expression): Expression {
+  const range = expression.range;
+  return Node.createCallExpression(
+    identifier("str", range),
+    null,
+    [expression],
+    range,
+  );
+}
+
 export function materializeView(expression: Expression): Expression {
   const range = expression.range;
   return Node.createCallExpression(
