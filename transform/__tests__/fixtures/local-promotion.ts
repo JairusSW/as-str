@@ -39,6 +39,27 @@ export function nativeToViewCall(input: string): i32 {
   return viewLength(input);
 }
 
+class UnknownBoundaryInput {
+  constructor(public value: string) {}
+}
+
+// Deliberately make the field name ambiguous to syntax-only field analysis.
+class OtherUnknownBoundaryInput {
+  constructor(public value: string) {}
+}
+
+function promotedUnknownBoundary(value: string): i32 {
+  return (
+    value.slice(1).length + value.substring(0, 2).length + value.trim().length
+  );
+}
+
+export function unknownToViewCall(): i32 {
+  const request = new UnknownBoundaryInput(" abc ");
+  const unused = new OtherUnknownBoundaryInput("");
+  return promotedUnknownBoundary(request.value) + unused.value.length;
+}
+
 function internalSliceLength(value: string): i32 {
   return value.slice(1, 4).length;
 }

@@ -88,6 +88,15 @@ export function wrapAsView(expression) {
     range,
   );
 }
+export function wrapUnknownAsView(expression) {
+  const range = expression.range;
+  return Node.createCallExpression(
+    identifier("str", range),
+    null,
+    [expression],
+    range,
+  );
+}
 export function materializeView(expression) {
   const range = expression.range;
   return Node.createCallExpression(
