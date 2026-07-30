@@ -14,6 +14,7 @@ import {
   ReturnStatement,
   TernaryExpression,
   ThrowStatement,
+  StringLiteralExpression,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
@@ -37,7 +38,9 @@ import {
   expressionCanProduceView,
   expressionIsExplicitView,
 } from "./expressions.js";
-const MIN_CLASS_VIEW_USES = 3;
+const MIN_PARAMETER_VIEW_BOUNDARIES = 2;
+const MIN_LOCAL_VIEW_BOUNDARIES = 1;
+const MIN_REUSED_LOCAL_USES = 3;
 function summarize(diagnostics) {
   let promoted = 0;
   let rejected = 0;
@@ -131,7 +134,6 @@ function collectFunctionSignatures(source, semanticFacts) {
         node,
         ref.parent instanceof ClassDeclaration ? ref.parent : null,
       ),
-      viewArgumentParameters: new Set(),
       spanArgumentCounts: new Map(),
       directCallCount: 0,
       spanParameters: new Map(),
@@ -172,21 +174,6 @@ function collectFunctionSignatures(source, semanticFacts) {
   });
   return signatures;
 }
-function parameterHasProfitableUse(body, name) {
-  let profitable = false;
-  walk(body, (node, ref) => {
-    if (
-      node instanceof IdentifierExpression &&
-      node.text === name &&
-      ref.parent instanceof PropertyAccessExpression &&
-      ref.key === "expression" &&
-      operationSemantics(ref.parent.property.text).result === "view"
-    ) {
-      profitable = true;
-    }
-  });
-  return profitable;
-}
 function viewReceiverRoot(expression) {
   if (expression instanceof IdentifierExpression) return expression;
   if (expression instanceof ParenthesizedExpression) {
@@ -204,6 +191,30 @@ function viewReceiverRoot(expression) {
   }
   return null;
 }
+function countViewBoundaryUses(body, name, context, signatures) {
+  let count = 0;
+  walk(body, (node, ref) => {
+    if (node instanceof FunctionDeclaration && node !== context.declaration) {
+      return false;
+    }
+    if (
+      !(node instanceof IdentifierExpression) ||
+      node.text !== name ||
+      isDeclarationIdentifier(node, ref) ||
+      !(ref.parent instanceof CallExpression)
+    ) {
+      return;
+    }
+    const index = ref.parent.args.indexOf(node);
+    if (
+      index >= 0 &&
+      expectedCallArgument(ref.parent, index, signatures, context) === "view"
+    ) {
+      count++;
+    }
+  });
+  return count;
+}
 function analyzeParameterPromotions(context, signature, signatures) {
   const declaration = context.declaration;
   if (!declaration) return [];
@@ -216,13 +227,7 @@ function analyzeParameterPromotions(context, signature, signatures) {
     if (signature.spanParameters.has(index)) return;
     if (representationOfType(parameter.type) !== "native") return;
     const name = parameter.name.text;
-    if (
-      context.bindings.has(name) ||
-      (!parameterHasProfitableUse(body, name) &&
-        !signature.viewArgumentParameters.has(index))
-    ) {
-      return;
-    }
+    if (context.bindings.has(name)) return;
     let reason = null;
     let uses = 0;
     walk(body, (node, ref) => {
@@ -266,12 +271,14 @@ function analyzeParameterPromotions(context, signature, signatures) {
       if (viewReceiverRoot(property.expression)?.text !== name) return;
       reason ??= derivedViewUseReason(node, ref, context, signatures);
     });
-    if (
-      reason === null &&
-      uses < MIN_CLASS_VIEW_USES &&
-      !signature.viewArgumentParameters.has(index)
-    ) {
-      reason = "class-backed parameter view does not amortize wrapper cost";
+    const viewBoundaryUses = countViewBoundaryUses(
+      body,
+      name,
+      context,
+      signatures,
+    );
+    if (reason === null && viewBoundaryUses < MIN_PARAMETER_VIEW_BOUNDARIES) {
+      reason = "class-backed parameter does not eliminate a net allocation";
     }
     const promoted = reason === null;
     if (promoted) {
@@ -355,8 +362,8 @@ function analyzeReturnPromotion(context, signature, source, signatures) {
     reason ??= returnCallUseReason(node, ref, declaration, signatures);
   });
   if (uses === 0) reason = "no statically known call sites";
-  if (reason === null && uses < MIN_CLASS_VIEW_USES) {
-    reason = "class-backed return view does not amortize wrapper cost";
+  if (reason === null) {
+    reason = "class-backed return only substitutes a wrapper allocation";
   }
   const promoted = reason === null;
   if (promoted) {
@@ -382,6 +389,9 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
   const parameters = new Map();
   const duplicateNames = new Set();
   const body = declaration.body;
+  const lowercaseReceiverCounts = new Map();
+  const localUseCounts = new Map();
+  const profitableLowercaseCalls = new Set();
   for (const parameter of declaration.signature.parameters) {
     parameters.set(parameter.name.text, representationOfType(parameter.type));
   }
@@ -430,8 +440,64 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
             : elementRepresentationOfType(node.type),
         scalarizedLength: false,
         scalarizedSpan: false,
-        spanOwner: null,
+        packedSpan: null,
       });
+    });
+    walk(body, (node) => {
+      if (node instanceof FunctionDeclaration && node !== declaration) {
+        return false;
+      }
+      if (!(node instanceof CallExpression)) return;
+      const property = propertyCall(node);
+      if (
+        property?.property.text !== "toLowerCase" ||
+        !(property.expression instanceof IdentifierExpression)
+      ) {
+        return;
+      }
+      const name = property.expression.text;
+      lowercaseReceiverCounts.set(
+        name,
+        (lowercaseReceiverCounts.get(name) ?? 0) + 1,
+      );
+    });
+    walk(body, (node, ref) => {
+      if (node instanceof FunctionDeclaration && node !== declaration) {
+        return false;
+      }
+      if (
+        !(node instanceof IdentifierExpression) ||
+        isDeclarationIdentifier(node, ref)
+      ) {
+        return;
+      }
+      localUseCounts.set(node.text, (localUseCounts.get(node.text) ?? 0) + 1);
+    });
+    walk(body, (node, ref) => {
+      if (node instanceof FunctionDeclaration && node !== declaration) {
+        return false;
+      }
+      if (
+        !(node instanceof CallExpression) ||
+        !(ref.parent instanceof VariableDeclaration) ||
+        ref.parent.initializer !== node ||
+        (localUseCounts.get(ref.parent.name.text) ?? 0) < 2
+      ) {
+        return;
+      }
+      const property = propertyCall(node);
+      if (property?.property.text !== "toLowerCase") return;
+      const receiverCall =
+        property.expression instanceof CallExpression
+          ? propertyCall(property.expression)
+          : null;
+      if (
+        receiverCall &&
+        operationSemantics(receiverCall.property.text).result === "view"
+      ) {
+        return;
+      }
+      profitableLowercaseCalls.add(node.range.start);
     });
   }
   for (const name of duplicateNames) {
@@ -462,6 +528,12 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
     parameters,
     parameterSpans: new Map(),
     caseInsensitiveSpans: new Set(),
+    repeatedLowercaseReceivers: new Set(
+      [...lowercaseReceiverCounts]
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name),
+    ),
+    profitableLowercaseCalls,
     fields,
     duplicateNames,
   };
@@ -667,28 +739,8 @@ function candidateReceiver(expression, context) {
   const binding = context.bindings.get(root.text);
   return binding?.candidate ? binding : null;
 }
-function bindingFeedsViewBoundary(body, name, context, signatures) {
-  let feedsView = false;
-  walk(body, (node, ref) => {
-    if (feedsView) return false;
-    if (
-      !(node instanceof IdentifierExpression) ||
-      node.text !== name ||
-      isDeclarationIdentifier(node, ref) ||
-      !(ref.parent instanceof CallExpression)
-    ) {
-      return;
-    }
-    const index = ref.parent.args.indexOf(node);
-    if (
-      index >= 0 &&
-      expectedCallArgument(ref.parent, index, signatures, context) === "view"
-    ) {
-      feedsView = true;
-      return false;
-    }
-  });
-  return feedsView;
+function bindingViewBoundaryUses(body, name, context, signatures) {
+  return countViewBoundaryUses(body, name, context, signatures);
 }
 function analyzeCandidates(context, signatures) {
   const declaration = context.declaration;
@@ -799,12 +851,19 @@ function analyzeCandidates(context, signatures) {
       const receiver = isStrStaticCall(binding.declaration.initializer)
         ? binding.declaration.initializer.args[0]
         : initializer.expression;
-      if (!(receiver instanceof IdentifierExpression)) continue;
-      const receiverBinding = context.bindings.get(receiver.text);
-      const owner = receiverBinding?.scalarizedSpan
-        ? receiverBinding.spanOwner
-        : receiver.text;
-      if (!owner) continue;
+      const receiverBinding =
+        receiver instanceof IdentifierExpression
+          ? context.bindings.get(receiver.text)
+          : null;
+      const owner =
+        receiverBinding?.scalarizedSpan && receiverBinding.packedSpan
+          ? receiverBinding.packedSpan.owner
+          : receiver instanceof IdentifierExpression
+            ? { kind: "identifier", name: receiver.text }
+            : receiver instanceof StringLiteralExpression
+              ? { kind: "string-literal", value: receiver.value }
+              : null;
+      if (owner === null) continue;
       let scalarUsesOnly = true;
       walk(body, (node, ref) => {
         if (node instanceof FunctionDeclaration && node !== declaration)
@@ -855,7 +914,7 @@ function analyzeCandidates(context, signatures) {
       });
       if (!scalarUsesOnly) continue;
       binding.scalarizedSpan = true;
-      binding.spanOwner = owner;
+      binding.packedSpan = { owner };
       changed = true;
     }
   }
@@ -878,10 +937,10 @@ function analyzeCandidates(context, signatures) {
       const receiverBinding = context.bindings.get(receiver.text);
       if (
         receiverBinding?.scalarizedSpan &&
-        receiverBinding.spanOwner &&
-        binding.spanOwner !== receiverBinding.spanOwner
+        receiverBinding.packedSpan &&
+        binding.packedSpan !== receiverBinding.packedSpan
       ) {
-        binding.spanOwner = receiverBinding.spanOwner;
+        binding.packedSpan = receiverBinding.packedSpan;
         changed = true;
       }
     }
@@ -893,12 +952,13 @@ function analyzeCandidates(context, signatures) {
       !binding.preferred &&
       !binding.scalarizedLength &&
       !binding.scalarizedSpan &&
-      !bindingFeedsViewBoundary(body, binding.name, context, signatures) &&
-      binding.uses < MIN_CLASS_VIEW_USES
+      bindingViewBoundaryUses(body, binding.name, context, signatures) <
+        MIN_LOCAL_VIEW_BOUNDARIES &&
+      binding.uses < MIN_REUSED_LOCAL_USES
     ) {
       binding.decision = "native";
       binding.forcedReason =
-        "class-backed local view does not amortize wrapper cost";
+        "class-backed local does not eliminate a net allocation";
     }
   }
 }
@@ -996,6 +1056,8 @@ export function optimizeSource(
       parameters: new Map(),
       parameterSpans: new Map(),
       caseInsensitiveSpans: new Set(),
+      repeatedLowercaseReceivers: new Set(),
+      profitableLowercaseCalls: new Set(),
       fields,
       duplicateNames: new Set(),
     },
@@ -1128,9 +1190,6 @@ export function optimizeSources(sources, manifest = null) {
       } else {
         signature.directCallCount++;
         call.args.forEach((argument, index) => {
-          if (expressionCanProduceView(argument)) {
-            signature.viewArgumentParameters.add(index);
-          }
           if (
             argument instanceof CallExpression &&
             operationSemantics(propertyCall(argument)?.property.text ?? "")

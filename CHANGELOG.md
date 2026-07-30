@@ -6,6 +6,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Packed-span ownership is now represented as a structural link, allowing
+  stable string literals and chained scalarized spans to remain allocation-free
+  without relying on a parent variable-name field.
+- Automatic lowercase analysis now distinguishes repeated or reused results
+  from one-shot native identifiers and freshly sliced tokens.
+
+### Changed
+
+- Class-backed parameter promotion now requires enough internal view boundaries
+  to remove a net allocation. Automatic return promotion no longer substitutes
+  a `Str` wrapper for an otherwise equivalent native allocation.
+- Native `toLowerCase()` calls use the allocation-aware helper only when reuse
+  or receiver shape makes its pre-scan profitable. View receivers continue to
+  use the span-aware path.
+
+### Fixed
+
+- One-shot lowercase rewrites no longer trade a small Wasm instruction-count
+  reduction for worse wall time on short token-heavy workloads.
+
 ## [0.5.2] - 2026-07-24
 
 ### Fixed

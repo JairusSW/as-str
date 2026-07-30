@@ -196,7 +196,9 @@ export function planPackedSpanParameters(context, signature) {
         );
         context.parameters.set(parameter.name.text, "unknown");
         context.parameters.set(ownerName, "native");
-        context.parameterSpans.set(parameter.name.text, ownerName);
+        context.parameterSpans.set(parameter.name.text, {
+          owner: { kind: "identifier", name: ownerName },
+        });
         if (signature.caseInsensitiveSpanParameters.has(index)) {
           context.caseInsensitiveSpans.add(parameter.name.text);
         }
@@ -235,15 +237,20 @@ export function lowerPackedLengthInitializer(expression, context) {
     );
     return staticViewCall(
       "spanLength",
-      identifier(receiver.spanOwner, expression.range),
+      spanOwnerExpression(receiver.packedSpan.owner, expression.range),
       [span],
     );
   }
   return staticViewCall(`${parts.method}Length`, parts.receiver, parts.args);
 }
-export function packedSpanOwner(name, context) {
+export function spanOwnerExpression(owner, range) {
+  return owner.kind === "identifier"
+    ? identifier(owner.name, range)
+    : Node.createStringLiteralExpression(owner.value, range);
+}
+export function packedSpanLink(name, context) {
   return (
-    context.bindings.get(name)?.spanOwner ??
+    context.bindings.get(name)?.packedSpan ??
     context.parameterSpans.get(name) ??
     null
   );

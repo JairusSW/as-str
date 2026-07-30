@@ -31,12 +31,54 @@ export function explicitConversions(input: string): string {
   return native;
 }
 
+export function nativeLowercase(input: string): string {
+  return input.toLowerCase();
+}
+
+export function repeatedNativeLowercase(input: string): i32 {
+  return input.toLowerCase().length + input.toLowerCase().length;
+}
+
+export function reusedLowercaseResult(input: string): bool {
+  const lower = input.toLowerCase();
+  return lower.includes("api") || lower.startsWith("service");
+}
+
+function nativeSource(input: string): string {
+  return input;
+}
+
+export function returnedNativeLowercase(input: string): string {
+  return nativeSource(input).toLowerCase();
+}
+
+export function slicedNativeLowercase(input: string): string {
+  return input.slice(1).toLowerCase();
+}
+
+export function viewLowercase(input: str): string {
+  return input.toLowerCase();
+}
+
 function viewLength(value: str): i32 {
   return value.length;
 }
 
+function reusedParameter(value: string): i32 {
+  return viewLength(value) + viewLength(value);
+}
+
 export function nativeToViewCall(input: string): i32 {
   return viewLength(input);
+}
+
+export function reusedViewBoundary(input: string): i32 {
+  const part = input.slice(1, 4);
+  return viewLength(part) + viewLength(part);
+}
+
+export function reusedParameterCall(input: string): i32 {
+  return reusedParameter(input);
 }
 
 class UnknownBoundaryInput {
@@ -73,6 +115,11 @@ export function semanticCheck(): i32 {
   const view: str = "hello";
   const native: string = view;
   return part.charCodeAt(0) + native.length;
+}
+
+export function literalBackedSpan(index: i32): i32 {
+  const part = "abcdef".slice(1, 5);
+  return part.charCodeAt(index);
 }
 
 export function annotations(input: string): i32 {
