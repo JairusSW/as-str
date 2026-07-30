@@ -86,8 +86,7 @@ function nativeLowercaseBenefitsFromViewHelper(
   if (!(receiver instanceof CallExpression)) return false;
   const property = propertyCall(receiver);
   return (
-    !property ||
-    operationSemantics(property.property.text).result !== "view"
+    !property || operationSemantics(property.property.text).result !== "view"
   );
 }
 

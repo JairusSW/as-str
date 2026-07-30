@@ -327,10 +327,7 @@ const literalBackedSpan = functionBody(
   "transform/__tests__/fixtures/local-promotion/literalBackedSpan",
 );
 assert.doesNotMatch(literalBackedSpan, /call \$~lib\/string\/String#slice/);
-assert.doesNotMatch(
-  literalBackedSpan,
-  /call \$assembly\/str\/Str#constructor/,
-);
+assert.doesNotMatch(literalBackedSpan, /call \$assembly\/str\/Str#constructor/);
 assert.equal(instantiated.instance.exports.semanticCheck(), 103);
 assert.equal(instantiated.instance.exports.literalBackedSpan(1), 99);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);

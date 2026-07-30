@@ -357,10 +357,7 @@ function analyzeParameterPromotions(
       context,
       signatures,
     );
-    if (
-      reason === null &&
-      viewBoundaryUses < MIN_PARAMETER_VIEW_BOUNDARIES
-    ) {
+    if (reason === null && viewBoundaryUses < MIN_PARAMETER_VIEW_BOUNDARIES) {
       reason = "class-backed parameter does not eliminate a net allocation";
     }
     const promoted = reason === null;
@@ -580,10 +577,7 @@ function collectLocalBindings(
       ) {
         return;
       }
-      localUseCounts.set(
-        node.text,
-        (localUseCounts.get(node.text) ?? 0) + 1,
-      );
+      localUseCounts.set(node.text, (localUseCounts.get(node.text) ?? 0) + 1);
     });
     walk(body, (node, ref): boolean | void => {
       if (node instanceof FunctionDeclaration && node !== declaration) {
@@ -1126,12 +1120,8 @@ function analyzeCandidates(
       !binding.preferred &&
       !binding.scalarizedLength &&
       !binding.scalarizedSpan &&
-      bindingViewBoundaryUses(
-        body,
-        binding.name,
-        context,
-        signatures,
-      ) < MIN_LOCAL_VIEW_BOUNDARIES &&
+      bindingViewBoundaryUses(body, binding.name, context, signatures) <
+        MIN_LOCAL_VIEW_BOUNDARIES &&
       binding.uses < MIN_REUSED_LOCAL_USES
     ) {
       binding.decision = "native";
