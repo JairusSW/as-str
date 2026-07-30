@@ -5,6 +5,14 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import { Representation } from "./ast.js";
 
+export type SpanOwner =
+  | { kind: "identifier"; name: string }
+  | { kind: "string-literal"; value: string };
+
+export interface PackedSpanLink {
+  owner: SpanOwner;
+}
+
 export interface FunctionSignature {
   declaration: FunctionDeclaration;
   declarations: Set<FunctionDeclaration>;
@@ -12,7 +20,6 @@ export interface FunctionSignature {
   result: Representation;
   callable: boolean;
   promotable: boolean;
-  viewArgumentParameters: Set<number>;
   spanArgumentCounts: Map<number, number>;
   directCallCount: number;
   spanParameters: Map<number, string>;
@@ -34,15 +41,17 @@ export interface Binding {
   element: Representation;
   scalarizedLength: boolean;
   scalarizedSpan: boolean;
-  spanOwner: string | null;
+  packedSpan: PackedSpanLink | null;
 }
 
 export interface FunctionContext {
   declaration: FunctionDeclaration | null;
   bindings: Map<string, Binding>;
   parameters: Map<string, Representation>;
-  parameterSpans: Map<string, string>;
+  parameterSpans: Map<string, PackedSpanLink>;
   caseInsensitiveSpans: Set<string>;
+  repeatedLowercaseReceivers: Set<string>;
+  profitableLowercaseCalls: Set<number>;
   fields: Map<string, Representation>;
   duplicateNames: Set<string>;
 }

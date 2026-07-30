@@ -45,7 +45,10 @@ assert.equal(
 const local = compileFixture("local-promotion", {
   extra: ["--exportRuntime"],
 });
-assert.match(local.output, /part -> view: view-producing local/);
+assert.match(
+  local.output,
+  /part -> view: scalarized (?:length-only view|non-escaping view)/,
+);
 assert.match(
   local.output,
   /part -> native: raw-memory or representation intrinsic/,
@@ -57,11 +60,11 @@ assert.match(
 );
 assert.match(
   local.output,
-  /value -> native: class-backed parameter view does not amortize wrapper cost/,
+  /value -> native: class-backed parameter does not eliminate a net allocation/,
 );
 assert.match(
   local.output,
-  /internalSliceReturn return -> native: class-backed return view does not amortize wrapper cost/,
+  /internalSliceReturn return -> native: class-backed return only substitutes a wrapper allocation/,
 );
 assert.match(
   local.output,
@@ -111,11 +114,84 @@ const conversions = functionBody(
 assert.match(conversions, /call \$assembly\/str\/Str\.from/);
 assert.match(conversions, /call \$assembly\/str\/Str#toString/);
 
+const nativeLowercase = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/nativeLowercase",
+);
+assert.match(nativeLowercase, /call \$~lib\/string\/String#toLowerCase/);
+assert.doesNotMatch(nativeLowercase, /Str\.toLowerCaseIfNeeded/);
+
+const repeatedNativeLowercase = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/repeatedNativeLowercase",
+);
+assert.equal(
+  (
+    repeatedNativeLowercase.match(
+      /call \$assembly\/str\/Str\.toLowerCaseIfNeeded/g,
+    ) ?? []
+  ).length,
+  2,
+);
+
+const reusedLowercaseResult = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/reusedLowercaseResult",
+);
+assert.equal(
+  (
+    reusedLowercaseResult.match(
+      /call \$assembly\/str\/Str\.toLowerCaseIfNeeded/g,
+    ) ?? []
+  ).length,
+  1,
+);
+
+const returnedNativeLowercase = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/returnedNativeLowercase",
+);
+assert.match(returnedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
+
+const slicedNativeLowercase = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/slicedNativeLowercase",
+);
+assert.match(slicedNativeLowercase, /call \$~lib\/string\/String#toLowerCase/);
+assert.doesNotMatch(slicedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
+
+const viewLowercase = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/viewLowercase",
+);
+assert.match(viewLowercase, /Str\.toLowerCaseIfNeeded/);
+
 const callConversion = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/nativeToViewCall",
 );
 assert.match(callConversion, /call \$assembly\/str\/Str\.from/);
+
+const reusedViewBoundary = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/reusedViewBoundary",
+);
+assert.equal(
+  (reusedViewBoundary.match(/call \$assembly\/str\/Str#constructor/g) ?? [])
+    .length,
+  1,
+  "one view allocation should serve both view boundaries",
+);
+
+const reusedParameter = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/reusedParameter",
+);
+assert.doesNotMatch(
+  reusedParameter,
+  /call \$assembly\/str\/Str\.from/,
+  "the promoted parameter should not reconvert at either view boundary",
+);
 
 const promotedParameter = functionBody(
   local.wat,
@@ -141,12 +217,12 @@ const recursiveEntry = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/recursiveParameter",
 );
-assert.match(recursiveEntry, /call \$assembly\/str\/Str\.from/);
+assert.doesNotMatch(recursiveEntry, /call \$assembly\/str\/Str\.from/);
 const recursiveBody = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/recursiveSlice",
 );
-assert.doesNotMatch(recursiveBody, /call \$~lib\/string\/String#slice/);
+assert.match(recursiveBody, /call \$~lib\/string\/String#slice/);
 
 const promotedReturn = functionBody(
   local.wat,
@@ -246,7 +322,17 @@ assert.doesNotMatch(
 );
 
 const instantiated = await instantiate(local.wasm);
+const literalBackedSpan = functionBody(
+  local.wat,
+  "transform/__tests__/fixtures/local-promotion/literalBackedSpan",
+);
+assert.doesNotMatch(literalBackedSpan, /call \$~lib\/string\/String#slice/);
+assert.doesNotMatch(
+  literalBackedSpan,
+  /call \$assembly\/str\/Str#constructor/,
+);
 assert.equal(instantiated.instance.exports.semanticCheck(), 103);
+assert.equal(instantiated.instance.exports.literalBackedSpan(1), 99);
 assert.equal(instantiated.instance.exports.globalAndFieldInitializers(), 22);
 assert.equal(instantiated.instance.exports.evaluationOrder(), 123);
 assert.equal(instantiated.instance.exports.scalarSpanSemanticCheck(), 205);

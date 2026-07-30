@@ -28,7 +28,6 @@ import {
   WhileStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
-  identifier,
   materializeView,
   i32Type,
   representationOfType,
@@ -42,7 +41,8 @@ import { operationSemantics } from "./operations.js";
 import {
   lowerPackedLengthInitializer,
   lowerPackedSpanInitializer,
-  packedSpanOwner,
+  packedSpanLink,
+  spanOwnerExpression,
 } from "./packed-span.js";
 import { expressionCanProduceView } from "./expressions.js";
 import { calleeName, isStrStaticCall, propertyCall } from "./visitor.js";
@@ -61,6 +61,17 @@ function viewCallParts(expression) {
     receiver: property.expression,
     args: expression.args,
   };
+}
+function nativeLowercaseBenefitsFromViewHelper(call, receiver, context) {
+  if (context.profitableLowercaseCalls.has(call.range.start)) return true;
+  if (receiver instanceof IdentifierExpression) {
+    return context.repeatedLowercaseReceivers.has(receiver.text);
+  }
+  if (!(receiver instanceof CallExpression)) return false;
+  const property = propertyCall(receiver);
+  return (
+    !property || operationSemantics(property.property.text).result !== "view"
+  );
 }
 function bindingRepresentation(name, context) {
   const binding = context.bindings.get(name);
@@ -264,11 +275,11 @@ function rewriteExpression(expression, expected, context, signatures) {
       expression.property.text === "isEmpty") &&
     expression.expression instanceof IdentifierExpression
   ) {
-    const owner = packedSpanOwner(expression.expression.text, context);
-    if (owner) {
+    const link = packedSpanLink(expression.expression.text, context);
+    if (link) {
       return staticViewCall(
         expression.property.text === "length" ? "spanLength" : "isEmptySpan",
-        identifier(owner, expression.range),
+        spanOwnerExpression(link.owner, expression.range),
         [expression.expression],
       );
     }
@@ -366,21 +377,21 @@ function rewriteExpression(expression, expected, context, signatures) {
           );
         }
       }
-      const leftOwner =
+      const leftLink =
         expression.left instanceof IdentifierExpression
-          ? packedSpanOwner(expression.left.text, context)
+          ? packedSpanLink(expression.left.text, context)
           : null;
-      const rightOwner =
+      const rightLink =
         expression.right instanceof IdentifierExpression
-          ? packedSpanOwner(expression.right.text, context)
+          ? packedSpanLink(expression.right.text, context)
           : null;
-      const spanExpression = leftOwner
+      const spanExpression = leftLink
         ? expression.left
-        : rightOwner
+        : rightLink
           ? expression.right
           : null;
-      const spanOwner = leftOwner ?? rightOwner;
-      if (spanExpression instanceof IdentifierExpression && spanOwner) {
+      const spanLink = leftLink ?? rightLink;
+      if (spanExpression instanceof IdentifierExpression && spanLink) {
         const other =
           spanExpression === expression.left
             ? expression.right
@@ -397,7 +408,7 @@ function rewriteExpression(expression, expected, context, signatures) {
             : ignoreCase
               ? "equalsIgnoreCaseSpan"
               : "equalsSpan",
-          identifier(spanOwner, expression.range),
+          spanOwnerExpression(spanLink.owner, expression.range),
           [
             spanExpression,
             rewriteExpression(other, "unknown", context, signatures),
@@ -506,7 +517,7 @@ function rewriteExpression(expression, expected, context, signatures) {
           ? context.parameterSpans.get(property.expression.text)
           : null;
       if (
-        ((spanBinding?.scalarizedSpan && spanBinding.spanOwner) ||
+        ((spanBinding?.scalarizedSpan && spanBinding.packedSpan) ||
           parameterSpanOwner) &&
         operationSemantics(method).spanScalar
       ) {
@@ -516,8 +527,8 @@ function rewriteExpression(expression, expected, context, signatures) {
         return convertExpression(
           staticViewCall(
             `${method}Span`,
-            identifier(
-              spanBinding?.spanOwner ?? parameterSpanOwner,
+            spanOwnerExpression(
+              spanBinding?.packedSpan?.owner ?? parameterSpanOwner.owner,
               expression.range,
             ),
             [property.expression, ...args],
@@ -567,8 +578,13 @@ function rewriteExpression(expression, expected, context, signatures) {
       );
       if (
         method === "toLowerCase" &&
-        (originalReceiverRepresentation === "native" ||
-          originalReceiverRepresentation === "view")
+        (originalReceiverRepresentation === "view" ||
+          (originalReceiverRepresentation === "native" &&
+            nativeLowercaseBenefitsFromViewHelper(
+              expression,
+              property.expression,
+              context,
+            )))
       ) {
         return convertExpression(
           staticViewCall(

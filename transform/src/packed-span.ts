@@ -6,6 +6,7 @@ import {
   Node,
   ParameterKind,
   PropertyAccessExpression,
+  Range,
   Statement,
   StringLiteralExpression,
   Token,
@@ -16,7 +17,12 @@ import {
   staticViewCall,
   u64Type,
 } from "./ast.js";
-import { FunctionContext, FunctionSignature } from "./model.js";
+import {
+  FunctionContext,
+  FunctionSignature,
+  PackedSpanLink,
+  SpanOwner,
+} from "./model.js";
 import { operationSemantics } from "./operations.js";
 import {
   isDeclarationIdentifier,
@@ -228,7 +234,9 @@ export function planPackedSpanParameters(
         );
         context.parameters.set(parameter.name.text, "unknown");
         context.parameters.set(ownerName, "native");
-        context.parameterSpans.set(parameter.name.text, ownerName);
+        context.parameterSpans.set(parameter.name.text, {
+          owner: { kind: "identifier", name: ownerName },
+        });
         if (signature.caseInsensitiveSpanParameters.has(index)) {
           context.caseInsensitiveSpans.add(parameter.name.text);
         }
@@ -275,19 +283,28 @@ export function lowerPackedLengthInitializer(
     );
     return staticViewCall(
       "spanLength",
-      identifier(receiver.spanOwner!, expression.range),
+      spanOwnerExpression(receiver.packedSpan!.owner, expression.range),
       [span],
     );
   }
   return staticViewCall(`${parts.method}Length`, parts.receiver, parts.args);
 }
 
-export function packedSpanOwner(
+export function spanOwnerExpression(
+  owner: SpanOwner,
+  range: Range,
+): Expression {
+  return owner.kind === "identifier"
+    ? identifier(owner.name, range)
+    : Node.createStringLiteralExpression(owner.value, range);
+}
+
+export function packedSpanLink(
   name: string,
   context: FunctionContext,
-): string | null {
+): PackedSpanLink | null {
   return (
-    context.bindings.get(name)?.spanOwner ??
+    context.bindings.get(name)?.packedSpan ??
     context.parameterSpans.get(name) ??
     null
   );

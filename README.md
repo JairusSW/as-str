@@ -121,43 +121,45 @@ or in `asconfig.json`:
 Your source continues to use native `string` types:
 
 ```ts
-function compactLabel(value: string): string {
+function hasCompactLabel(value: string): bool {
   const trimmed = value.trim();
-  const end = value.length < 12 ? value.length : 12;
-  return trimmed.slice(0, end);
+  return trimmed.startsWith("api-") && trimmed.length <= 12;
 }
 
-export function formatLabel(value: string): string {
-  return compactLabel(value);
+export function formatLabel(value: string): bool {
+  return hasCompactLabel(value);
 }
 ```
 
 After optimization, the relevant source shape is:
 
 ```ts
-import { Str, str } from "as-str";
+import { str } from "as-str";
 
-function compactLabel(value: str): string {
-  const trimmed = value.trim();
-  const end = value.length < 12 ? value.length : 12;
-  return Str.slice(trimmed, 0, end).toString();
+function hasCompactLabel(value: string): bool {
+  const trimmed: u64 = str.trimSpan(value);
+  return (
+    str.startsWithSpan(value, trimmed, "api-") &&
+    str.spanLength(value, trimmed) <= 12
+  );
 }
 
-export function formatLabel(value: string): string {
-  return compactLabel(str.from(value));
+export function formatLabel(value: string): bool {
+  return hasCompactLabel(value);
 }
 ```
 
 The exported function keeps its native `string` signature while the internal
-helper uses views for its repeated string operations. The final value becomes a
-native string only where the helper's signature requires one.
+helper tracks the trimmed range as a packed span. The span stays linked to its
+native owner for GC safety, and its scalar operations allocate neither a native
+substring nor a `Str` wrapper.
 
 The optimizer leaves values native around raw loads, pointer casts, explicit
 assertions, native-string call parameters, unknown calls, containers, fields,
 nullable boundaries, and other operations it cannot prove safe.
-It also avoids the native allocation for `toLowerCase()` when the input is
-already lowercase ASCII, while retaining the normal Unicode-aware result for
-uppercase or non-ASCII input.
+It also avoids repeated native allocations for profitable `toLowerCase()`
+receivers that are already lowercase ASCII, while retaining the normal
+Unicode-aware result for uppercase or non-ASCII input.
 
 Local overrides use comments because AssemblyScript does not allow decorators
 on local variables:
