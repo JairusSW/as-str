@@ -228,6 +228,23 @@ export function copyBytes(dst: usize, src: usize, n: usize): void {
   if (i < n) store<u8>(dst + i, load<u8>(src + i));
 }
 
+/** Validate a UTF-16 length before narrowing its byte size to memory32. */
+// @ts-ignore: decorator
+@inline export function checkedStringBytes(units: u64): usize {
+  // @ts-expect-error: String.MAX_LENGTH is supplied by asc.
+  if (units > <u64>String.MAX_LENGTH)
+    throw new RangeError("String length exceeds maximum");
+  return <usize>(units << 1);
+}
+
+/** Validate a buffer size before narrowing it to memory32. */
+// @ts-ignore: decorator
+@inline export function checkedBufferBytes(bytes: u64): usize {
+  if (bytes > <u64>i32.MAX_VALUE)
+    throw new RangeError("Buffer length exceeds maximum");
+  return <usize>bytes;
+}
+
 /** Allocate an uninitialized `string` of `bytes` bytes (2 per code unit). */
 // @ts-ignore: decorator
 @inline export function allocString(bytes: usize): string {

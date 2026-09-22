@@ -1,5 +1,6 @@
 import {
   copyBytes,
+  checkedBufferBytes,
   equals as rangeEquals,
   equalsBytes,
   isWhiteSpace,
@@ -17,7 +18,6 @@ import {
   lastIndexOfBytes,
   materializeBuffer,
   prevCodePointStart,
-  utf8SeqLen,
   widthOf,
 } from "./util8";
 import { UTF8 as U8, UTF16 as U16 } from "utf-as";
@@ -100,7 +100,8 @@ import { Str } from "./str";
    * @returns A view covering all of `buf` (no copy).
    */
   static fromBufferChecked(buf: ArrayBuffer): Str8 {
-    assert(U8.validate(buf), "Str8.fromBufferChecked: invalid UTF-8");
+    if (!U8.validate(buf))
+      throw new Error("Str8.fromBufferChecked: invalid UTF-8");
     return Str8.fromBuffer(buf);
   }
 
@@ -113,6 +114,18 @@ import { Str } from "./str";
    * @returns A view of `buf` covering `[startByte, endByte)` (no copy).
    */
   static fromRange(buf: ArrayBuffer, startByte: usize, endByte: usize): Str8 {
+    if (startByte > endByte || endByte > <usize>buf.byteLength) {
+      throw new RangeError("Str8.fromRange: invalid range");
+    }
+    return Str8.fromRangeUnchecked(buf, startByte, endByte);
+  }
+
+  /** Construct a range without bounds checks. Caller must validate both offsets. */
+  static fromRangeUnchecked(
+    buf: ArrayBuffer,
+    startByte: usize,
+    endByte: usize,
+  ): Str8 {
     const base = changetype<usize>(buf);
     return new Str8(buf, base + startByte, base + endByte);
   }
@@ -236,8 +249,7 @@ import { Str } from "./str";
   ): Str8 {
     if (<u32>index >= <u32>(end - start)) return new Str8(buffer, start, start);
     const at = start + <usize>index;
-    let e = at + <usize>utf8SeqLen(load<u8>(at));
-    if (e > end) e = end;
+    const e = at + <usize>widthOf(decodeCodePointAt(at, end));
     return new Str8(buffer, at, e);
   }
 
@@ -255,8 +267,7 @@ import { Str } from "./str";
     if (index < 0) index += len;
     if (<u32>index >= <u32>len) return new Str8(buffer, start, start);
     const at = start + <usize>index;
-    let e = at + <usize>utf8SeqLen(load<u8>(at));
-    if (e > end) e = end;
+    const e = at + <usize>widthOf(decodeCodePointAt(at, end));
     return new Str8(buffer, at, e);
   }
 
@@ -530,19 +541,20 @@ import { Str } from "./str";
 
   /** View after the first `search`, or empty if absent. */
   after<U>(search: U): Str8 {
-    const i = this.indexOf(search);
-    if (i < 0) return new Str8(this.buffer, this.end, this.end);
     const n = asView(search);
+    const i = indexOfBytes(this.start, this.end, n.start, n.end, 0);
+    if (i < 0) return new Str8(this.buffer, this.end, this.end);
     return this.slice(i + <i32>(n.end - n.start));
   }
 
   /** View between the first `open` and the next `close`, or empty if absent. */
   between<U, V>(open: U, close: V): Str8 {
-    const lo = this.indexOf(open);
-    if (lo < 0) return new Str8(this.buffer, this.start, this.start);
     const o = asView(open);
+    const lo = indexOfBytes(this.start, this.end, o.start, o.end, 0);
+    if (lo < 0) return new Str8(this.buffer, this.start, this.start);
     const bodyStart = lo + <i32>(o.end - o.start);
-    const hi = this.indexOf(close, bodyStart);
+    const c = asView(close);
+    const hi = indexOfBytes(this.start, this.end, c.start, c.end, bodyStart);
     return hi < 0
       ? new Str8(this.buffer, this.end, this.end)
       : this.slice(bodyStart, hi);
@@ -558,9 +570,15 @@ import { Str } from "./str";
 
   /** View after the last `search`, or empty if absent. */
   afterLast<U>(search: U): Str8 {
-    const i = this.lastIndexOf(search);
-    if (i < 0) return new Str8(this.buffer, this.end, this.end);
     const n = asView(search);
+    const i = lastIndexOfBytes(
+      this.start,
+      this.end,
+      n.start,
+      n.end,
+      i32.MAX_VALUE,
+    );
+    if (i < 0) return new Str8(this.buffer, this.end, this.end);
     return this.slice(i + <i32>(n.end - n.start));
   }
 
@@ -982,7 +1000,7 @@ import { Str } from "./str";
     const b = asView(other);
     const aBytes = a.end - a.start;
     const bBytes = b.end - b.start;
-    const out = allocBuffer(aBytes + bBytes);
+    const out = allocBuffer(checkedBufferBytes(<u64>aBytes + <u64>bBytes));
     const op = changetype<usize>(out);
     copyBytes(op, a.start, aBytes);
     copyBytes(op + aBytes, b.start, bBytes);
@@ -993,8 +1011,9 @@ import { Str } from "./str";
   static repeat<T>(s: T, count: i32): Str8 {
     const v = asView(s);
     const bytes = v.end - v.start;
-    if (count <= 0 || bytes == 0) return Str8.fromBuffer(allocBuffer(0));
-    const out = allocBuffer(bytes * <usize>count);
+    if (count < 0) throw new RangeError("repeat count must be non-negative");
+    if (count == 0 || bytes == 0) return Str8.fromBuffer(allocBuffer(0));
+    const out = allocBuffer(checkedBufferBytes(<u64>bytes * <u64>count));
     let p = changetype<usize>(out);
     for (let i = 0; i < count; i++) {
       copyBytes(p, v.start, bytes);
@@ -1014,7 +1033,7 @@ import { Str } from "./str";
     const padBytes = <usize>padBuf.byteLength;
     if (padBytes == 0)
       return Str8.fromBuffer(materializeBuffer(v.start, v.end));
-    const out = allocBuffer(<usize>length);
+    const out = allocBuffer(checkedBufferBytes(<u64>length));
     const op = changetype<usize>(out);
     const fillBytes = <usize>(length - viewBytes);
     fillRepeatBytes(op, fillBytes, changetype<usize>(padBuf), padBytes);
@@ -1034,7 +1053,7 @@ import { Str } from "./str";
     const padBytes = <usize>padBuf.byteLength;
     if (padBytes == 0)
       return Str8.fromBuffer(materializeBuffer(v.start, v.end));
-    const out = allocBuffer(<usize>length);
+    const out = allocBuffer(checkedBufferBytes(<u64>length));
     const op = changetype<usize>(out);
     copyBytes(op, v.start, viewBytes);
     fillRepeatBytes(
@@ -1067,7 +1086,9 @@ import { Str } from "./str";
     const rBytes = <usize>replBuf.byteLength;
     const viewBytes = v.end - v.start;
     const idxU = <usize>idx;
-    const out = allocBuffer(viewBytes - sBytes + rBytes);
+    const out = allocBuffer(
+      checkedBufferBytes(<u64>(viewBytes - sBytes) + <u64>rBytes),
+    );
     let op = changetype<usize>(out);
     copyBytes(op, v.start, idxU); // before the match
     op += idxU;
@@ -1110,8 +1131,9 @@ import { Str } from "./str";
     const replBuf = U8.encode(replacement);
     const rBytes = <usize>replBuf.byteLength;
     const viewBytes = v.end - v.start;
+    const retained = <u64>viewBytes - <u64>count * <u64>sBytes;
     const out = allocBuffer(
-      viewBytes + <usize>count * rBytes - <usize>count * sBytes,
+      checkedBufferBytes(retained + <u64>count * <u64>rBytes),
     );
     let op = changetype<usize>(out);
     let prev: usize = 0; // byte offset just past the previous match
@@ -1186,8 +1208,7 @@ import { Str } from "./str";
     if (separator.length == 0) {
       let p = start;
       while (p < end && out.length < limit) {
-        let e = p + <usize>utf8SeqLen(load<u8>(p));
-        if (e > end) e = end;
+        const e = p + <usize>widthOf(decodeCodePointAt(p, end));
         out.push(new Str8(buffer, p, e));
         p = e;
       }
@@ -1236,7 +1257,8 @@ import { Str } from "./str";
   if (idof<T>() == idof<ArrayBuffer>()) {
     return Str8.fromBuffer(changetype<ArrayBuffer>(s));
   }
-  return changetype<Str8>(s);
+  if (isReference<T>() && idof<T>() == idof<Str8>()) return changetype<Str8>(s);
+  throw new TypeError("Expected string, ArrayBuffer, or Str8");
 }
 
 /** Fill `count` bytes at `dst` by repeating `srcBytes` bytes from `src`. */

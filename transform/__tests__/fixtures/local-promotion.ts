@@ -250,7 +250,7 @@ export function scalarSpanConsumers(input: string): i32 {
     (part.includes("cd") ? 1 : 0) +
     (part.startsWith("b") ? 1 : 0) +
     (part.endsWith("e") ? 1 : 0) +
-    (part.isEmpty ? 1 : 0) +
+    (part.length == 0 ? 1 : 0) +
     part.length
   );
 }

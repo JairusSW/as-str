@@ -1,5 +1,6 @@
 import {
   allocString,
+  checkedStringBytes,
   asciiCaseFold,
   compare as rangeCompare,
   copyBytes,
@@ -39,6 +40,14 @@ import { Str8 } from "./str8";
 
   /** Build a view over code-unit range `[start, end)`. */
   static fromRange(s: string, start: i32, end: i32): Str {
+    if (start < 0 || end < start || end > s.length) {
+      throw new RangeError("Str.fromRange: invalid range");
+    }
+    return Str.fromRangeUnchecked(s, start, end);
+  }
+
+  /** Construct a range without bounds checks. Caller must validate both offsets. */
+  static fromRangeUnchecked(s: string, start: i32, end: i32): Str {
     const base = changetype<usize>(s);
     return new Str(s, base + ((<usize>start) << 1), base + ((<usize>end) << 1));
   }
@@ -168,7 +177,7 @@ import { Str8 } from "./str8";
    * @param start - view start byte pointer.
    * @param end   - view end byte pointer.
    * @param index - code-unit index (negative counts from the end).
-   * @returns A single-code-unit view, or an empty view if out of range.
+   * @returns A single-code-unit view; throws if out of range.
    * @internal
    */
   // @ts-ignore: decorator
@@ -181,7 +190,7 @@ import { Str8 } from "./str8";
     const len = unitLength(start, end);
     if (index < 0) index += len;
     if (<u32>index >= <u32>len) {
-      return new Str(data, start, start);
+      throw new RangeError("String index out of range");
     }
     const at = start + ((<usize>index) << 1);
     return new Str(data, at, at + 2);
@@ -506,8 +515,8 @@ import { Str8 } from "./str8";
    * @param search - substring to look for; a `string` or a `Str`.
    * @returns `true` if `search` occurs in the view.
    */
-  includes<U>(search: U): bool {
-    return this.indexOf(search) != -1;
+  includes<U>(search: U, start: i32 = 0): bool {
+    return this.indexOf(search, start) != -1;
   }
 
   /** View before the first `search`, or empty if absent. */
@@ -658,7 +667,7 @@ import { Str8 } from "./str8";
   /**
    * Repeat the view's contents `count` times.
    *
-   * @param count - number of copies; `0` (or less) yields the empty string.
+   * @param count - number of copies; negative counts throw.
    * @returns A freshly allocated real `string`.
    */
   repeat(count: i32 = 0): string {
@@ -813,7 +822,7 @@ import { Str8 } from "./str8";
 
   /** Transcode this UTF-16 view into a UTF-8 {@link str8} (allocates). */
   toStr8(): Str8 {
-    return Str8.from(this.toString());
+    return Str8.fromBuffer(Str.UTF8.encode(this));
   }
 
   /**
@@ -1266,7 +1275,9 @@ import { Str8 } from "./str8";
   @inline static atLength<T>(s: T, index: i32): i32 {
     const len = unitLength(bStart(s), bEnd(s));
     if (index < 0) index += len;
-    return <u32>index < <u32>len ? 1 : 0;
+    if (<u32>index >= <u32>len)
+      throw new RangeError("String index out of range");
+    return 1;
   }
 
   // @ts-ignore: decorator
@@ -1322,7 +1333,7 @@ import { Str8 } from "./str8";
     if (lo < 0) return 0;
     const start = lo + Str.length(open);
     const hi = Str.indexOf(s, close, start);
-    return hi < 0 ? 0 : hi - start;
+    return hi < start ? 0 : hi - start;
   }
 
   // @ts-ignore: decorator
@@ -1480,8 +1491,8 @@ import { Str8 } from "./str8";
    * @param search - substring to look for; a `string` or a `Str`.
    * @returns `true` if `search` occurs in `s`.
    */
-  static includes<T, U>(s: T, search: U): bool {
-    return Str.indexOf(s, search) != -1;
+  static includes<T, U>(s: T, search: U, start: i32 = 0): bool {
+    return Str.indexOf(s, search, start) != -1;
   }
 
   /** Free-function form of {@link Str#before}. */
@@ -1657,6 +1668,10 @@ import { Str8 } from "./str8";
    * @returns A freshly allocated, owned `string`.
    */
   static toString<T>(s: T): string {
+    if (isString<T>()) return changetype<string>(s);
+    if (isReference<T>() && idof<T>() == idof<Str>()) {
+      return changetype<Str>(s).toString();
+    }
     return materialize(bStart(s), bEnd(s));
   }
 
@@ -1725,14 +1740,15 @@ import { Str8 } from "./str8";
    * `Str`.
    *
    * @param s     - source; a `string` or a `Str`.
-   * @param count - number of copies; `0` (or less) yields the empty string.
+   * @param count - number of copies; negative counts throw.
    * @returns A freshly allocated real `string`.
    */
   static repeat<T>(s: T, count: i32): string {
     const start = bStart(s);
     const bytes = bEnd(s) - start;
-    if (count <= 0 || bytes == 0) return "";
-    const out = allocString(bytes * <usize>count);
+    if (count < 0) throw new RangeError("repeat count must be non-negative");
+    if (count == 0 || bytes == 0) return "";
+    const out = allocString(checkedStringBytes(<u64>(bytes >> 1) * <u64>count));
     let p = changetype<usize>(out);
     for (let i = 0; i < count; i++) {
       copyBytes(p, start, bytes);
@@ -1756,7 +1772,7 @@ import { Str8 } from "./str8";
     const end = bEnd(s);
     const len = unitLength(start, end);
     if (length <= len || pad.length == 0) return materialize(start, end);
-    const out = allocString((<usize>length) << 1);
+    const out = allocString(checkedStringBytes(<u64>length));
     const op = changetype<usize>(out);
     const fill = fillRepeat(op, length - len, pad);
     copyBytes(op + ((<usize>fill) << 1), start, end - start);
@@ -1779,7 +1795,7 @@ import { Str8 } from "./str8";
     const viewBytes = end - start;
     const len = unitLength(start, end);
     if (length <= len || pad.length == 0) return materialize(start, end);
-    const out = allocString((<usize>length) << 1);
+    const out = allocString(checkedStringBytes(<u64>length));
     const op = changetype<usize>(out);
     copyBytes(op, start, viewBytes);
     fillRepeat(op + viewBytes, length - len, pad);
@@ -1799,7 +1815,9 @@ import { Str8 } from "./str8";
     const aBytes = bEnd(s) - aStart;
     const bStart2 = bStart(other);
     const bBytes = bEnd(other) - bStart2;
-    const out = allocString(aBytes + bBytes);
+    const out = allocString(
+      checkedStringBytes(<u64>(aBytes >> 1) + <u64>(bBytes >> 1)),
+    );
     const op = changetype<usize>(out);
     copyBytes(op, aStart, aBytes);
     copyBytes(op + aBytes, bStart2, bBytes);
@@ -1829,7 +1847,11 @@ import { Str8 } from "./str8";
     const viewBytes = end - start;
     const rBytes = (<usize>replacement.length) << 1;
     const idxBytes = (<usize>idx) << 1;
-    const out = allocString(viewBytes - sBytes + rBytes);
+    const out = allocString(
+      checkedStringBytes(
+        <u64>((viewBytes - sBytes) >> 1) + <u64>replacement.length,
+      ),
+    );
     let op = changetype<usize>(out);
     copyBytes(op, start, idxBytes); // before the match
     op += idxBytes;
@@ -1872,7 +1894,10 @@ import { Str8 } from "./str8";
     const rLen = replacement.length;
     const rBytes = (<usize>rLen) << 1;
     const rp = changetype<usize>(replacement);
-    const out = allocString((<usize>(viewUnits + count * (rLen - sLen))) << 1);
+    const retained = <u64>viewUnits - <u64>count * <u64>sLen;
+    const out = allocString(
+      checkedStringBytes(retained + <u64>count * <u64>rLen),
+    );
 
     let op = changetype<usize>(out);
     let prev = 0; // code-unit index just past the previous match
@@ -1895,12 +1920,16 @@ import { Str8 } from "./str8";
 // @ts-ignore: decorator
 @inline function bData<T>(s: T): string {
   if (isString<T>()) return changetype<string>(s);
-  return changetype<Str>(s).data;
+  if (isReference<T>() && idof<T>() == idof<Str>())
+    return changetype<Str>(s).data;
+  throw new TypeError("Expected string or Str");
 }
 // @ts-ignore: decorator
 @inline function bStart<T>(s: T): usize {
   if (isString<T>()) return changetype<usize>(changetype<string>(s));
-  return changetype<Str>(s).start;
+  if (isReference<T>() && idof<T>() == idof<Str>())
+    return changetype<Str>(s).start;
+  throw new TypeError("Expected string or Str");
 }
 // @ts-ignore: decorator
 @inline function bEnd<T>(s: T): usize {
@@ -1908,7 +1937,9 @@ import { Str8 } from "./str8";
     const Str = changetype<string>(s);
     return changetype<usize>(Str) + ((<usize>Str.length) << 1);
   }
-  return changetype<Str>(s).end;
+  if (isReference<T>() && idof<T>() == idof<Str>())
+    return changetype<Str>(s).end;
+  throw new TypeError("Expected string or Str");
 }
 
 function fillRepeat(dst: usize, count: i32, pad: string): i32 {

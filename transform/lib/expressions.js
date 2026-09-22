@@ -30,7 +30,10 @@ export function expressionCanProduceView(expression) {
       operationSemantics(property.property.text).result === "view"
     );
   }
-  return operationSemantics(property.property.text).result === "view";
+  return (
+    expressionCanProduceView(property.expression) &&
+    operationSemantics(property.property.text).result === "view"
+  );
 }
 export function expressionIsExplicitView(expression) {
   if (!expression) return false;

@@ -174,16 +174,22 @@ function expressionRepresentation(
       }
     }
     if (operationSemantics(property.property.text).result === "view") {
-      return expressionRepresentation(
+      const receiver = expressionRepresentation(
         property.expression,
         context,
         signatures,
-      ) === "view"
-        ? "view"
-        : "native";
+      );
+      return receiver === "view" || receiver === "native"
+        ? receiver
+        : "unknown";
     }
     if (operationSemantics(property.property.text).result === "native") {
-      return "native";
+      const receiver = expressionRepresentation(
+        property.expression,
+        context,
+        signatures,
+      );
+      return receiver === "unknown" ? "unknown" : "native";
     }
   }
   const name = calleeName(expression.expression);
@@ -203,7 +209,15 @@ function convertExpression(
   ) {
     const call = expression.expression;
     const property = propertyCall(call);
-    if (property && operationSemantics(property.property.text).lengthFusible) {
+    if (
+      property &&
+      operationSemantics(property.property.text).lengthFusible &&
+      (isStrStaticCall(call) ||
+        expressionRepresentation(property.expression, context, signatures) ===
+          "native" ||
+        expressionRepresentation(property.expression, context, signatures) ===
+          "view")
+    ) {
       return rewriteExpression(
         lowerPackedLengthInitializer(call, context),
         expected,
@@ -393,39 +407,6 @@ function rewriteExpression(
       expression.operator === Token.Exclamation_Equals ||
       expression.operator === Token.Exclamation_Equals_Equals;
     if (equality) {
-      const directView =
-        expression.left instanceof CallExpression &&
-        operationSemantics(propertyCall(expression.left)?.property.text ?? "")
-          .spanProducing
-          ? expression.left
-          : expression.right instanceof CallExpression &&
-              operationSemantics(
-                propertyCall(expression.right)?.property.text ?? "",
-              ).spanProducing
-            ? expression.right
-            : null;
-      if (directView) {
-        const parts = viewCallParts(directView);
-        if (
-          parts &&
-          (parts.receiver instanceof IdentifierExpression ||
-            parts.receiver instanceof PropertyAccessExpression)
-        ) {
-          const other =
-            directView === expression.left ? expression.right : expression.left;
-          return staticViewCall(
-            expression.operator === Token.Exclamation_Equals ||
-              expression.operator === Token.Exclamation_Equals_Equals
-              ? "notEqualsSpan"
-              : "equalsSpan",
-            parts.receiver,
-            [
-              lowerPackedSpanInitializer(directView, context),
-              rewriteExpression(other, "unknown", context, signatures),
-            ],
-          );
-        }
-      }
       const leftLink =
         expression.left instanceof IdentifierExpression
           ? packedSpanLink(expression.left.text, context)

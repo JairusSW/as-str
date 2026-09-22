@@ -3,7 +3,7 @@
 ╩ ╩╚═╝  ╚═╝ ╩ ╩╚═</pre></h1>
 
 <p align="center">
-  Virtual, drop-in, zero-copy strings for AssemblyScript: slice, search, and trim without allocating. Analogous to Rust's <a href="https://doc.rust-lang.org/std/primitive.str.html">string slice</a>.
+  Virtual, zero-copy string views for AssemblyScript: slice, search, and trim without copying characters. Analogous to Rust's <a href="https://doc.rust-lang.org/std/primitive.str.html">string slice</a>.
 </p>
 
 <details>
@@ -101,10 +101,10 @@ export function firstToken(line: string): string {
 
 **Automatic Mode**
 
-Automatic mode uses a shadow compiler pass for resolved type information, then
-conservatively migrates safe internal `string` values to zero-copy `str` views.
-It lowers values into views and lifts them back at native-string boundaries
-while preserving exported and external signatures.
+Automatic mode uses a shadow compiler pass for resolved type information and
+applies only rewrites with a proven string receiver. It keeps native signatures.
+Packed-span promotion is disabled while owner capture and operand handling are
+being hardened.
 
 Add the transform to your `asc` command:
 
@@ -121,38 +121,13 @@ or in `asconfig.json`:
 Your source continues to use native `string` types:
 
 ```ts
-function hasCompactLabel(value: string): bool {
-  const trimmed = value.trim();
-  return trimmed.startsWith("api-") && trimmed.length <= 12;
-}
-
-export function formatLabel(value: string): bool {
-  return hasCompactLabel(value);
+export function hasCompactLabel(value: string): bool {
+  return value.startsWith("api-") && value.trim().length <= 12;
 }
 ```
 
-After optimization, the relevant source shape is:
-
-```ts
-import { str } from "as-str";
-
-function hasCompactLabel(value: string): bool {
-  const trimmed: u64 = str.trimSpan(value);
-  return (
-    str.startsWithSpan(value, trimmed, "api-") &&
-    str.spanLength(value, trimmed) <= 12
-  );
-}
-
-export function formatLabel(value: string): bool {
-  return hasCompactLabel(value);
-}
-```
-
-The exported function keeps its native `string` signature while the internal
-helper tracks the trimmed range as a packed span. The span stays linked to its
-native owner for GC safety, and its scalar operations allocate neither a native
-substring nor a `Str` wrapper.
+The length query can use `str.trimLength(value)` without allocating a trimmed
+substring. Other operations retain native behavior when proof is insufficient.
 
 The optimizer leaves values native around raw loads, pointer casts, explicit
 assertions, native-string call parameters, unknown calls, containers, fields,
@@ -193,13 +168,8 @@ returns, making it faster to compile but potentially less aggressive than
 Source still uses native strings:
 
 ```ts
-export function containsMarker(value: string): bool {
-  const compact = value.trim().slice(0, 12);
-  return (
-    compact.includes("marker") ||
-    compact.startsWith("mark") ||
-    compact.length === 0
-  );
+export function compactLength(value: string): i32 {
+  return value.trim().length;
 }
 ```
 
@@ -222,7 +192,7 @@ import { str } from "as-str";
 
 const real: string = "GET /index.html 200 1043";
 
-// Wrap once (zero-copy); every op below is a pointer move, not an allocation.
+// Wrap once without copying bytes; the wrapper and each derived view allocate.
 const req: str = str.from(real);
 
 const method = req.slice(0, req.indexOf(" ")); // "GET" - a view
@@ -237,18 +207,18 @@ req.includes("200"); // true
 whole API: the instance methods **and** the static free functions
 (`str.slice(s, …)`) live on it. It carries the **full native `String`
 surface** (`slice`, `indexOf`, `trim`, `split`, `replace`, `toUpperCase`, …) plus
-operators, so it reads like `string` but allocates only at the boundary where you
-ask for an owned string back.
+operators. View operations allocate small wrappers without copying characters;
+materialization and encoding allocate output storage.
 
 ## Examples
 
 ### Slicing and Trimming Without Copying
 
-View-producing methods return another `str` - no allocation, no copy. The
+View-producing methods return another `str` wrapper without copying bytes. The
 backing string is shared, and chains of views always anchor to the original.
 
 ```typescript
-const v = str.from("  the quick brown fox  ").trim(); // view, no copy
+const v = str.from("  the quick brown fox  ").trim(); // view, no character copy
 v.slice(4, 9).toString(); // "quick"
 v.slice(-3).toString(); // "fox"
 v.substring(10, 4).toString(); // "quick" (substring swaps args, like String)
@@ -356,11 +326,12 @@ import { str8 } from "as-str";
 const s = str8.from("héllo, 世界"); // string -> UTF-8 buffer (allocates)
 s.length; // 14 (BYTES, like Rust .len() / Go len())
 s.codePointCount(); // 9 (Unicode scalars)
-s.slice(0, 5).toString(); // "hé" - O(1) zero-copy byte slice
+s.slice(0, 3).toString(); // "hé" - O(1) zero-copy byte slice
 s.indexOf("llo"); // byte offset (Go strings.Index / Rust .find)
 s[0]; // 104 - the raw byte (Go s[i])
 s.codePointAt(1); // 0xE9 ('é'), decoded from the 2-byte sequence
-s.isCharBoundary(1); // false - byte 1 is mid-codepoint
+s.isCharBoundary(1); // true - byte 1 starts 'é'
+s.isCharBoundary(2); // false - byte 2 is a continuation byte
 
 // Wrap existing UTF-8 bytes with no copy:
 const view = str8.fromBuffer(someArrayBuffer); // trusts the bytes
@@ -372,6 +343,8 @@ codepoint order (matching Rust/Go). Allocating ops (`concat`, `repeat`, `pad*`,
 `replace`, `toUpperCase`, …) stay in UTF-8 and return a `str8`; `toString()`
 decodes to a native `string`. Note slicing cuts raw bytes Go-style and can split
 a codepoint - guard with `isCharBoundary` if you need a valid boundary.
+Character helpers decode malformed slices one byte at a time as U+FFFD, so
+`codePointCount`, `codePointAt`, and `sliceChars` agree on those slices.
 
 ### Converting Anything: `str(x)` / `str8(x)`
 

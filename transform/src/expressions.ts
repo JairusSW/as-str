@@ -34,7 +34,12 @@ export function expressionCanProduceView(
       operationSemantics(property.property.text).result === "view"
     );
   }
-  return operationSemantics(property.property.text).result === "view";
+  // A method name alone does not identify a string operation. Only calls
+  // rooted in an explicit as-str view are safe at this syntax-only stage.
+  return (
+    expressionCanProduceView(property.expression) &&
+    operationSemantics(property.property.text).result === "view"
+  );
 }
 
 export function expressionIsExplicitView(

@@ -120,7 +120,7 @@ try {
   const transformedExampleWasm = path.join(scratch, "auto-transformed.wasm");
   writeFileSync(
     transformedExampleInput,
-    readFlavorExample("Automatic Mode", 1),
+    readFlavorExample("Automatic Mode", 0),
   );
   run(process.execPath, [
     asc,
@@ -206,6 +206,26 @@ try {
     },
   });
   assert.equal(autoModule.instance.exports.check(), 3);
+
+  const conventionalDir = path.join(scratch, "assembly");
+  mkdirSync(conventionalDir, { recursive: true });
+  const conventionalInput = path.join(conventionalDir, "index.ts");
+  const conventionalWat = path.join(scratch, "consumer-assembly-index.wat");
+  writeFileSync(
+    conventionalInput,
+    'export function length(): i32 { return "  abc  ".trim().length; }\n',
+  );
+  run(process.execPath, [
+    asc,
+    conventionalInput,
+    "--transform",
+    "as-str/auto",
+    "--outFile",
+    path.join(scratch, "consumer-assembly-index.wasm"),
+    "--textFile",
+    conventionalWat,
+  ]);
+  assert.match(readFileSync(conventionalWat, "utf8"), /Str\.trimLength/);
 
   const dependencyDir = path.join(scratch, "node_modules", "view-dependency");
   mkdirSync(dependencyDir, { recursive: true });

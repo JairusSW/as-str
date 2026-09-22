@@ -20,7 +20,6 @@ import {
   TernaryExpression,
   ThrowStatement,
   Token,
-  StringLiteralExpression,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
@@ -30,7 +29,6 @@ import {
   viewType,
 } from "./ast.js";
 import { operationSemantics } from "./operations.js";
-import { planPackedSpanParameters } from "./packed-span.js";
 import { factsForSource, SemanticFact, SemanticManifest } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
 import {
@@ -522,6 +520,7 @@ function collectLocalBindings(
       const candidate =
         !noView &&
         !explicitView &&
+        semantic === "native" &&
         (declared === "unknown" || declared === "native") &&
         !!node.initializer &&
         (expressionCanProduceView(node.initializer) || preferView);
@@ -988,130 +987,7 @@ function analyzeCandidates(
     binding.scalarizedLength = onlyLengthReads;
   }
 
-  const consumers = new Map<CallExpression, Binding>();
-  for (const target of context.bindings.values()) {
-    if (target.declaration.initializer instanceof CallExpression) {
-      consumers.set(target.declaration.initializer, target);
-    }
-  }
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const binding of context.bindings.values()) {
-      if (
-        binding.decision !== "view" ||
-        binding.scalarizedLength ||
-        binding.scalarizedSpan ||
-        !(binding.declaration.initializer instanceof CallExpression)
-      ) {
-        continue;
-      }
-      const initializer = propertyCall(binding.declaration.initializer);
-      if (
-        !initializer ||
-        !operationSemantics(initializer.property.text).spanProducing
-      )
-        continue;
-      const receiver = isStrStaticCall(binding.declaration.initializer)
-        ? binding.declaration.initializer.args[0]
-        : initializer.expression;
-      const receiverBinding =
-        receiver instanceof IdentifierExpression
-          ? context.bindings.get(receiver.text)
-          : null;
-      const owner =
-        receiverBinding?.scalarizedSpan && receiverBinding.packedSpan
-          ? receiverBinding.packedSpan.owner
-          : receiver instanceof IdentifierExpression
-            ? { kind: "identifier" as const, name: receiver.text }
-            : receiver instanceof StringLiteralExpression
-              ? { kind: "string-literal" as const, value: receiver.value }
-              : null;
-      if (owner === null) continue;
-
-      let scalarUsesOnly = true;
-      walk(body, (node, ref): boolean | void => {
-        if (node instanceof FunctionDeclaration && node !== declaration)
-          return false;
-        if (
-          !(node instanceof IdentifierExpression) ||
-          node.text !== binding.name ||
-          isDeclarationIdentifier(node, ref)
-        ) {
-          return;
-        }
-        if (
-          ref.parent instanceof PropertyAccessExpression &&
-          ref.key === "expression"
-        ) {
-          if (
-            ref.parent.property.text === "length" ||
-            ref.parent.property.text === "isEmpty"
-          ) {
-            return;
-          }
-          if (
-            ref.grandparent instanceof CallExpression &&
-            ref.grandparent.expression === ref.parent &&
-            operationSemantics(ref.parent.property.text).spanScalar
-          ) {
-            return;
-          }
-          if (
-            ref.grandparent instanceof CallExpression &&
-            ref.grandparent.expression === ref.parent &&
-            operationSemantics(ref.parent.property.text).spanProducing
-          ) {
-            const target = consumers.get(ref.grandparent);
-            if (target?.scalarizedLength || target?.scalarizedSpan) return;
-          }
-        }
-        if (
-          ref.parent instanceof BinaryExpression &&
-          (ref.parent.operator === Token.Equals_Equals ||
-            ref.parent.operator === Token.Equals_Equals_Equals ||
-            ref.parent.operator === Token.Exclamation_Equals ||
-            ref.parent.operator === Token.Exclamation_Equals_Equals)
-        ) {
-          return;
-        }
-        scalarUsesOnly = false;
-      });
-      if (!scalarUsesOnly) continue;
-      binding.scalarizedSpan = true;
-      binding.packedSpan = { owner };
-      changed = true;
-    }
-  }
-
-  changed = true;
-  while (changed) {
-    changed = false;
-    for (const binding of context.bindings.values()) {
-      if (
-        !binding.scalarizedSpan ||
-        !(binding.declaration.initializer instanceof CallExpression)
-      ) {
-        continue;
-      }
-      const parts = propertyCall(binding.declaration.initializer);
-      if (!parts) continue;
-      const receiver = isStrStaticCall(binding.declaration.initializer)
-        ? binding.declaration.initializer.args[0]
-        : parts.expression;
-      if (!(receiver instanceof IdentifierExpression)) continue;
-      const receiverBinding = context.bindings.get(receiver.text);
-      if (
-        receiverBinding?.scalarizedSpan &&
-        receiverBinding.packedSpan &&
-        binding.packedSpan !== receiverBinding.packedSpan
-      ) {
-        binding.packedSpan = receiverBinding.packedSpan;
-        changed = true;
-      }
-    }
-  }
+  // Packed span scalarization remains disabled until each span captures its owner.
 
   for (const binding of context.bindings.values()) {
     if (
@@ -1242,13 +1118,9 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
     const signature = signatures.get(declaration.name.text);
-    const packedSpanPlan = canPromoteBoundaries
-      ? planPackedSpanParameters(context, signature)
-      : null;
     const promotions = canPromoteBoundaries
       ? analyzeParameterPromotions(context, signature, signatures)
       : [];
-    if (packedSpanPlan?.apply()) changedSources.add(source);
     for (const promotion of promotions) {
       const parameter = declaration.signature.parameters[promotion.index];
       const location = parameter.range.source;

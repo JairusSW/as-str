@@ -1,4 +1,6 @@
 import { ImportStatement } from "assemblyscript/dist/assemblyscript.js";
+import path from "path";
+import { fileURLToPath } from "url";
 export const PACKAGE_NAME = "as-str";
 export const VIEW_NAME = "str";
 export const VIEW_CLASS_NAME = "Str";
@@ -31,7 +33,14 @@ function sourceIsConfigured(source) {
   );
 }
 function isPackageSource(source) {
-  if (OWN_SOURCES.has(source.normalizedPath)) return true;
+  const packageRoot = path.resolve(fileURLToPath(import.meta.url), "../../..");
+  if (
+    OWN_SOURCES.has(source.normalizedPath) &&
+    path.resolve(process.cwd(), source.normalizedPath) ===
+      path.resolve(packageRoot, source.normalizedPath)
+  ) {
+    return true;
+  }
   const internalPath = source.internalPath.replace(/\.ts$/, "");
   if (internalPath === `~lib/${PACKAGE_NAME}/index`) return true;
   const libraryPrefix = `~lib/${PACKAGE_NAME}/`;

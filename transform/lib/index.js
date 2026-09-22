@@ -40,12 +40,10 @@ export default class StrAsTransform extends Transform {
           this.program,
           parser.sources,
           (shadow) => {
-            const preliminary = optimizeSources(shadow.sources);
             injectViewImports(shadow, {
               baseCWD,
               packageDir,
               debug: false,
-              force: preliminary.changedSources,
               log: () => {},
             });
           },

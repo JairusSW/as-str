@@ -5,12 +5,6 @@ import { copyBytes, equalsBytes } from "./util";
 const LANE_ONES_8: u64 = 0x0101010101010101;
 const LANE_HIGH_8: u64 = 0x8080808080808080;
 
-// Lazy so no-SIMD builds never emit these splat initializers.
-// @ts-ignore: decorator
-@lazy const CONT_HIGH2: v128 = i8x16.splat(<i8>0xc0); // isolates the top 2 bits
-// @ts-ignore: decorator
-@lazy const CONT_TAG: v128 = i8x16.splat(<i8>0x80); // continuation marker 0b10......
-
 /** Number of bytes a UTF-8 sequence with the given lead byte occupies (1-4). */
 // A continuation/invalid lead byte yields 1 so callers always advance.
 // @ts-ignore: decorator
@@ -40,24 +34,42 @@ const LANE_HIGH_8: u64 = 0x8080808080808080;
 export function decodeCodePointAt(p: usize, end: usize): u64 {
   const b0 = <u32>load<u8>(p);
   if (b0 < 0x80) return ((<u64>b0) << 32) | 1;
-  if ((b0 & 0xe0) == 0xc0) {
+  if (b0 >= 0xc2 && b0 <= 0xdf) {
     if (p + 2 > end) return ((<u64>0xfffd) << 32) | 1;
     const b1 = <u32>load<u8>(p + 1);
+    if ((b1 & 0xc0) != 0x80) return ((<u64>0xfffd) << 32) | 1;
     const cp = ((b0 & 0x1f) << 6) | (b1 & 0x3f);
     return ((<u64>cp) << 32) | 2;
   }
-  if ((b0 & 0xf0) == 0xe0) {
+  if (b0 >= 0xe0 && b0 <= 0xef) {
     if (p + 3 > end) return ((<u64>0xfffd) << 32) | 1;
     const b1 = <u32>load<u8>(p + 1);
     const b2 = <u32>load<u8>(p + 2);
+    if (
+      (b1 & 0xc0) != 0x80 ||
+      (b2 & 0xc0) != 0x80 ||
+      (b0 == 0xe0 && b1 < 0xa0) ||
+      (b0 == 0xed && b1 >= 0xa0)
+    ) {
+      return ((<u64>0xfffd) << 32) | 1;
+    }
     const cp = ((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f);
     return ((<u64>cp) << 32) | 3;
   }
-  if ((b0 & 0xf8) == 0xf0) {
+  if (b0 >= 0xf0 && b0 <= 0xf4) {
     if (p + 4 > end) return ((<u64>0xfffd) << 32) | 1;
     const b1 = <u32>load<u8>(p + 1);
     const b2 = <u32>load<u8>(p + 2);
     const b3 = <u32>load<u8>(p + 3);
+    if (
+      (b1 & 0xc0) != 0x80 ||
+      (b2 & 0xc0) != 0x80 ||
+      (b3 & 0xc0) != 0x80 ||
+      (b0 == 0xf0 && b1 < 0x90) ||
+      (b0 == 0xf4 && b1 >= 0x90)
+    ) {
+      return ((<u64>0xfffd) << 32) | 1;
+    }
     const cp =
       ((b0 & 0x07) << 18) |
       ((b1 & 0x3f) << 12) |
@@ -88,30 +100,13 @@ export function prevCodePointStart(start: usize, p: usize): usize {
 
 /** Number of Unicode codepoints in `[start, end)`. */
 export function codePointCount(start: usize, end: usize): i32 {
-  const total = <i32>(end - start);
-  let cont = 0;
+  let count = 0;
   let p = start;
-  if (ASC_FEATURE_SIMD) {
-    while (p + 16 <= end) {
-      const isCont = i8x16.eq(v128.and(v128.load(p), CONT_HIGH2), CONT_TAG);
-      cont += <i32>popcnt(i8x16.bitmask(isCont));
-      p += 16;
-    }
-  } else {
-    while (p + 8 <= end) {
-      const w = load<u64>(p);
-      // A continuation byte has bit7 set and bit6 clear.
-      const b7 = (w >> 7) & LANE_ONES_8;
-      const b6 = (w >> 6) & LANE_ONES_8;
-      cont += <i32>popcnt(b7 & (b6 ^ LANE_ONES_8));
-      p += 8;
-    }
-  }
   while (p < end) {
-    if ((load<u8>(p) & 0xc0) == 0x80) cont++;
-    p++;
+    p += <usize>widthOf(decodeCodePointAt(p, end));
+    count++;
   }
-  return total - cont;
+  return count;
 }
 
 /** Whether every byte in `[start, end)` is ASCII. */
