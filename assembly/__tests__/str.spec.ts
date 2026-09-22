@@ -233,9 +233,12 @@ describe("allocating helpers match native String", () => {
     expect(str.repeat("ab", 0)).toBe("");
     expect(str.repeat("ab", 1)).toBe("ab");
     expect(str.repeat(str.slice("__xy", 2), 3)).toBe("xyxyxy");
+    expect(str.repeat("ab", 1024).length).toBe(2048);
   });
 
   test("padStart / padEnd match native across pad widths", () => {
+    expect(str.padStart("x", 2048, "ab").length).toBe(2048);
+    expect(str.padEnd("x", 2048, "ab").length).toBe(2048);
     const cases: string[] = ["7", "ab", "hello"];
     const pads: string[] = ["0", ".", "ab", "xyz"];
     const lens: i32[] = [0, 1, 3, 6, 7, 10];

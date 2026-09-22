@@ -37,8 +37,9 @@ const report = {
 
 assert.ok(report.baselineNativeCopyCalls >= 6, JSON.stringify(report));
 assert.ok(
-  report.optimizedNativeCopyCalls <= report.baselineNativeCopyCalls,
+  report.optimizedNativeCopyCalls < report.baselineNativeCopyCalls,
   JSON.stringify(report),
 );
+assert.ok(report.optimizedViewOperations >= 3, JSON.stringify(report));
 assert.equal(report.optimizedViewObjectAllocations, 0, JSON.stringify(report));
 console.log(JSON.stringify(report));

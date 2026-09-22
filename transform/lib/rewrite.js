@@ -38,6 +38,7 @@ import {
   wrapUnknownAsView,
 } from "./ast.js";
 import { operationSemantics } from "./operations.js";
+import { nativeLengthFusionIsCompatible } from "./compiler-profile.js";
 import {
   lowerPackedLengthInitializer,
   lowerPackedSpanInitializer,
@@ -62,18 +63,62 @@ function viewCallParts(expression) {
     args: expression.args,
   };
 }
-function nativeLowercaseBenefitsFromViewHelper(call, receiver, context) {
-  if (context.profitableLowercaseCalls.has(call.range.start)) return true;
-  if (receiver instanceof IdentifierExpression) {
-    return context.repeatedLowercaseReceivers.has(receiver.text);
+function effectFreeRangeArgument(expression) {
+  if (
+    expression instanceof IdentifierExpression ||
+    expression instanceof StringLiteralExpression
+  ) {
+    return true;
   }
-  if (!(receiver instanceof CallExpression)) return false;
-  const property = propertyCall(receiver);
-  return (
-    !property || operationSemantics(property.property.text).result !== "view"
-  );
+  if (expression instanceof ParenthesizedExpression) {
+    return effectFreeRangeArgument(expression.expression);
+  }
+  return "literalKind" in expression;
+}
+function borrowedSpanExpression(expression, context, signatures) {
+  if (!(expression instanceof CallExpression)) return null;
+  const parts = viewCallParts(expression);
+  if (
+    !parts ||
+    !operationSemantics(parts.method).spanProducing ||
+    !nativeLengthFusionIsCompatible(parts.method) ||
+    !parts.args.every(effectFreeRangeArgument)
+  ) {
+    return null;
+  }
+  const nested = borrowedSpanExpression(parts.receiver, context, signatures);
+  if (nested) {
+    return {
+      owner: nested.owner,
+      span: staticViewCall(
+        `${operationSemantics(parts.method).normalizedSpanName}SpanOf`,
+        nested.span,
+        parts.args,
+      ),
+    };
+  }
+  if (
+    !(parts.receiver instanceof IdentifierExpression) &&
+    !(parts.receiver instanceof StringLiteralExpression)
+  ) {
+    return null;
+  }
+  if (
+    expressionRepresentation(parts.receiver, context, signatures) !== "native"
+  ) {
+    return null;
+  }
+  return {
+    owner: parts.receiver,
+    span: staticViewCall(
+      `${operationSemantics(parts.method).normalizedSpanName}Span`,
+      parts.receiver,
+      parts.args,
+    ),
+  };
 }
 function bindingRepresentation(name, context) {
+  if (context.duplicateNames.has(name)) return "unknown";
   const binding = context.bindings.get(name);
   if (!binding) return context.parameters.get(name) ?? "unknown";
   if (binding.decision !== "unknown") return binding.decision;
@@ -174,10 +219,15 @@ function convertExpression(expression, expected, context, signatures) {
     expression.expression instanceof CallExpression
   ) {
     const call = expression.expression;
+    const borrowed = borrowedSpanExpression(call, context, signatures);
+    if (borrowed) {
+      return staticViewCall("spanLength", borrowed.owner, [borrowed.span]);
+    }
     const property = propertyCall(call);
     if (
       property &&
       operationSemantics(property.property.text).lengthFusible &&
+      nativeLengthFusionIsCompatible(property.property.text) &&
       (isStrStaticCall(call) ||
         expressionRepresentation(property.expression, context, signatures) ===
           "native" ||
@@ -558,15 +608,46 @@ function rewriteExpression(expression, expected, context, signatures) {
           signatures,
         ),
       );
+      const borrowedReceiver = borrowedSpanExpression(
+        property.expression,
+        context,
+        signatures,
+      );
+      if (
+        borrowedReceiver &&
+        operationSemantics(method).spanScalar &&
+        expression.args.every(effectFreeRangeArgument)
+      ) {
+        return convertExpression(
+          staticViewCall(`${method}Span`, borrowedReceiver.owner, [
+            borrowedReceiver.span,
+            ...expression.args,
+          ]),
+          expected,
+          context,
+          signatures,
+        );
+      }
+      if (
+        originalReceiverRepresentation === "native" &&
+        [
+          "indexOf",
+          "lastIndexOf",
+          "includes",
+          "startsWith",
+          "endsWith",
+        ].includes(method)
+      ) {
+        return convertExpression(
+          staticViewCall(method, property.expression, expression.args),
+          expected,
+          context,
+          signatures,
+        );
+      }
       if (
         method === "toLowerCase" &&
-        (originalReceiverRepresentation === "view" ||
-          (originalReceiverRepresentation === "native" &&
-            nativeLowercaseBenefitsFromViewHelper(
-              expression,
-              property.expression,
-              context,
-            )))
+        originalReceiverRepresentation === "view"
       ) {
         return convertExpression(
           staticViewCall(

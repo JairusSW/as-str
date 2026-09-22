@@ -2,14 +2,15 @@ import {
   Function as ASFunction,
   FunctionDeclaration,
   Global,
-  Local,
   Program,
   Property,
   Source,
+  VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { readFileSync, writeFileSync } from "fs";
 import { Representation } from "./ast.js";
 import { admitSource } from "./source-admission.js";
+import { walk } from "./visitor.js";
 
 export interface SemanticFact {
   source: string;
@@ -118,24 +119,37 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       });
     });
 
-    for (const local of element.localsByIndex) {
-      if (!(local instanceof Local) || !local.declaration) continue;
-      const range = local.declaration.range;
-      const source = range.source;
-      if (!admitSource(source).semanticFacts) continue;
-      const resolvedType = local.type.toString();
-      const representation = representationOfResolvedType(resolvedType);
-      const key = `${source.normalizedPath}:${range.start}:local`;
-      addFact(key, {
-        source: source.normalizedPath,
-        start: range.start,
-        end: range.end,
-        name: local.name,
-        kind: "local",
-        representation,
-        resolvedType,
-      });
-    }
+    const localTypes = new Map(
+      element.localsByIndex.map((local) => [local.name, local.type.toString()]),
+    );
+    walk(
+      (element.prototype.declaration as FunctionDeclaration).body,
+      (node): boolean | void => {
+        if (
+          node instanceof FunctionDeclaration &&
+          node !== element.prototype.declaration
+        ) {
+          return false;
+        }
+        if (!(node instanceof VariableDeclaration)) return;
+        const resolvedType = localTypes.get(node.name.text);
+        if (!resolvedType) return;
+        const range = node.range;
+        const source = range.source;
+        if (!admitSource(source).semanticFacts) return;
+        const representation = representationOfResolvedType(resolvedType);
+        const key = `${source.normalizedPath}:${range.start}:local`;
+        addFact(key, {
+          source: source.normalizedPath,
+          start: range.start,
+          end: range.end,
+          name: node.name.text,
+          kind: "local",
+          representation,
+          resolvedType,
+        });
+      },
+    );
   }
 
   const facts = [...factsByKey.entries()]

@@ -204,9 +204,12 @@ describe("str8 allocating helpers", () => {
     expect(str8.repeat("ab", 3).toString()).toBe("ababab");
     expect(str8.repeat("ab", 0).toString()).toBe("");
     expect(str8.repeat("ab", 1).toString()).toBe("ab");
+    expect(str8.repeat("ab", 1024).length).toBe(2048);
   });
 
   test("padStart / padEnd pad to a byte length", () => {
+    expect(str8.from("x").padStart(2048, "ab").length).toBe(2048);
+    expect(str8.from("x").padEnd(2048, "ab").length).toBe(2048);
     expect(str8.from("7").padStart(3, "0").toString()).toBe("007");
     expect(str8.from("7").padEnd(3, "0").toString()).toBe("700");
     expect(str8.from("ab").padStart(2, "0").toString()).toBe("ab"); // no-op

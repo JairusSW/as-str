@@ -228,6 +228,23 @@ export function copyBytes(dst: usize, src: usize, n: usize): void {
   if (i < n) store<u8>(dst + i, load<u8>(src + i));
 }
 
+/** Fill output from one seed copy, then double the initialized prefix. */
+export function copyRepeated(
+  dst: usize,
+  src: usize,
+  patternBytes: usize,
+  totalBytes: usize,
+): void {
+  if (totalBytes == 0 || patternBytes == 0) return;
+  let filled = min(patternBytes, totalBytes);
+  copyBytes(dst, src, filled);
+  while (filled < totalBytes) {
+    const chunk = min(filled, totalBytes - filled);
+    copyBytes(dst + filled, dst, chunk);
+    filled += chunk;
+  }
+}
+
 /** Validate a UTF-16 length before narrowing its byte size to memory32. */
 // @ts-ignore: decorator
 @inline export function checkedStringBytes(units: u64): usize {

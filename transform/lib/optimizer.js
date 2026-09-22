@@ -5,13 +5,13 @@ import {
   ClassDeclaration,
   CommaExpression,
   ElementAccessExpression,
-  FieldDeclaration,
   FunctionDeclaration,
   IdentifierExpression,
   NewExpression,
   ParenthesizedExpression,
   PropertyAccessExpression,
   ReturnStatement,
+  StringLiteralExpression,
   TernaryExpression,
   ThrowStatement,
   VariableDeclaration,
@@ -22,6 +22,7 @@ import {
   viewType,
 } from "./ast.js";
 import { operationSemantics } from "./operations.js";
+import { nativeLengthFusionIsCompatible } from "./compiler-profile.js";
 import { factsForSource } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
 import {
@@ -34,6 +35,7 @@ import {
 import { rewriteDeclarationBoundaries, rewriteStatement } from "./rewrite.js";
 import {
   expressionCanProduceView,
+  expressionHasViewProducingShape,
   expressionIsExplicitView,
 } from "./expressions.js";
 const MIN_PARAMETER_VIEW_BOUNDARIES = 2;
@@ -382,14 +384,37 @@ function initializerElementRepresentation(expression) {
   if (name !== "Array" && name !== "StaticArray") return "unknown";
   return representationOfType(expression.typeArguments?.[0] ?? null);
 }
+function nativeViewProducerIsProven(expression, bindings, parameters) {
+  if (expression instanceof ParenthesizedExpression) {
+    return nativeViewProducerIsProven(
+      expression.expression,
+      bindings,
+      parameters,
+    );
+  }
+  if (!(expression instanceof CallExpression)) return false;
+  const property = propertyCall(expression);
+  if (
+    !property ||
+    operationSemantics(property.property.text).result !== "view"
+  ) {
+    return false;
+  }
+  const receiver = property.expression;
+  if (receiver instanceof StringLiteralExpression) return true;
+  if (receiver instanceof IdentifierExpression) {
+    return (
+      parameters.get(receiver.text) === "native" ||
+      bindings.get(receiver.text)?.semantic === "native"
+    );
+  }
+  return nativeViewProducerIsProven(receiver, bindings, parameters);
+}
 function collectLocalBindings(declaration, semanticFacts, fields) {
   const bindings = new Map();
   const parameters = new Map();
   const duplicateNames = new Set();
   const body = declaration.body;
-  const lowercaseReceiverCounts = new Map();
-  const localUseCounts = new Map();
-  const profitableLowercaseCalls = new Set();
   for (const parameter of declaration.signature.parameters) {
     parameters.set(parameter.name.text, representationOfType(parameter.type));
   }
@@ -417,7 +442,9 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
         semantic === "native" &&
         (declared === "unknown" || declared === "native") &&
         !!node.initializer &&
-        (expressionCanProduceView(node.initializer) || preferView);
+        ((expressionHasViewProducingShape(node.initializer) &&
+          nativeViewProducerIsProven(node.initializer, bindings, parameters)) ||
+          preferView);
       bindings.set(name, {
         declaration: node,
         name,
@@ -442,66 +469,14 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
         packedSpan: null,
       });
     });
-    walk(body, (node) => {
-      if (node instanceof FunctionDeclaration && node !== declaration) {
-        return false;
-      }
-      if (!(node instanceof CallExpression)) return;
-      const property = propertyCall(node);
-      if (
-        property?.property.text !== "toLowerCase" ||
-        !(property.expression instanceof IdentifierExpression)
-      ) {
-        return;
-      }
-      const name = property.expression.text;
-      lowercaseReceiverCounts.set(
-        name,
-        (lowercaseReceiverCounts.get(name) ?? 0) + 1,
-      );
-    });
-    walk(body, (node, ref) => {
-      if (node instanceof FunctionDeclaration && node !== declaration) {
-        return false;
-      }
-      if (
-        !(node instanceof IdentifierExpression) ||
-        isDeclarationIdentifier(node, ref)
-      ) {
-        return;
-      }
-      localUseCounts.set(node.text, (localUseCounts.get(node.text) ?? 0) + 1);
-    });
-    walk(body, (node, ref) => {
-      if (node instanceof FunctionDeclaration && node !== declaration) {
-        return false;
-      }
-      if (
-        !(node instanceof CallExpression) ||
-        !(ref.parent instanceof VariableDeclaration) ||
-        ref.parent.initializer !== node ||
-        (localUseCounts.get(ref.parent.name.text) ?? 0) < 2
-      ) {
-        return;
-      }
-      const property = propertyCall(node);
-      if (property?.property.text !== "toLowerCase") return;
-      const receiverCall =
-        property.expression instanceof CallExpression
-          ? propertyCall(property.expression)
-          : null;
-      if (
-        receiverCall &&
-        operationSemantics(receiverCall.property.text).result === "view"
-      ) {
-        return;
-      }
-      profitableLowercaseCalls.add(node.range.start);
-    });
   }
   for (const name of duplicateNames) {
     const binding = bindings.get(name);
-    if (binding) binding.forcedReason = "shadowed or duplicate local name";
+    if (binding) {
+      binding.candidate = false;
+      binding.decision = "unknown";
+      binding.forcedReason = "shadowed or duplicate local name";
+    }
   }
   let propagated = true;
   while (propagated) {
@@ -527,29 +502,12 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
     parameters,
     parameterSpans: new Map(),
     caseInsensitiveSpans: new Set(),
-    repeatedLowercaseReceivers: new Set(
-      [...lowercaseReceiverCounts]
-        .filter(([, count]) => count > 1)
-        .map(([name]) => name),
-    ),
-    profitableLowercaseCalls,
     fields,
     duplicateNames,
   };
 }
-function collectFieldRepresentations(source) {
-  const fields = new Map();
-  const ambiguous = new Set();
-  walk(source, (node) => {
-    if (!(node instanceof FieldDeclaration)) return;
-    const representation = representationOfType(node.type);
-    if (representation === "unknown") return;
-    const name = node.name.text;
-    if (fields.has(name)) ambiguous.add(name);
-    else fields.set(name, representation);
-  });
-  for (const name of ambiguous) fields.delete(name);
-  return fields;
+function collectFieldRepresentations() {
+  return new Map();
 }
 function expectedCallArgument(call, index, signatures, context) {
   if (isStrStaticCall(call)) return "view";
@@ -741,6 +699,21 @@ function candidateReceiver(expression, context) {
 function bindingViewBoundaryUses(body, name, context, signatures) {
   return countViewBoundaryUses(body, name, context, signatures);
 }
+function identifierIsStable(body, name) {
+  let stable = true;
+  walk(body, (node) => {
+    if (
+      node instanceof BinaryExpression &&
+      node.operator === 101 &&
+      node.left instanceof IdentifierExpression &&
+      node.left.text === name
+    ) {
+      stable = false;
+      return false;
+    }
+  });
+  return stable;
+}
 function analyzeCandidates(context, signatures) {
   const declaration = context.declaration;
   if (!declaration) return;
@@ -796,7 +769,8 @@ function analyzeCandidates(context, signatures) {
     const initializer = propertyCall(binding.declaration.initializer);
     if (
       !initializer ||
-      !operationSemantics(initializer.property.text).lengthFusible
+      !operationSemantics(initializer.property.text).lengthFusible ||
+      !nativeLengthFusionIsCompatible(initializer.property.text)
     ) {
       continue;
     }
@@ -822,6 +796,93 @@ function analyzeCandidates(context, signatures) {
       }
     });
     binding.scalarizedLength = onlyLengthReads;
+  }
+  const consumers = new Map();
+  for (const target of context.bindings.values()) {
+    if (target.declaration.initializer instanceof CallExpression) {
+      consumers.set(target.declaration.initializer, target);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const binding of context.bindings.values()) {
+      if (
+        binding.decision !== "view" ||
+        binding.scalarizedLength ||
+        binding.scalarizedSpan ||
+        !(binding.declaration.initializer instanceof CallExpression)
+      ) {
+        continue;
+      }
+      const call = binding.declaration.initializer;
+      const initializer = propertyCall(call);
+      if (
+        !initializer ||
+        !operationSemantics(initializer.property.text).spanProducing ||
+        !nativeLengthFusionIsCompatible(initializer.property.text)
+      ) {
+        continue;
+      }
+      const receiver = isStrStaticCall(call)
+        ? call.args[0]
+        : initializer.expression;
+      const receiverBinding =
+        receiver instanceof IdentifierExpression
+          ? context.bindings.get(receiver.text)
+          : null;
+      const owner =
+        receiverBinding?.scalarizedSpan && receiverBinding.packedSpan
+          ? receiverBinding.packedSpan.owner
+          : receiver instanceof IdentifierExpression &&
+              identifierIsStable(body, receiver.text)
+            ? { kind: "identifier", name: receiver.text }
+            : receiver instanceof StringLiteralExpression
+              ? { kind: "string-literal", value: receiver.value }
+              : null;
+      if (!owner) continue;
+      let scalarUsesOnly = true;
+      walk(body, (node, ref) => {
+        if (node instanceof FunctionDeclaration && node !== declaration)
+          return false;
+        if (
+          !(node instanceof IdentifierExpression) ||
+          node.text !== binding.name ||
+          isDeclarationIdentifier(node, ref)
+        ) {
+          return;
+        }
+        if (
+          ref.parent instanceof PropertyAccessExpression &&
+          ref.key === "expression"
+        ) {
+          const member = ref.parent.property.text;
+          if (member === "length" || member === "isEmpty") return;
+          if (
+            ref.grandparent instanceof CallExpression &&
+            ref.grandparent.expression === ref.parent &&
+            operationSemantics(member).spanScalar
+          ) {
+            return;
+          }
+          if (
+            ref.grandparent instanceof CallExpression &&
+            ref.grandparent.expression === ref.parent &&
+            operationSemantics(member).spanProducing &&
+            nativeLengthFusionIsCompatible(member) &&
+            (consumers.get(ref.grandparent)?.scalarizedLength ||
+              consumers.get(ref.grandparent)?.scalarizedSpan)
+          ) {
+            return;
+          }
+        }
+        scalarUsesOnly = false;
+      });
+      if (!scalarUsesOnly) continue;
+      binding.scalarizedSpan = true;
+      binding.packedSpan = { owner };
+      changed = true;
+    }
   }
   for (const binding of context.bindings.values()) {
     if (
@@ -916,7 +977,7 @@ export function optimizeSource(
       }
     }
   }
-  const fields = collectFieldRepresentations(source);
+  const fields = collectFieldRepresentations();
   const canPromoteBoundaries = manifest?.complete === true;
   const functions = collectFunctions(source);
   const contexts = new Map();
@@ -934,8 +995,6 @@ export function optimizeSource(
       parameters: new Map(),
       parameterSpans: new Map(),
       caseInsensitiveSpans: new Set(),
-      repeatedLowercaseReceivers: new Set(),
-      profitableLowercaseCalls: new Set(),
       fields,
       duplicateNames: new Set(),
     },

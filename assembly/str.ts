@@ -4,6 +4,7 @@ import {
   asciiCaseFold,
   compare as rangeCompare,
   copyBytes,
+  copyRepeated,
   equals as rangeEquals,
   equalsBytes,
   indexOf as rangeIndexOf,
@@ -1725,11 +1726,17 @@ import { Str8 } from "./str8";
   static toLowerCaseIfNeeded<T>(s: T): string {
     const start = bStart(s);
     const end = bEnd(s);
+    let needsFold = false;
     for (let p = start; p < end; p += 2) {
       const c = load<u16>(p);
-      if ((c >= 0x41 && c <= 0x5a) || c > 0x7f) {
-        return Str.toLowerCase<T>(s);
-      }
+      if (c > 0x7f) return unicodeLowercase<T>(s, start, end);
+      if (c >= 0x41 && c <= 0x5a) needsFold = true;
+    }
+    if (needsFold) {
+      const bytes = end - start;
+      const out = allocString(bytes);
+      asciiCaseFold(changetype<usize>(out), start, bytes, 0x41, 0x5a, 0x20);
+      return out;
     }
     if (isString<T>()) return changetype<string>(s);
     return materialize(start, end);
@@ -1749,11 +1756,7 @@ import { Str8 } from "./str8";
     if (count < 0) throw new RangeError("repeat count must be non-negative");
     if (count == 0 || bytes == 0) return "";
     const out = allocString(checkedStringBytes(<u64>(bytes >> 1) * <u64>count));
-    let p = changetype<usize>(out);
-    for (let i = 0; i < count; i++) {
-      copyBytes(p, start, bytes);
-      p += bytes;
-    }
+    copyRepeated(changetype<usize>(out), start, bytes, bytes * <usize>count);
     return out;
   }
 
@@ -1882,18 +1885,24 @@ import { Str8 } from "./str8";
     const sBytes = (<usize>sLen) << 1;
     const spEnd = sp + sBytes;
 
-    let count = 0;
     let idx = rangeIndexOf(start, end, sp, spEnd, 0);
-    while (idx >= 0) {
-      count++;
-      idx = rangeIndexOf(start, end, sp, spEnd, idx + sLen);
-    }
-    if (count == 0) return materialize(start, end);
+    if (idx < 0) return materialize(start, end);
 
     const viewUnits = unitLength(start, end);
     const rLen = replacement.length;
     const rBytes = (<usize>rLen) << 1;
     const rp = changetype<usize>(replacement);
+    if (rLen == sLen) {
+      const out = allocString(checkedStringBytes(<u64>viewUnits));
+      writeReplacements(start, end, sp, spEnd, rp, rBytes, sLen, idx, out);
+      return out;
+    }
+
+    let count = 0;
+    while (idx >= 0) {
+      count++;
+      idx = rangeIndexOf(start, end, sp, spEnd, idx + sLen);
+    }
     const retained = <u64>viewUnits - <u64>count * <u64>sLen;
     const out = allocString(
       checkedStringBytes(retained + <u64>count * <u64>rLen),
@@ -1915,6 +1924,43 @@ import { Str8 } from "./str8";
     copyBytes(op, tailStart, end - tailStart); // trailing segment
     return out;
   }
+}
+
+function unicodeLowercase<T>(s: T, start: usize, end: usize): string {
+  if (isString<T>()) return changetype<string>(s).toLowerCase();
+  const view = changetype<Str>(s);
+  const base = changetype<usize>(view.data);
+  if (start == base && end == base + ((<usize>view.data.length) << 1)) {
+    return view.data.toLowerCase();
+  }
+  return materialize(start, end).toLowerCase();
+}
+
+function writeReplacements(
+  start: usize,
+  end: usize,
+  searchStart: usize,
+  searchEnd: usize,
+  replacement: usize,
+  replacementBytes: usize,
+  searchUnits: i32,
+  firstIndex: i32,
+  out: string,
+): void {
+  let op = changetype<usize>(out);
+  let prev = 0;
+  let idx = firstIndex;
+  while (idx >= 0) {
+    const segmentBytes = (<usize>(idx - prev)) << 1;
+    copyBytes(op, start + ((<usize>prev) << 1), segmentBytes);
+    op += segmentBytes;
+    copyBytes(op, replacement, replacementBytes);
+    op += replacementBytes;
+    prev = idx + searchUnits;
+    idx = rangeIndexOf(start, end, searchStart, searchEnd, prev);
+  }
+  const tailStart = start + ((<usize>prev) << 1);
+  copyBytes(op, tailStart, end - tailStart);
 }
 
 // @ts-ignore: decorator
@@ -1945,14 +1991,7 @@ import { Str8 } from "./str8";
 function fillRepeat(dst: usize, count: i32, pad: string): i32 {
   const padBytes = (<usize>pad.length) << 1;
   const pp = changetype<usize>(pad);
-  let remaining = (<usize>count) << 1;
-  let p = dst;
-  while (remaining >= padBytes) {
-    copyBytes(p, pp, padBytes);
-    p += padBytes;
-    remaining -= padBytes;
-  }
-  if (remaining) copyBytes(p, pp, remaining);
+  copyRepeated(dst, pp, padBytes, (<usize>count) << 1);
   return count;
 }
 

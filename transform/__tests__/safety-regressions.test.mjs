@@ -20,6 +20,15 @@ for (const mode of ["global", "single", "auto"]) {
     assert.equal(e.betweenEmpty(), 0, mode);
     assert.equal(e.malformedTailCount(), 11, mode);
     assert.equal(e.malformedTailCodePoint(), 0xfffd, mode);
+    assert.equal(e.collidingFieldNames(), 2, mode);
+    assert.equal(e.lowercaseIdentity(), 0, mode);
+    assert.equal(e.nativeTrimLength(), 2, mode);
+    assert.equal(e.fusedChainCheck(), 1, mode);
+    assert.equal(e.directIndexOfCheck(), 1, mode);
+    assert.equal(e.localSpanChainCheck(), 11, mode);
+    assert.equal(e.localSpanQueryCheck(), 1, mode);
+    assert.equal(e.reassignedOwnerCheck(), 1, mode);
+    assert.equal(e.shadowedLocalsCheck(), 3, mode);
     for (const name of [
       "invalidUtf16Range",
       "invalidUtf8Range",

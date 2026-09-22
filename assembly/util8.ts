@@ -103,6 +103,16 @@ export function codePointCount(start: usize, end: usize): i32 {
   let count = 0;
   let p = start;
   while (p < end) {
+    if (ASC_FEATURE_SIMD && p + 16 <= end && !i8x16.bitmask(v128.load(p))) {
+      p += 16;
+      count += 16;
+      continue;
+    }
+    if (!ASC_FEATURE_SIMD && p + 8 <= end && !(load<u64>(p) & LANE_HIGH_8)) {
+      p += 8;
+      count += 8;
+      continue;
+    }
     p += <usize>widthOf(decodeCodePointAt(p, end));
     count++;
   }

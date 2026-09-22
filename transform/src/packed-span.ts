@@ -24,6 +24,7 @@ import {
   SpanOwner,
 } from "./model.js";
 import { operationSemantics } from "./operations.js";
+import { nativeLengthFusionIsCompatible } from "./compiler-profile.js";
 import {
   isDeclarationIdentifier,
   isStrStaticCall,
@@ -268,7 +269,11 @@ export function lowerPackedLengthInitializer(
   context: FunctionContext,
 ): Expression {
   const parts = viewCallParts(expression);
-  if (!parts || !operationSemantics(parts.method).lengthFusible) {
+  if (
+    !parts ||
+    !operationSemantics(parts.method).lengthFusible ||
+    !nativeLengthFusionIsCompatible(parts.method)
+  ) {
     return expression;
   }
   if (

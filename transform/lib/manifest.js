@@ -1,11 +1,13 @@
 import {
   Function as ASFunction,
+  FunctionDeclaration,
   Global,
-  Local,
   Property,
+  VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { readFileSync, writeFileSync } from "fs";
 import { admitSource } from "./source-admission.js";
+import { walk } from "./visitor.js";
 function representationOfResolvedType(type) {
   if (
     type === "string" ||
@@ -92,24 +94,34 @@ export function buildSemanticManifest(program) {
         });
       },
     );
-    for (const local of element.localsByIndex) {
-      if (!(local instanceof Local) || !local.declaration) continue;
-      const range = local.declaration.range;
+    const localTypes = new Map(
+      element.localsByIndex.map((local) => [local.name, local.type.toString()]),
+    );
+    walk(element.prototype.declaration.body, (node) => {
+      if (
+        node instanceof FunctionDeclaration &&
+        node !== element.prototype.declaration
+      ) {
+        return false;
+      }
+      if (!(node instanceof VariableDeclaration)) return;
+      const resolvedType = localTypes.get(node.name.text);
+      if (!resolvedType) return;
+      const range = node.range;
       const source = range.source;
-      if (!admitSource(source).semanticFacts) continue;
-      const resolvedType = local.type.toString();
+      if (!admitSource(source).semanticFacts) return;
       const representation = representationOfResolvedType(resolvedType);
       const key = `${source.normalizedPath}:${range.start}:local`;
       addFact(key, {
         source: source.normalizedPath,
         start: range.start,
         end: range.end,
-        name: local.name,
+        name: node.name.text,
         kind: "local",
         representation,
         resolvedType,
       });
-    }
+    });
   }
   const facts = [...factsByKey.entries()]
     .filter(

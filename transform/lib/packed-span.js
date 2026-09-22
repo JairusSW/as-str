@@ -13,6 +13,7 @@ import {
   u64Type,
 } from "./ast.js";
 import { operationSemantics } from "./operations.js";
+import { nativeLengthFusionIsCompatible } from "./compiler-profile.js";
 import {
   isDeclarationIdentifier,
   isStrStaticCall,
@@ -222,7 +223,11 @@ export function lowerPackedSpanInitializer(expression, context) {
 }
 export function lowerPackedLengthInitializer(expression, context) {
   const parts = viewCallParts(expression);
-  if (!parts || !operationSemantics(parts.method).lengthFusible) {
+  if (
+    !parts ||
+    !operationSemantics(parts.method).lengthFusible ||
+    !nativeLengthFusionIsCompatible(parts.method)
+  ) {
     return expression;
   }
   if (

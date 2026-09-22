@@ -4,6 +4,7 @@ import {
   equals as rangeEquals,
   equalsBytes,
   isWhiteSpace,
+  copyRepeated,
 } from "./util";
 import {
   allocBuffer,
@@ -584,11 +585,18 @@ import { Str } from "./str";
 
   /** View between the last `open` before the last `close`, or empty if absent. */
   betweenLast<U, V>(open: U, close: V): Str8 {
-    const hi = this.lastIndexOf(close);
+    const c = asView(close);
+    const hi = lastIndexOfBytes(
+      this.start,
+      this.end,
+      c.start,
+      c.end,
+      i32.MAX_VALUE,
+    );
     if (hi < 0) return new Str8(this.buffer, this.end, this.end);
-    const lo = this.lastIndexOf(open, hi);
-    if (lo < 0) return new Str8(this.buffer, this.start, this.start);
     const o = asView(open);
+    const lo = lastIndexOfBytes(this.start, this.end, o.start, o.end, hi);
+    if (lo < 0) return new Str8(this.buffer, this.start, this.start);
     return this.slice(lo + <i32>(o.end - o.start), hi);
   }
 
@@ -1014,11 +1022,7 @@ import { Str } from "./str";
     if (count < 0) throw new RangeError("repeat count must be non-negative");
     if (count == 0 || bytes == 0) return Str8.fromBuffer(allocBuffer(0));
     const out = allocBuffer(checkedBufferBytes(<u64>bytes * <u64>count));
-    let p = changetype<usize>(out);
-    for (let i = 0; i < count; i++) {
-      copyBytes(p, v.start, bytes);
-      p += bytes;
-    }
+    copyRepeated(changetype<usize>(out), v.start, bytes, bytes * <usize>count);
     return Str8.fromBuffer(out);
   }
 
@@ -1036,7 +1040,7 @@ import { Str } from "./str";
     const out = allocBuffer(checkedBufferBytes(<u64>length));
     const op = changetype<usize>(out);
     const fillBytes = <usize>(length - viewBytes);
-    fillRepeatBytes(op, fillBytes, changetype<usize>(padBuf), padBytes);
+    copyRepeated(op, changetype<usize>(padBuf), padBytes, fillBytes);
     copyBytes(op + fillBytes, v.start, v.end - v.start);
     return Str8.fromBuffer(out);
   }
@@ -1056,11 +1060,11 @@ import { Str } from "./str";
     const out = allocBuffer(checkedBufferBytes(<u64>length));
     const op = changetype<usize>(out);
     copyBytes(op, v.start, viewBytes);
-    fillRepeatBytes(
+    copyRepeated(
       op + viewBytes,
-      <usize>(length - len),
       changetype<usize>(padBuf),
       padBytes,
+      <usize>(length - len),
     );
     return Str8.fromBuffer(out);
   }
@@ -1108,7 +1112,6 @@ import { Str } from "./str";
     const searchBuf = U8.encode(search);
     const sBytes = <usize>searchBuf.byteLength;
 
-    let count = 0;
     let idx = indexOfBytes(
       v.start,
       v.end,
@@ -1116,6 +1119,18 @@ import { Str } from "./str";
       changetype<usize>(searchBuf) + sBytes,
       0,
     );
+    if (idx < 0) return Str8.fromBuffer(materializeBuffer(v.start, v.end));
+
+    const replBuf = U8.encode(replacement);
+    const rBytes = <usize>replBuf.byteLength;
+    const viewBytes = v.end - v.start;
+    if (rBytes == sBytes) {
+      const out = allocBuffer(viewBytes);
+      writeByteReplacements(v, searchBuf, replBuf, sBytes, rBytes, idx, out);
+      return Str8.fromBuffer(out);
+    }
+
+    let count = 0;
     while (idx >= 0) {
       count++;
       idx = indexOfBytes(
@@ -1126,11 +1141,6 @@ import { Str } from "./str";
         idx + <i32>sBytes,
       );
     }
-    if (count == 0) return Str8.fromBuffer(materializeBuffer(v.start, v.end));
-
-    const replBuf = U8.encode(replacement);
-    const rBytes = <usize>replBuf.byteLength;
-    const viewBytes = v.end - v.start;
     const retained = <u64>viewBytes - <u64>count * <u64>sBytes;
     const out = allocBuffer(
       checkedBufferBytes(retained + <u64>count * <u64>rBytes),
@@ -1244,6 +1254,38 @@ import { Str } from "./str";
   }
 }
 
+function writeByteReplacements(
+  view: Str8,
+  search: ArrayBuffer,
+  replacement: ArrayBuffer,
+  searchBytes: usize,
+  replacementBytes: usize,
+  firstIndex: i32,
+  out: ArrayBuffer,
+): void {
+  const searchStart = changetype<usize>(search);
+  let op = changetype<usize>(out);
+  let prev: usize = 0;
+  let idx = firstIndex;
+  while (idx >= 0) {
+    const segmentBytes = <usize>idx - prev;
+    copyBytes(op, view.start + prev, segmentBytes);
+    op += segmentBytes;
+    copyBytes(op, changetype<usize>(replacement), replacementBytes);
+    op += replacementBytes;
+    prev = <usize>idx + searchBytes;
+    idx = indexOfBytes(
+      view.start,
+      view.end,
+      searchStart,
+      searchStart + searchBytes,
+      <i32>prev,
+    );
+  }
+  const tailStart = view.start + prev;
+  copyBytes(op, tailStart, view.end - tailStart);
+}
+
 /**
  * Normalize a `string | Str8 | ArrayBuffer` to a `Str8` view. A `string` is
  * transcoded to a fresh UTF-8 buffer (allocates); a `Str8` is returned as-is; an
@@ -1259,23 +1301,6 @@ import { Str } from "./str";
   }
   if (isReference<T>() && idof<T>() == idof<Str8>()) return changetype<Str8>(s);
   throw new TypeError("Expected string, ArrayBuffer, or Str8");
-}
-
-/** Fill `count` bytes at `dst` by repeating `srcBytes` bytes from `src`. */
-function fillRepeatBytes(
-  dst: usize,
-  count: usize,
-  src: usize,
-  srcBytes: usize,
-): void {
-  let remaining = count;
-  let p = dst;
-  while (remaining >= srcBytes) {
-    copyBytes(p, src, srcBytes);
-    p += srcBytes;
-    remaining -= srcBytes;
-  }
-  if (remaining) copyBytes(p, src, remaining);
 }
 
 function byteOffsetOfChar(start: usize, end: usize, index: i32): usize {

@@ -103,8 +103,9 @@ export function firstToken(line: string): string {
 
 Automatic mode uses a shadow compiler pass for resolved type information and
 applies only rewrites with a proven string receiver. It keeps native signatures.
-Packed-span promotion is disabled while owner capture and operand handling are
-being hardened.
+Native substring chains and immutable local substrings can use a borrowed range:
+the managed owner stays rooted while start and length are carried as scalars.
+The transform materializes a native string when a consumer requires one.
 
 Add the transform to your `asc` command:
 
@@ -126,15 +127,16 @@ export function hasCompactLabel(value: string): bool {
 }
 ```
 
-The length query can use `str.trimLength(value)` without allocating a trimmed
-substring. Other operations retain native behavior when proof is insufficient.
+Compatible scalar queries can operate directly on the native input, while
+substring chains can fuse into one borrowed-range query without allocating
+intermediate strings or `Str` wrappers. Operations retain native behavior when
+type, evaluation-order, ownership, or compiler-version proof is insufficient.
 
 The optimizer leaves values native around raw loads, pointer casts, explicit
 assertions, native-string call parameters, unknown calls, containers, fields,
 nullable boundaries, and other operations it cannot prove safe.
-It also avoids repeated native allocations for profitable `toLowerCase()`
-receivers that are already lowercase ASCII, while retaining the normal
-Unicode-aware result for uppercase or non-ASCII input.
+Compiler versions with known native semantic differences keep the affected
+operation native.
 
 Local overrides use comments because AssemblyScript does not allow decorators
 on local variables:
@@ -169,7 +171,7 @@ Source still uses native strings:
 
 ```ts
 export function compactLength(value: string): i32 {
-  return value.trim().length;
+  return value.slice(1, 5).length;
 }
 ```
 

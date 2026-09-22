@@ -213,7 +213,7 @@ try {
   const conventionalWat = path.join(scratch, "consumer-assembly-index.wat");
   writeFileSync(
     conventionalInput,
-    'export function length(): i32 { return "  abc  ".trim().length; }\n',
+    'export function length(): i32 { const part = "abc".slice(1); return part.length; }\n',
   );
   run(process.execPath, [
     asc,
@@ -225,7 +225,7 @@ try {
     "--textFile",
     conventionalWat,
   ]);
-  assert.match(readFileSync(conventionalWat, "utf8"), /Str\.trimLength/);
+  assert.match(readFileSync(conventionalWat, "utf8"), /Str\.sliceLength/);
 
   const dependencyDir = path.join(scratch, "node_modules", "view-dependency");
   mkdirSync(dependencyDir, { recursive: true });

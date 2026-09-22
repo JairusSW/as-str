@@ -35,6 +35,23 @@ export function expressionCanProduceView(expression) {
     operationSemantics(property.property.text).result === "view"
   );
 }
+export function expressionHasViewProducingShape(expression) {
+  if (!expression) return false;
+  if (expression instanceof ParenthesizedExpression) {
+    return expressionHasViewProducingShape(expression.expression);
+  }
+  if (expression instanceof TernaryExpression) {
+    return (
+      expressionHasViewProducingShape(expression.ifThen) &&
+      expressionHasViewProducingShape(expression.ifElse)
+    );
+  }
+  if (!(expression instanceof CallExpression)) return false;
+  const property = propertyCall(expression);
+  return (
+    !!property && operationSemantics(property.property.text).result === "view"
+  );
+}
 export function expressionIsExplicitView(expression) {
   if (!expression) return false;
   if (expression instanceof ParenthesizedExpression) {

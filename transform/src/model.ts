@@ -50,8 +50,6 @@ export interface FunctionContext {
   parameters: Map<string, Representation>;
   parameterSpans: Map<string, PackedSpanLink>;
   caseInsensitiveSpans: Set<string>;
-  repeatedLowercaseReceivers: Set<string>;
-  profitableLowercaseCalls: Set<number>;
   fields: Map<string, Representation>;
   duplicateNames: Set<string>;
 }
