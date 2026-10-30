@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { compileFixture, instantiate, repo } from "./harness.mjs";
 
 const expected = {
@@ -335,11 +336,9 @@ for (const mode of ["auto", "single"]) {
   );
   assert.ifError(result.error);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /ERROR TS2339/);
-  assert.doesNotMatch(
-    result.stdout + result.stderr,
-    /RangeError|Maximum call stack/,
-  );
+  const diagnostics = stripVTControlCharacters(result.stdout + result.stderr);
+  assert.match(diagnostics, /ERROR TS2339/);
+  assert.doesNotMatch(diagnostics, /RangeError|Maximum call stack/);
 }
 
 console.log(

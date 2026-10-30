@@ -4,6 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-30
+
+### Changed
+
+- Improve UTF-16 and UTF-8 substring search, short-range equality, splitting,
+  and repeated fills with bounded SWAR and SIMD scans.
+- Avoid temporary encodings for native-string `str8` comparisons, ASCII
+  searches, and metadata queries.
+- Reuse AssemblyScript's optimized whitespace classifier for UTF-16 and UTF-8
+  trimming, and reduce transform traversal and type-resolution overhead.
+- Strengthen semantic-cache identity checks with compiler options, dependency
+  sources, and the transform implementation. Version 1 and stale caches fall
+  back to syntax analysis; regenerate metadata with `as-str/global`.
+
+### Fixed
+
+- Preserve nullable strings, explicit views, native bounds checks, evaluation
+  order, and backing owners during packed-span and lowercase rewrites.
+- Resolve aliases, imported and inherited class members, generic defaults,
+  callback signatures, arrays, and rest parameters at their actual call sites.
+- Preserve search positions when lowering `includes`, support view needles on
+  native-string searches, and keep `localeCompare` type-correct after promotion.
+- Avoid generated helper and type-name collisions, including constructor
+  parameter properties, nested functions, and imported helpers.
+- Correct relative imports at package roots and across Windows drives or shares.
+- Honor UTF-8 encoding flags and error modes, reject malformed checked UTF-8
+  inputs, and validate allocation sizes before narrowing to wasm32.
+- Preserve U+0085 (NEL) during trimming to match native `String.trim` semantics.
+
+### Added
+
+- Differential, allocation, consumer-package, and corpus benchmark coverage,
+  including exhaustive UTF-16 whitespace checks and SWAR/SIMD boundary cases.
+
 ## [0.6.0] - 2026-07-30
 
 ### Added
