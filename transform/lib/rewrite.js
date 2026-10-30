@@ -327,7 +327,7 @@ function rewriteExpression(expression, expected, context, signatures) {
     if (
       expression.operator === 101 &&
       expression.left instanceof IdentifierExpression &&
-      context.caseInsensitiveSpans.has(expression.left.text) &&
+      context.lowercaseSpans.has(expression.left.text) &&
       expression.right instanceof CallExpression
     ) {
       const lower = propertyCall(expression.right);
@@ -345,6 +345,26 @@ function rewriteExpression(expression, expected, context, signatures) {
       expression.operator === 77 ||
       expression.operator === 79;
     if (equality) {
+      const leftLink =
+        expression.left instanceof IdentifierExpression
+          ? packedSpanLink(expression.left.text, context)
+          : null;
+      const rightLink =
+        expression.right instanceof IdentifierExpression
+          ? packedSpanLink(expression.right.text, context)
+          : null;
+      const negate = expression.operator === 77 || expression.operator === 79;
+      if (leftLink && rightLink) {
+        return staticViewCall(
+          negate ? "notEqualsSpanSpan" : "equalsSpanSpan",
+          spanOwnerExpression(leftLink.owner, expression.range),
+          [
+            expression.left,
+            spanOwnerExpression(rightLink.owner, expression.range),
+            expression.right,
+          ],
+        );
+      }
       const directView =
         expression.left instanceof CallExpression &&
         operationSemantics(propertyCall(expression.left)?.property.text ?? "")
@@ -365,6 +385,19 @@ function rewriteExpression(expression, expected, context, signatures) {
         ) {
           const other =
             directView === expression.left ? expression.right : expression.left;
+          const otherLink =
+            directView === expression.left ? rightLink : leftLink;
+          if (otherLink) {
+            return staticViewCall(
+              negate ? "notEqualsSpanSpan" : "equalsSpanSpan",
+              parts.receiver,
+              [
+                lowerPackedSpanInitializer(directView, context),
+                spanOwnerExpression(otherLink.owner, expression.range),
+                other,
+              ],
+            );
+          }
           return staticViewCall(
             expression.operator === 77 || expression.operator === 79
               ? "notEqualsSpan"
@@ -377,14 +410,6 @@ function rewriteExpression(expression, expected, context, signatures) {
           );
         }
       }
-      const leftLink =
-        expression.left instanceof IdentifierExpression
-          ? packedSpanLink(expression.left.text, context)
-          : null;
-      const rightLink =
-        expression.right instanceof IdentifierExpression
-          ? packedSpanLink(expression.right.text, context)
-          : null;
       const spanExpression = leftLink
         ? expression.left
         : rightLink
@@ -396,17 +421,16 @@ function rewriteExpression(expression, expected, context, signatures) {
           spanExpression === expression.left
             ? expression.right
             : expression.left;
-        const ignoreCase =
-          context.caseInsensitiveSpans.has(spanExpression.text) &&
-          other instanceof StringLiteralExpression &&
-          /[A-Za-z]/.test(other.value);
+        const lowercase =
+          context.lowercaseSpans.has(spanExpression.text) &&
+          other instanceof StringLiteralExpression;
         return staticViewCall(
           expression.operator === 77 || expression.operator === 79
-            ? ignoreCase
-              ? "notEqualsIgnoreCaseSpan"
+            ? lowercase
+              ? "notEqualsLowerCaseSpan"
               : "notEqualsSpan"
-            : ignoreCase
-              ? "equalsIgnoreCaseSpan"
+            : lowercase
+              ? "equalsLowerCaseSpan"
               : "equalsSpan",
           spanOwnerExpression(spanLink.owner, expression.range),
           [

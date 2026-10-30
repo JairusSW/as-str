@@ -356,11 +356,11 @@ import { str8 } from "as-str";
 const s = str8.from("héllo, 世界"); // string -> UTF-8 buffer (allocates)
 s.length; // 14 (BYTES, like Rust .len() / Go len())
 s.codePointCount(); // 9 (Unicode scalars)
-s.slice(0, 5).toString(); // "hé" - O(1) zero-copy byte slice
+s.slice(0, 3).toString(); // "hé" - O(1) zero-copy byte slice
 s.indexOf("llo"); // byte offset (Go strings.Index / Rust .find)
 s[0]; // 104 - the raw byte (Go s[i])
 s.codePointAt(1); // 0xE9 ('é'), decoded from the 2-byte sequence
-s.isCharBoundary(1); // false - byte 1 is mid-codepoint
+s.isCharBoundary(2); // false - byte 2 is mid-codepoint
 
 // Wrap existing UTF-8 bytes with no copy:
 const view = str8.fromBuffer(someArrayBuffer); // trusts the bytes
@@ -377,7 +377,8 @@ a codepoint - guard with `isCharBoundary` if you need a valid boundary.
 
 `str` and `str8` are also callable as converters. A view of the same type passes
 through, a native `string` is wrapped/transcoded, and anything else with a
-`toString()` (numbers, the other view, your own classes) is stringified:
+`toString()` (numbers, your own classes) is stringified. UTF-16 views passed to
+`str8` are encoded directly, without materializing a temporary string:
 
 ```typescript
 str(42).toString(); // "42"
@@ -425,9 +426,45 @@ differential fuzzing against the native `String` methods.
 
 ```bash
 npm run bench         # microbenchmarks (as-bench)
+npm run bench:runtime # equality, repeat, padding, search and codepoint slices
+npm run bench:payloads # parsing, search, normalization and encoding workflows
 npm run charts:build  # benchmark both builds and render charts to build/charts/
 npm run charts        # build the charts and serve them locally
 ```
+
+To compare runtime changes against a saved local baseline:
+
+```bash
+npm run bench:runtime -- --out build/runtime-baseline
+# Make the change, then compare both SIMD and non-SIMD builds:
+npm run bench:runtime -- --baseline build/runtime-baseline
+```
+
+The comparison checks result checksums and records alternating-run median
+timings, individual samples, build hashes, and runtime metadata in
+`build/runtime-performance/results.json`. Use `--filter first16` (or another
+workload substring) to narrow a run, and `--samples 11` to change the sample count.
+
+The payload suite combines deterministic representative HTTP, URL, log, TSV,
+Unicode text and JSON records with actual source files from this repository.
+It includes request-field extraction, message byte sizing, and conversion of
+trimmed UTF-16/UTF-8 views.
+Each record is checked against an independent JavaScript reference in both
+UTF-16 and UTF-8 modes. Inputs are prepared before timing; operations such as
+encoding a native string needle, splitting fields, and normalizing text stay
+inside the measured work. Separate instrumented builds count runtime allocation
+blocks without adding tracing overhead to the timing builds.
+
+```bash
+npm run bench:payloads -- --out build/payload-baseline
+# Reuse exactly the same records after changing the implementation:
+npm run bench:payloads -- --baseline build/payload-baseline \
+  --corpus build/payload-baseline/corpus.json
+```
+
+Results, individual timing samples, allocation counts, corpus data, and build
+hashes are saved under `build/payload-performance/`. These local Node/V8 results
+are workload-specific; allocation counts are not peak memory or RSS measurements.
 
 ## Architecture
 

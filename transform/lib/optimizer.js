@@ -137,7 +137,7 @@ function collectFunctionSignatures(source, semanticFacts) {
       spanArgumentCounts: new Map(),
       directCallCount: 0,
       spanParameters: new Map(),
-      caseInsensitiveSpanParameters: new Set(),
+      lowercaseSpanParameters: new Set(),
       spanAppliedDeclarations: new Set(),
     });
   });
@@ -527,7 +527,7 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
     bindings,
     parameters,
     parameterSpans: new Map(),
-    caseInsensitiveSpans: new Set(),
+    lowercaseSpans: new Set(),
     repeatedLowercaseReceivers: new Set(
       [...lowercaseReceiverCounts]
         .filter(([, count]) => count > 1)
@@ -1055,7 +1055,7 @@ export function optimizeSource(
       bindings: new Map(),
       parameters: new Map(),
       parameterSpans: new Map(),
-      caseInsensitiveSpans: new Set(),
+      lowercaseSpans: new Set(),
       repeatedLowercaseReceivers: new Set(),
       profitableLowercaseCalls: new Set(),
       fields,

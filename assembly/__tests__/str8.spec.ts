@@ -68,6 +68,38 @@ describe("str8 views (zero-copy, byte-indexed)", () => {
 });
 
 describe("str8 queries", () => {
+  test("sliceChars clamps positive and negative scalar bounds", () => {
+    const points = ["a", "😀", "é", "世", "\0", "z"];
+    const view = str8.from("<" + points.join("") + ">").slice(1, -1);
+    const bounds = [
+      i32.MIN_VALUE,
+      -100,
+      -6,
+      -3,
+      -1,
+      0,
+      1,
+      3,
+      6,
+      100,
+      i32.MAX_VALUE - 1,
+      i32.MAX_VALUE,
+    ];
+    for (let i = 0; i < bounds.length; i++) {
+      const start = bounds[i];
+      expect(view.sliceChars(start).toString()).toBe(
+        points.slice(start).join(""),
+      );
+      for (let j = 0; j < bounds.length; j++) {
+        const end = bounds[j];
+        expect(view.sliceChars(start, end).toString()).toBe(
+          points.slice(start, end).join(""),
+        );
+      }
+    }
+    expect(str8.from("").sliceChars(1, 10).length).toBe(0);
+  });
+
   test("length is bytes; codePointCount is scalars", () => {
     expect(str8.length(SAMPLE)).toBe(SAMPLE.length); // ASCII: equal
     expect(str8.byteLength(SAMPLE)).toBe(SAMPLE.length);
@@ -194,6 +226,36 @@ describe("str8 namespace accepts string | str8 | ArrayBuffer", () => {
 });
 
 describe("str8 allocating helpers", () => {
+  test("repeat and byte padding preserve content across copy tiers", () => {
+    const patterns = ["a", "ab", "abc", "😀é", "x".repeat(129)];
+    const counts = [0, 1, 2, 3, 7, 8, 17, 65, 257];
+    const lengths = [0, 1, 3, 7, 8, 15, 16, 127, 128, 129, 255, 256, 257, 1025];
+    for (let p = 0; p < patterns.length; p++) {
+      const pattern = patterns[p];
+      const bytes = str8.from(pattern);
+      const view = str8.from("<" + pattern + ">").slice(1, -1);
+      for (let i = 0; i < counts.length; i++) {
+        expect(view.repeat(counts[i]).toString()).toBe(
+          pattern.repeat(counts[i]),
+        );
+      }
+      for (let i = 0; i < lengths.length; i++) {
+        const prefix = str8.padStart("xy", lengths[i], pattern);
+        const suffix = str8.padEnd("xy", lengths[i], pattern);
+        const fill = max(lengths[i] - 2, 0);
+        expect(prefix.length).toBe(fill + 2);
+        expect(suffix.length).toBe(fill + 2);
+        expect(prefix.slice(fill).toString()).toBe("xy");
+        expect(suffix.slice(0, 2).toString()).toBe("xy");
+        for (let j = 0; j < fill; j++) {
+          const expected = bytes.byteAt(j % bytes.length);
+          expect(prefix.byteAt(j)).toBe(expected);
+          expect(suffix.byteAt(j + 2)).toBe(expected);
+        }
+      }
+    }
+  });
+
   test("concat / repeat", () => {
     expect(str8.concat("foo", "bar").toString()).toBe("foobar");
     expect(str8.concat("", "bar").toString()).toBe("bar");

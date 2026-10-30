@@ -1,6 +1,8 @@
 import {
   BinaryExpression,
+  BlockStatement,
   CallExpression,
+  ExpressionStatement,
   IdentifierExpression,
   Node,
   PropertyAccessExpression,
@@ -38,26 +40,27 @@ function viewCallParts(expression) {
 function parameterCanUsePackedSpan(body, name) {
   let safe = true;
   let uses = 0;
-  let firstLowercase = Number.MAX_SAFE_INTEGER;
-  walk(body, (node) => {
-    if (
-      node instanceof BinaryExpression &&
-      node.operator === 101 &&
-      node.left instanceof IdentifierExpression &&
-      node.left.text === name &&
-      node.right instanceof CallExpression
-    ) {
-      const property = propertyCall(node.right);
-      if (
-        property?.property.text === "toLowerCase" &&
-        property.expression instanceof IdentifierExpression &&
-        property.expression.text === name
-      ) {
-        firstLowercase = Math.min(firstLowercase, node.range.start);
-      }
-    }
-  });
+  const first = body instanceof BlockStatement ? body.statements[0] : null;
+  const assignment =
+    first instanceof ExpressionStatement &&
+    first.expression instanceof BinaryExpression
+      ? first.expression
+      : null;
+  const lowerCall =
+    assignment?.operator === 101 &&
+    assignment.left instanceof IdentifierExpression &&
+    assignment.left.text === name &&
+    assignment.right instanceof CallExpression &&
+    assignment.right.args.length === 0
+      ? assignment.right
+      : null;
+  const lowerProperty = lowerCall ? propertyCall(lowerCall) : null;
+  const deferredLowercase =
+    lowerProperty?.property.text === "toLowerCase" &&
+    lowerProperty.expression instanceof IdentifierExpression &&
+    lowerProperty.expression.text === name;
   walk(body, (node, ref) => {
+    if (deferredLowercase && node === assignment) return false;
     if (
       !(node instanceof IdentifierExpression) ||
       node.text !== name ||
@@ -66,53 +69,13 @@ function parameterCanUsePackedSpan(body, name) {
       return;
     }
     uses++;
-    if (ref.parent instanceof BinaryExpression) {
-      const binary = ref.parent;
-      if (
-        binary.operator === 101 &&
-        binary.left instanceof IdentifierExpression &&
-        binary.left.text === name &&
-        binary.right instanceof CallExpression
-      ) {
-        const property = propertyCall(binary.right);
-        if (
-          property?.property.text === "toLowerCase" &&
-          property.expression instanceof IdentifierExpression &&
-          property.expression.text === name
-        ) {
-          return;
-        }
-      }
-      if (
-        (binary.operator === 76 ||
-          binary.operator === 78 ||
-          binary.operator === 77 ||
-          binary.operator === 79) &&
-        firstLowercase !== Number.MAX_SAFE_INTEGER
-      ) {
-        const other = binary.left === node ? binary.right : binary.left;
-        if (
-          binary.range.start < firstLowercase &&
-          other instanceof StringLiteralExpression &&
-          /[A-Za-z]/.test(other.value)
-        ) {
-          safe = false;
-        }
-        return;
-      }
-    }
     if (
+      !deferredLowercase &&
       ref.parent instanceof PropertyAccessExpression &&
       ref.key === "expression"
     ) {
       const member = ref.parent.property.text;
       if (member === "length" || member === "isEmpty") return;
-      if (
-        member === "toLowerCase" &&
-        firstLowercase !== Number.MAX_SAFE_INTEGER
-      ) {
-        return;
-      }
       if (
         operationSemantics(member).spanScalar &&
         ref.grandparent instanceof CallExpression &&
@@ -128,13 +91,18 @@ function parameterCanUsePackedSpan(body, name) {
         ref.parent.operator === 77 ||
         ref.parent.operator === 79)
     ) {
+      const other =
+        ref.parent.left === node ? ref.parent.right : ref.parent.left;
+      if (deferredLowercase && !(other instanceof StringLiteralExpression)) {
+        safe = false;
+      }
       return;
     }
     safe = false;
   });
   return {
     safe: safe && uses > 0,
-    caseInsensitive: firstLowercase !== Number.MAX_SAFE_INTEGER,
+    lowercase: deferredLowercase,
   };
 }
 const NO_PACKED_SPAN_PLAN = {
@@ -161,8 +129,8 @@ export function planPackedSpanParameters(context, signature) {
         index,
         `__as_str_owner_${parameter.name.text}`,
       );
-      if (packed.caseInsensitive) {
-        signature.caseInsensitiveSpanParameters.add(index);
+      if (packed.lowercase) {
+        signature.lowercaseSpanParameters.add(index);
       }
     });
   }
@@ -199,8 +167,8 @@ export function planPackedSpanParameters(context, signature) {
         context.parameterSpans.set(parameter.name.text, {
           owner: { kind: "identifier", name: ownerName },
         });
-        if (signature.caseInsensitiveSpanParameters.has(index)) {
-          context.caseInsensitiveSpans.add(parameter.name.text);
+        if (signature.lowercaseSpanParameters.has(index)) {
+          context.lowercaseSpans.add(parameter.name.text);
         }
       }
       signature.spanAppliedDeclarations.add(declaration);

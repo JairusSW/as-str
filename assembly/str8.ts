@@ -1,8 +1,11 @@
 import {
   copyBytes,
+  checkedSize,
   equals as rangeEquals,
   equalsBytes,
+  isAsciiRange as isAscii16Range,
   isWhiteSpace,
+  repeatBytes,
 } from "./util";
 import {
   allocBuffer,
@@ -11,6 +14,8 @@ import {
   compareBytes,
   cpOf,
   decodeCodePointAt,
+  findByte,
+  findLastByte,
   indexOfBytes,
   isAsciiRange,
   isCharBoundary as rangeIsCharBoundary,
@@ -46,7 +51,8 @@ import { Str } from "./str";
  * the `[]`/`+` operators, …) move pointers and copy nothing; allocating
  * operations (`concat`, `repeat`, `padStart`, `replace`, `toUpperCase`, …) build
  * a fresh UTF-8 buffer and return a `Str8` over it; `toString` decodes to a
- * native `string`. Query operations allocate nothing.
+ * native `string`. Byte-backed query needles need no encoding; native string
+ * needles use ASCII fast paths where possible and otherwise encode to UTF-8.
  */
 // @ts-ignore: decorator
 @final export class Str8 {
@@ -100,7 +106,9 @@ import { Str } from "./str";
    * @returns A view covering all of `buf` (no copy).
    */
   static fromBufferChecked(buf: ArrayBuffer): Str8 {
-    assert(U8.validate(buf), "Str8.fromBufferChecked: invalid UTF-8");
+    if (!U8.validate(buf)) {
+      throw new Error("Str8.fromBufferChecked: invalid UTF-8");
+    }
     return Str8.fromBuffer(buf);
   }
 
@@ -341,13 +349,23 @@ import { Str } from "./str";
     lo0: i32,
     hi0: i32,
   ): Str8 {
-    const len = rangeCodePointCount(start, end);
-    let lo = lo0 < 0 ? max(len + lo0, 0) : min(lo0, len);
-    let hi = hi0 < 0 ? max(len + hi0, 0) : min(hi0, len);
-    if (hi < lo) hi = lo;
-    const bs = byteOffsetOfChar(start, end, lo);
-    const be = hi == lo ? bs : byteOffsetOfChar(bs, end, hi - lo);
-    return new Str8(buffer, bs, be);
+    // Resolve negative bounds from the end, without counting/scanning the prefix.
+    // Unsigned subtraction also handles i32.MIN_VALUE without signed overflow.
+    const bs =
+      lo0 < 0
+        ? byteOffsetFromEnd(start, end, 0 - <u32>lo0)
+        : byteOffsetOfChar(start, end, lo0);
+    const be =
+      hi0 < 0
+        ? byteOffsetFromEnd(start, end, 0 - <u32>hi0)
+        : hi0 == i32.MAX_VALUE
+          ? end
+          : lo0 >= 0
+            ? hi0 <= lo0
+              ? bs
+              : byteOffsetOfChar(bs, end, hi0 - lo0)
+            : byteOffsetOfChar(start, end, hi0);
+    return new Str8(buffer, bs, max(bs, be));
   }
 
   /**
@@ -503,6 +521,14 @@ import { Str } from "./str";
    * @param start  - byte offset to begin searching from.
    */
   indexOf<U>(search: U, start: i32 = 0): i32 {
+    if (isString<U>()) {
+      return indexOfNative(
+        this.start,
+        this.end,
+        changetype<string>(search),
+        start,
+      );
+    }
     const n = asView(search);
     return indexOfBytes(this.start, this.end, n.start, n.end, start);
   }
@@ -511,6 +537,14 @@ import { Str } from "./str";
    * Return the byte offset of the last occurrence of `search`, or -1.
    */
   lastIndexOf<U>(search: U, start: i32 = i32.MAX_VALUE): i32 {
+    if (isString<U>()) {
+      return lastIndexOfNative(
+        this.start,
+        this.end,
+        changetype<string>(search),
+        start,
+      );
+    }
     const n = asView(search);
     return lastIndexOfBytes(this.start, this.end, n.start, n.end, start);
   }
@@ -532,16 +566,14 @@ import { Str } from "./str";
   after<U>(search: U): Str8 {
     const i = this.indexOf(search);
     if (i < 0) return new Str8(this.buffer, this.end, this.end);
-    const n = asView(search);
-    return this.slice(i + <i32>(n.end - n.start));
+    return this.slice(i + needleByteLength(search));
   }
 
   /** View between the first `open` and the next `close`, or empty if absent. */
   between<U, V>(open: U, close: V): Str8 {
     const lo = this.indexOf(open);
     if (lo < 0) return new Str8(this.buffer, this.start, this.start);
-    const o = asView(open);
-    const bodyStart = lo + <i32>(o.end - o.start);
+    const bodyStart = lo + needleByteLength(open);
     const hi = this.indexOf(close, bodyStart);
     return hi < 0
       ? new Str8(this.buffer, this.end, this.end)
@@ -560,8 +592,7 @@ import { Str } from "./str";
   afterLast<U>(search: U): Str8 {
     const i = this.lastIndexOf(search);
     if (i < 0) return new Str8(this.buffer, this.end, this.end);
-    const n = asView(search);
-    return this.slice(i + <i32>(n.end - n.start));
+    return this.slice(i + needleByteLength(search));
   }
 
   /** View between the last `open` before the last `close`, or empty if absent. */
@@ -570,18 +601,33 @@ import { Str } from "./str";
     if (hi < 0) return new Str8(this.buffer, this.end, this.end);
     const lo = this.lastIndexOf(open, hi);
     if (lo < 0) return new Str8(this.buffer, this.start, this.start);
-    const o = asView(open);
-    return this.slice(lo + <i32>(o.end - o.start), hi);
+    return this.slice(lo + needleByteLength(open), hi);
   }
 
   /** Whether the view begins with `search` at the given byte offset. */
   startsWith<U>(search: U, start: i32 = 0): bool {
+    if (isString<U>()) {
+      const at = min(max(start, 0), this.length);
+      return startsWithNative(
+        this.start + <usize>at,
+        this.end,
+        changetype<string>(search),
+      );
+    }
     const n = asView(search);
     return Str8.startsWithRange(this.start, this.end, n.start, n.end, start);
   }
 
   /** Whether the view ends with `search` at the given byte position. */
   endsWith<U>(search: U, end: i32 = i32.MAX_VALUE): bool {
+    if (isString<U>()) {
+      const at = min(max(end, 0), this.length);
+      return endsWithNative(
+        this.start,
+        this.start + <usize>at,
+        changetype<string>(search),
+      );
+    }
     const n = asView(search);
     return Str8.endsWithRange(this.start, this.end, n.start, n.end, end);
   }
@@ -592,10 +638,9 @@ import { Str } from "./str";
     return rangeEquals(this.start, this.end, other.start, other.end);
   }
 
-  /** Content equality against a native `string` (transcoded to UTF-8). */
+  /** Content equality against a native `string`; ASCII comparisons allocate nothing. */
   equalsString(other: string): bool {
-    const n = Str8.from(other);
-    return rangeEquals(this.start, this.end, n.start, n.end);
+    return equalsNative(this.start, this.end, other);
   }
 
   /**
@@ -656,7 +701,7 @@ import { Str } from "./str";
    *
    * @param separator - string to split on; an empty separator splits into
    *                    single codepoints.
-   * @param limit     - maximum number of pieces to return.
+   * @param limit     - maximum pieces; negative values mean unlimited, as in String.
    */
   split(separator: string, limit: i32 = i32.MAX_VALUE): Str8[] {
     return Str8.split<Str8>(this, separator, limit);
@@ -785,19 +830,20 @@ import { Str } from "./str";
 
   /** Length in bytes. Free-function form of {@link Str8#length}. */
   static length<T>(s: T): i32 {
-    const v = asView(s);
-    return <i32>(v.end - v.start);
+    return needleByteLength(s);
   }
 
   /** Explicit byte-length alias of {@link Str8#length}. */
   static byteLength<T>(s: T): i32 {
-    const v = asView(s);
-    return <i32>(v.end - v.start);
+    return needleByteLength(s);
   }
 
   /** Free-function form of {@link Str8#isEmpty}. */
   static isEmpty<T>(s: T): bool {
-    const v = asView(s);
+    if (isString<T>()) return changetype<string>(s).length == 0;
+    if (idof<T>() == idof<ArrayBuffer>())
+      return changetype<ArrayBuffer>(s).byteLength == 0;
+    const v = changetype<Str8>(s);
     return v.start == v.end;
   }
 
@@ -842,6 +888,9 @@ import { Str } from "./str";
   /** Free-function form of {@link Str8#indexOf}. */
   static indexOf<T, U>(s: T, search: U, start: i32 = 0): i32 {
     const v = asView(s);
+    if (isString<U>()) {
+      return indexOfNative(v.start, v.end, changetype<string>(search), start);
+    }
     const n = asView(search);
     return indexOfBytes(v.start, v.end, n.start, n.end, start);
   }
@@ -849,6 +898,14 @@ import { Str } from "./str";
   /** Free-function form of {@link Str8#lastIndexOf}. */
   static lastIndexOf<T, U>(s: T, search: U, start: i32 = i32.MAX_VALUE): i32 {
     const v = asView(s);
+    if (isString<U>()) {
+      return lastIndexOfNative(
+        v.start,
+        v.end,
+        changetype<string>(search),
+        start,
+      );
+    }
     const n = asView(search);
     return lastIndexOfBytes(v.start, v.end, n.start, n.end, start);
   }
@@ -860,91 +917,45 @@ import { Str } from "./str";
 
   /** Free-function form of {@link Str8#before}. */
   static before<T, U>(s: T, search: U): Str8 {
-    const v = asView(s);
-    const n = asView(search);
-    const i = indexOfBytes(v.start, v.end, n.start, n.end, 0);
-    return i < 0
-      ? new Str8(v.buffer, v.start, v.start)
-      : Str8.sliceRange(v.buffer, v.start, v.end, 0, i);
+    return asView(s).before(search);
   }
 
   /** Free-function form of {@link Str8#after}. */
   static after<T, U>(s: T, search: U): Str8 {
-    const v = asView(s);
-    const n = asView(search);
-    const i = indexOfBytes(v.start, v.end, n.start, n.end, 0);
-    return i < 0
-      ? new Str8(v.buffer, v.end, v.end)
-      : Str8.sliceRange(
-          v.buffer,
-          v.start,
-          v.end,
-          i + <i32>(n.end - n.start),
-          i32.MAX_VALUE,
-        );
+    return asView(s).after(search);
   }
 
   /** Free-function form of {@link Str8#between}. */
   static between<T, U, V>(s: T, open: U, close: V): Str8 {
-    const v = asView(s);
-    const o = asView(open);
-    const lo = indexOfBytes(v.start, v.end, o.start, o.end, 0);
-    if (lo < 0) return new Str8(v.buffer, v.start, v.start);
-    const bodyStart = lo + <i32>(o.end - o.start);
-    const c = asView(close);
-    const hi = indexOfBytes(v.start, v.end, c.start, c.end, bodyStart);
-    return hi < 0
-      ? new Str8(v.buffer, v.end, v.end)
-      : Str8.sliceRange(v.buffer, v.start, v.end, bodyStart, hi);
+    return asView(s).between(open, close);
   }
 
   /** Free-function form of {@link Str8#beforeLast}. */
   static beforeLast<T, U>(s: T, search: U): Str8 {
-    const v = asView(s);
-    const n = asView(search);
-    const i = lastIndexOfBytes(v.start, v.end, n.start, n.end, i32.MAX_VALUE);
-    return i < 0
-      ? new Str8(v.buffer, v.start, v.start)
-      : Str8.sliceRange(v.buffer, v.start, v.end, 0, i);
+    return asView(s).beforeLast(search);
   }
 
   /** Free-function form of {@link Str8#afterLast}. */
   static afterLast<T, U>(s: T, search: U): Str8 {
-    const v = asView(s);
-    const n = asView(search);
-    const i = lastIndexOfBytes(v.start, v.end, n.start, n.end, i32.MAX_VALUE);
-    return i < 0
-      ? new Str8(v.buffer, v.end, v.end)
-      : Str8.sliceRange(
-          v.buffer,
-          v.start,
-          v.end,
-          i + <i32>(n.end - n.start),
-          i32.MAX_VALUE,
-        );
+    return asView(s).afterLast(search);
   }
 
   /** Free-function form of {@link Str8#betweenLast}. */
   static betweenLast<T, U, V>(s: T, open: U, close: V): Str8 {
-    const v = asView(s);
-    const c = asView(close);
-    const hi = lastIndexOfBytes(v.start, v.end, c.start, c.end, i32.MAX_VALUE);
-    if (hi < 0) return new Str8(v.buffer, v.end, v.end);
-    const o = asView(open);
-    const lo = lastIndexOfBytes(v.start, v.end, o.start, o.end, hi);
-    if (lo < 0) return new Str8(v.buffer, v.start, v.start);
-    return Str8.sliceRange(
-      v.buffer,
-      v.start,
-      v.end,
-      lo + <i32>(o.end - o.start),
-      hi,
-    );
+    return asView(s).betweenLast(open, close);
   }
 
   /** Free-function form of {@link Str8#startsWith}. */
   static startsWith<T, U>(s: T, search: U, start: i32 = 0): bool {
     const v = asView(s);
+    if (isString<U>()) {
+      const at = min(max(start, 0), v.length);
+      return startsWithNative(
+        v.start + <usize>at,
+        v.end,
+        changetype<string>(search),
+      );
+    }
     const n = asView(search);
     return Str8.startsWithRange(v.start, v.end, n.start, n.end, start);
   }
@@ -952,12 +963,28 @@ import { Str } from "./str";
   /** Free-function form of {@link Str8#endsWith}. */
   static endsWith<T, U>(s: T, search: U, end: i32 = i32.MAX_VALUE): bool {
     const v = asView(s);
+    if (isString<U>()) {
+      const at = min(max(end, 0), v.length);
+      return endsWithNative(
+        v.start,
+        v.start + <usize>at,
+        changetype<string>(search),
+      );
+    }
     const n = asView(search);
     return Str8.endsWithRange(v.start, v.end, n.start, n.end, end);
   }
 
   /** Content equality. Free-function form of {@link Str8#equals}. */
   static equals<T, U>(a: T, b: U): bool {
+    if (isString<U>()) {
+      const va = asView(a);
+      return equalsNative(va.start, va.end, changetype<string>(b));
+    }
+    if (isString<T>()) {
+      const vb = asView(b);
+      return equalsNative(vb.start, vb.end, changetype<string>(a));
+    }
     const va = asView(a);
     const vb = asView(b);
     return rangeEquals(va.start, va.end, vb.start, vb.end);
@@ -982,7 +1009,7 @@ import { Str } from "./str";
     const b = asView(other);
     const aBytes = a.end - a.start;
     const bBytes = b.end - b.start;
-    const out = allocBuffer(aBytes + bBytes);
+    const out = allocBuffer(<u64>aBytes + <u64>bBytes);
     const op = changetype<usize>(out);
     copyBytes(op, a.start, aBytes);
     copyBytes(op + aBytes, b.start, bBytes);
@@ -994,12 +1021,9 @@ import { Str } from "./str";
     const v = asView(s);
     const bytes = v.end - v.start;
     if (count <= 0 || bytes == 0) return Str8.fromBuffer(allocBuffer(0));
-    const out = allocBuffer(bytes * <usize>count);
-    let p = changetype<usize>(out);
-    for (let i = 0; i < count; i++) {
-      copyBytes(p, v.start, bytes);
-      p += bytes;
-    }
+    const totalBytes = <u64>bytes * <u64>count;
+    const out = allocBuffer(totalBytes);
+    repeatBytes(changetype<usize>(out), v.start, bytes, <usize>totalBytes);
     return Str8.fromBuffer(out);
   }
 
@@ -1017,7 +1041,7 @@ import { Str } from "./str";
     const out = allocBuffer(<usize>length);
     const op = changetype<usize>(out);
     const fillBytes = <usize>(length - viewBytes);
-    fillRepeatBytes(op, fillBytes, changetype<usize>(padBuf), padBytes);
+    repeatBytes(op, changetype<usize>(padBuf), padBytes, fillBytes);
     copyBytes(op + fillBytes, v.start, v.end - v.start);
     return Str8.fromBuffer(out);
   }
@@ -1037,11 +1061,11 @@ import { Str } from "./str";
     const out = allocBuffer(<usize>length);
     const op = changetype<usize>(out);
     copyBytes(op, v.start, viewBytes);
-    fillRepeatBytes(
+    repeatBytes(
       op + viewBytes,
-      <usize>(length - len),
       changetype<usize>(padBuf),
       padBytes,
+      <usize>(length - len),
     );
     return Str8.fromBuffer(out);
   }
@@ -1067,7 +1091,7 @@ import { Str } from "./str";
     const rBytes = <usize>replBuf.byteLength;
     const viewBytes = v.end - v.start;
     const idxU = <usize>idx;
-    const out = allocBuffer(viewBytes - sBytes + rBytes);
+    const out = allocBuffer(<u64>viewBytes - <u64>sBytes + <u64>rBytes);
     let op = changetype<usize>(out);
     copyBytes(op, v.start, idxU); // before the match
     op += idxU;
@@ -1082,7 +1106,10 @@ import { Str } from "./str";
   static replaceAll<T>(s: T, search: string, replacement: string): Str8 {
     const v = asView(s);
     if (search.length == 0) {
-      return Str8.from(v.toString().replaceAll(search, replacement));
+      const native = v.toString();
+      const units = <u64>native.length;
+      checkedSize((units + (units + 1) * <u64>replacement.length) << 1);
+      return Str8.from(native.replaceAll(search, replacement));
     }
     const searchBuf = U8.encode(search);
     const sBytes = <usize>searchBuf.byteLength;
@@ -1111,7 +1138,7 @@ import { Str } from "./str";
     const rBytes = <usize>replBuf.byteLength;
     const viewBytes = v.end - v.start;
     const out = allocBuffer(
-      viewBytes + <usize>count * rBytes - <usize>count * sBytes,
+      <u64>viewBytes - <u64>count * <u64>sBytes + <u64>count * <u64>rBytes,
     );
     let op = changetype<usize>(out);
     let prev: usize = 0; // byte offset just past the previous match
@@ -1181,7 +1208,8 @@ import { Str } from "./str";
     const start = v.start;
     const end = v.end;
     const out = new Array<Str8>();
-    if (limit <= 0) return out;
+    if (limit == 0) return out;
+    if (limit < 0) limit = i32.MAX_VALUE;
 
     if (separator.length == 0) {
       let p = start;
@@ -1194,6 +1222,23 @@ import { Str } from "./str";
       return out;
     }
 
+    if (separator.length == 1) {
+      const unit = load<u16>(changetype<usize>(separator));
+      if (unit < 0x80) {
+        let from = start;
+        while (true) {
+          const relative = findByte(from, end, <u8>unit);
+          if (relative < 0) {
+            out.push(new Str8(buffer, from, end));
+            return out;
+          }
+          const at = from + <usize>relative;
+          out.push(new Str8(buffer, from, at));
+          if (out.length == limit) return out;
+          from = at + 1;
+        }
+      }
+    }
     const sepBuf = U8.encode(separator);
     const sepBytes = <usize>sepBuf.byteLength;
     let from: i32 = 0;
@@ -1205,8 +1250,8 @@ import { Str } from "./str";
       from,
     );
     while (idx != -1) {
-      if (out.length >= limit) return out;
       out.push(new Str8(buffer, start + <usize>from, start + <usize>idx));
+      if (out.length == limit) return out;
       from = idx + <i32>sepBytes;
       idx = indexOfBytes(
         start,
@@ -1221,6 +1266,232 @@ import { Str } from "./str";
     }
     return out;
   }
+}
+
+// Length queries must not allocate an encoded buffer just to measure a needle.
+// @ts-ignore: decorator
+@inline function needleByteLength<T>(needle: T): i32 {
+  if (isString<T>()) return U8.byteLength(changetype<string>(needle));
+  if (idof<T>() == idof<ArrayBuffer>())
+    return changetype<ArrayBuffer>(needle).byteLength;
+  return changetype<Str8>(needle).length;
+}
+
+// Return 1 for an ASCII prefix match, 0 for a mismatch, or -1 when a
+// non-ASCII unit needs the existing WTF-8 encoder. UTF-8 always needs at least
+// as many bytes as the native string has UTF-16 units.
+function nativeAsciiPrefix(start: usize, end: usize, needle: string): i32 {
+  const units = needle.length;
+  if (<usize>units > end - start) return 0;
+  const np = changetype<usize>(needle);
+  for (let i = 0; i < units; i++) {
+    const c = load<u16>(np + ((<usize>i) << 1));
+    if (c >= 0x80) return -1;
+    if (load<u8>(start + <usize>i) != c) return 0;
+  }
+  return 1;
+}
+
+function equalsNative(start: usize, end: usize, needle: string): bool {
+  const ascii = nativeAsciiPrefix(start, end, needle);
+  if (ascii >= 0) return ascii == 1 && end - start == <usize>needle.length;
+  const encoded = U8.encode(needle);
+  const size = <usize>encoded.byteLength;
+  return (
+    size == end - start && equalsBytes(start, changetype<usize>(encoded), size)
+  );
+}
+
+function startsWithNative(start: usize, end: usize, needle: string): bool {
+  const ascii = nativeAsciiPrefix(start, end, needle);
+  if (ascii >= 0) return ascii == 1;
+  const encoded = U8.encode(needle);
+  const size = <usize>encoded.byteLength;
+  return (
+    size <= end - start && equalsBytes(start, changetype<usize>(encoded), size)
+  );
+}
+
+function endsWithNative(start: usize, end: usize, needle: string): bool {
+  const units = needle.length;
+  if (<usize>units > end - start) return false;
+  const np = changetype<usize>(needle);
+  for (let i = 1; i <= units; i++) {
+    const c = load<u16>(np + ((<usize>(units - i)) << 1));
+    if (c >= 0x80) {
+      const encoded = U8.encode(needle);
+      const size = <usize>encoded.byteLength;
+      return (
+        size <= end - start &&
+        equalsBytes(end - size, changetype<usize>(encoded), size)
+      );
+    }
+    if (load<u8>(end - <usize>i) != c) return false;
+  }
+  return true;
+}
+
+function indexOfNative(
+  start: usize,
+  end: usize,
+  needle: string,
+  from: i32,
+): i32 {
+  const units = needle.length;
+  if (units == 0) return 0;
+  if (units == 1) {
+    const c = load<u16>(changetype<usize>(needle));
+    if (c < 0x80) {
+      const at = max(from, 0);
+      if (<usize>at >= end - start) return -1;
+      const found = findByte(start + <usize>at, end, <u8>c);
+      return found < 0 ? -1 : at + found;
+    }
+  }
+  const np = changetype<usize>(needle);
+  if (
+    units <= 32 &&
+    end - start <= 1024 &&
+    isAscii16Range(np, np + ((<usize>units) << 1))
+  ) {
+    return indexOfNativeAscii(start, end, needle, from);
+  }
+  const encoded = U8.encode(needle);
+  const bp = changetype<usize>(encoded);
+  return indexOfBytes(start, end, bp, bp + <usize>encoded.byteLength, from);
+}
+
+function lastIndexOfNative(
+  start: usize,
+  end: usize,
+  needle: string,
+  from: i32,
+): i32 {
+  const units = needle.length;
+  if (units == 0) return <i32>(end - start);
+  if (units == 1) {
+    const c = load<u16>(changetype<usize>(needle));
+    if (c < 0x80) {
+      if (start == end) return -1;
+      const at = min(max(from, 0), <i32>(end - start) - 1);
+      return findLastByte(start, start + <usize>at + 1, <u8>c);
+    }
+  }
+  const np = changetype<usize>(needle);
+  if (
+    units <= 32 &&
+    end - start <= 1024 &&
+    isAscii16Range(np, np + ((<usize>units) << 1))
+  ) {
+    return lastIndexOfNativeAscii(start, end, needle, from);
+  }
+  const encoded = U8.encode(needle);
+  const bp = changetype<usize>(encoded);
+  return lastIndexOfBytes(start, end, bp, bp + <usize>encoded.byteLength, from);
+}
+
+// The caller has already checked that the native needle is ASCII. Pack four
+// UTF-16 units into four bytes without allocating a transcoded buffer.
+function equalsNativeAscii(bytes: usize, units: usize, count: usize): bool {
+  while (count >= 4) {
+    let word = load<u64>(units);
+    word = (word | (word >> 8)) & 0x0000ffff0000ffff;
+    if (load<u32>(bytes) != <u32>(word | (word >> 16))) return false;
+    bytes += 4;
+    units += 8;
+    count -= 4;
+  }
+  while (count) {
+    if (load<u8>(bytes) != load<u16>(units)) return false;
+    bytes++;
+    units += 2;
+    count--;
+  }
+  return true;
+}
+
+function indexOfNativeAscii(
+  start: usize,
+  end: usize,
+  needle: string,
+  from: i32,
+): i32 {
+  const units = needle.length;
+  const np = changetype<usize>(needle);
+  const first = <u8>load<u16>(np);
+  const last = <u8>load<u16>(np + ((<usize>(units - 1)) << 1));
+  let anchor = units - 1;
+  while (anchor > 0 && load<u16>(np + ((<usize>anchor) << 1)) == first)
+    anchor--;
+  const anchorByte = <u8>load<u16>(np + ((<usize>anchor) << 1));
+  const limit = <i32>(end - start) - units;
+  let at = max(from, 0);
+  let failures = 0;
+  while (at <= limit) {
+    const rel = findByte(
+      start + <usize>(at + anchor),
+      start + <usize>(limit + anchor) + 1,
+      anchorByte,
+    );
+    if (rel < 0) return -1;
+    at += rel;
+    const p = start + <usize>at;
+    if (
+      load<u8>(p) == first &&
+      load<u8>(p + <usize>units - 1) == last &&
+      equalsNativeAscii(p + 1, np + 2, <usize>(units - 2))
+    )
+      return at;
+    at++;
+    // Bound the extra work on repeated prefixes. The byte search can use its
+    // wide candidate filter after a few failures, with a single encoding.
+    if (++failures == 8 && at <= limit) {
+      const encoded = U8.encode(needle);
+      const bp = changetype<usize>(encoded);
+      return indexOfBytes(start, end, bp, bp + <usize>units, at);
+    }
+  }
+  return -1;
+}
+
+function lastIndexOfNativeAscii(
+  start: usize,
+  end: usize,
+  needle: string,
+  from: i32,
+): i32 {
+  const units = needle.length;
+  const np = changetype<usize>(needle);
+  const first = <u8>load<u16>(np);
+  const last = <u8>load<u16>(np + ((<usize>(units - 1)) << 1));
+  let anchor = units - 1;
+  while (anchor > 0 && load<u16>(np + ((<usize>anchor) << 1)) == first)
+    anchor--;
+  const anchorByte = <u8>load<u16>(np + ((<usize>anchor) << 1));
+  let at = min(max(from, 0), <i32>(end - start) - units);
+  let failures = 0;
+  while (at >= 0) {
+    at = findLastByte(
+      start + <usize>anchor,
+      start + <usize>(at + anchor) + 1,
+      anchorByte,
+    );
+    if (at < 0) return -1;
+    const p = start + <usize>at;
+    if (
+      load<u8>(p) == first &&
+      load<u8>(p + <usize>units - 1) == last &&
+      equalsNativeAscii(p + 1, np + 2, <usize>(units - 2))
+    )
+      return at;
+    at--;
+    if (++failures == 8 && at >= 0) {
+      const encoded = U8.encode(needle);
+      const bp = changetype<usize>(encoded);
+      return lastIndexOfBytes(start, end, bp, bp + <usize>units, at);
+    }
+  }
+  return -1;
 }
 
 /**
@@ -1239,29 +1510,24 @@ import { Str } from "./str";
   return changetype<Str8>(s);
 }
 
-/** Fill `count` bytes at `dst` by repeating `srcBytes` bytes from `src`. */
-function fillRepeatBytes(
-  dst: usize,
-  count: usize,
-  src: usize,
-  srcBytes: usize,
-): void {
-  let remaining = count;
-  let p = dst;
-  while (remaining >= srcBytes) {
-    copyBytes(p, src, srcBytes);
-    p += srcBytes;
-    remaining -= srcBytes;
-  }
-  if (remaining) copyBytes(p, src, remaining);
-}
-
 function byteOffsetOfChar(start: usize, end: usize, index: i32): usize {
+  // A scalar occupies at least one byte, so oversized bounds clamp immediately.
+  if (<usize>index >= end - start) return end;
   let p = start;
   let i = 0;
   while (p < end && i < index) {
     p += <usize>widthOf(decodeCodePointAt(p, end));
     i++;
+  }
+  return p;
+}
+
+function byteOffsetFromEnd(start: usize, end: usize, count: u32): usize {
+  if (<usize>count >= end - start) return start;
+  let p = end;
+  while (p > start && count > 0) {
+    p = prevCodePointStart(start, p);
+    count--;
   }
   return p;
 }
@@ -1275,11 +1541,11 @@ export namespace Str8 {
   export namespace UTF8 {
     /** Number of bytes the view occupies (its native UTF-8 length). */
     export function byteLength<T>(s: T): i32 {
-      const v = asView(s);
-      return <i32>(v.end - v.start);
+      return needleByteLength(s);
     }
     /** Copy the view's bytes into a fresh owned UTF-8 `ArrayBuffer`. */
     export function encode<T>(s: T): ArrayBuffer {
+      if (isString<T>()) return U8.encode(changetype<string>(s));
       const v = asView(s);
       return materializeBuffer(v.start, v.end);
     }
@@ -1297,11 +1563,13 @@ export namespace Str8 {
   export namespace UTF16 {
     /** Number of bytes the view would occupy when UTF-16 encoded. */
     export function byteLength<T>(s: T): i32 {
+      if (isString<T>()) return changetype<string>(s).length << 1;
       const v = asView(s);
       return U8.utf16LengthUnsafe(v.start, <i32>(v.end - v.start)) << 1;
     }
     /** Encode the view to a new UTF-16 `ArrayBuffer`. */
     export function encode<T>(s: T): ArrayBuffer {
+      if (isString<T>()) return U16.encode(changetype<string>(s));
       const v = asView(s);
       return U16.encode(v.toString());
     }
@@ -1313,7 +1581,7 @@ export namespace Str8 {
 
   /** Transcode a UTF-16 {@link str} into a UTF-8 `Str8` (allocates). */
   export function fromStr(v: Str): Str8 {
-    return Str8.from(v.toString());
+    return Str8.fromBuffer(Str.UTF8.encode(v));
   }
 }
 
@@ -1326,8 +1594,8 @@ export type str8 = Str8;
 
 /**
  * Convert any value to a `str8` (UTF-8 view). A `Str8` is returned as-is; a
- * native `string` is transcoded to UTF-8; anything else with a `toString()`
- * (numbers, a `str`, user classes, …) is stringified then encoded. Callable as
+ * native `string` or `Str` view is transcoded directly to UTF-8; anything else
+ * with a `toString()` (numbers, user classes, …) is stringified then encoded. Callable as
  * `str8(x)` thanks to function/namespace merging on the `str8` name.
  *
  * @param x - value to convert.
@@ -1338,6 +1606,8 @@ export function str8<T>(x: T): Str8 {
   // `idof` only applies to references, so guard it (AS `instanceof` is a
   // runtime check; this folds at compile time and dead-codes the other arms).
   if (isReference<T>() && idof<T>() == idof<Str8>()) return changetype<Str8>(x);
+  if (isReference<T>() && idof<T>() == idof<Str>())
+    return Str8.fromStr(changetype<Str>(x));
   // @ts-ignore: isDefined guards the generic toString() (asc-only builtin)
   if (isDefined(x.toString())) return Str8.from(x.toString());
   return Str8.from("");

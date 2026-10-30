@@ -6,7 +6,13 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   {
     // AssemblyScript syntax is checked by `asc`, not typescript-eslint.
-    ignores: ["assembly/**", "build/**", ".as-test/**", "**/*.tmp.ts"],
+    ignores: [
+      "assembly/**",
+      "scripts/fixtures/*.ts",
+      "build/**",
+      ".as-test/**",
+      "**/*.tmp.ts",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

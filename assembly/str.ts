@@ -1,15 +1,18 @@
 import {
   allocString,
   asciiCaseFold,
+  checkedSize,
   compare as rangeCompare,
   copyBytes,
   equals as rangeEquals,
   equalsBytes,
+  findUnit,
   indexOf as rangeIndexOf,
   isAsciiRange,
   isWhiteSpace,
   lastIndexOf as rangeLastIndexOf,
   materialize,
+  repeatBytes,
   unitLength,
 } from "./util";
 import { UTF8 as U8, UTF16 as U16 } from "utf-as";
@@ -735,7 +738,7 @@ import { Str8 } from "./str8";
    *
    * @param separator - string to split on; an empty separator splits into
    *                    single code units.
-   * @param limit     - maximum number of pieces to return.
+   * @param limit     - maximum pieces; negative values mean unlimited, as in String.
    * @returns An array of `Str` views (no character copying).
    */
   split(separator: string, limit: i32 = i32.MAX_VALUE): Str[] {
@@ -813,7 +816,7 @@ import { Str8 } from "./str8";
 
   /** Transcode this UTF-16 view into a UTF-8 {@link str8} (allocates). */
   toStr8(): Str8 {
-    return Str8.from(this.toString());
+    return Str8.fromBuffer(Str.UTF8.encode(this));
   }
 
   /**
@@ -974,6 +977,60 @@ import { Str8 } from "./str8";
   // @ts-ignore: decorator
   @inline static notEqualsSpan<T, U>(owner: T, value: u64, other: U): bool {
     return !Str.equalsSpan(owner, value, other);
+  }
+
+  // @ts-ignore: decorator
+  @inline static equalsSpanSpan<T, U>(
+    owner: T,
+    value: u64,
+    otherOwner: U,
+    other: u64,
+  ): bool {
+    bData(owner);
+    bData(otherOwner);
+    return rangeEquals(
+      Str.spanStart(value),
+      Str.spanEnd(value),
+      Str.spanStart(other),
+      Str.spanEnd(other),
+    );
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsSpanSpan<T, U>(
+    owner: T,
+    value: u64,
+    otherOwner: U,
+    other: u64,
+  ): bool {
+    return !Str.equalsSpanSpan(owner, value, otherOwner, other);
+  }
+
+  /** Compare a deferred lowercase result, preserving native Unicode semantics. */
+  static equalsLowerCaseSpan<T>(owner: T, value: u64, other: string): bool {
+    bData(owner);
+    const start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    if (!isAsciiRange(start, end)) {
+      return materialize(start, end).toLowerCase() == other;
+    }
+    if (unitLength(start, end) != other.length) return false;
+    let right = changetype<usize>(other);
+    for (let left = start; left < end; left += 2, right += 2) {
+      let c = load<u16>(left);
+      if (c >= 0x41 && c <= 0x5a) c += 0x20;
+      if (c != load<u16>(right)) return false;
+    }
+    return true;
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsLowerCaseSpan<T>(
+    owner: T,
+    value: u64,
+    other: string,
+  ): bool {
+    return !Str.equalsLowerCaseSpan(owner, value, other);
   }
 
   // @ts-ignore: decorator
@@ -1322,7 +1379,7 @@ import { Str8 } from "./str8";
     if (lo < 0) return 0;
     const start = lo + Str.length(open);
     const hi = Str.indexOf(s, close, start);
-    return hi < 0 ? 0 : hi - start;
+    return hi < 0 ? 0 : max(hi - start, 0);
   }
 
   // @ts-ignore: decorator
@@ -1361,7 +1418,8 @@ import { Str8 } from "./str8";
     const end = bEnd(s);
     const total = unitLength(start, end);
     const out = new Array<Str>();
-    if (limit <= 0) return out;
+    if (limit == 0) return out;
+    if (limit < 0) limit = i32.MAX_VALUE;
 
     const sepLen = separator.length;
     if (sepLen == 0) {
@@ -1373,12 +1431,27 @@ import { Str8 } from "./str8";
     }
 
     const sp = changetype<usize>(separator);
+    if (sepLen == 1) {
+      const unit = load<u16>(sp);
+      let from = start;
+      while (true) {
+        const relative = findUnit(from, end, unit);
+        if (relative < 0) {
+          out.push(new Str(data, from, end));
+          return out;
+        }
+        const at = from + ((<usize>relative) << 1);
+        out.push(new Str(data, from, at));
+        if (out.length == limit) return out;
+        from = at + 2;
+      }
+    }
     const spEnd = sp + ((<usize>sepLen) << 1);
     let from = 0;
     let idx = rangeIndexOf(start, end, sp, spEnd, from);
     while (idx != -1) {
-      if (out.length >= limit) return out;
       out.push(Str.sliceRange(data, start, end, from, idx));
+      if (out.length == limit) return out;
       from = idx + sepLen;
       idx = rangeIndexOf(start, end, sp, spEnd, from);
     }
@@ -1732,12 +1805,9 @@ import { Str8 } from "./str8";
     const start = bStart(s);
     const bytes = bEnd(s) - start;
     if (count <= 0 || bytes == 0) return "";
-    const out = allocString(bytes * <usize>count);
-    let p = changetype<usize>(out);
-    for (let i = 0; i < count; i++) {
-      copyBytes(p, start, bytes);
-      p += bytes;
-    }
+    const totalBytes = <u64>bytes * <u64>count;
+    const out = allocString(totalBytes);
+    repeatBytes(changetype<usize>(out), start, bytes, <usize>totalBytes);
     return out;
   }
 
@@ -1756,7 +1826,7 @@ import { Str8 } from "./str8";
     const end = bEnd(s);
     const len = unitLength(start, end);
     if (length <= len || pad.length == 0) return materialize(start, end);
-    const out = allocString((<usize>length) << 1);
+    const out = allocString((<u64>length) << 1);
     const op = changetype<usize>(out);
     const fill = fillRepeat(op, length - len, pad);
     copyBytes(op + ((<usize>fill) << 1), start, end - start);
@@ -1779,7 +1849,7 @@ import { Str8 } from "./str8";
     const viewBytes = end - start;
     const len = unitLength(start, end);
     if (length <= len || pad.length == 0) return materialize(start, end);
-    const out = allocString((<usize>length) << 1);
+    const out = allocString((<u64>length) << 1);
     const op = changetype<usize>(out);
     copyBytes(op, start, viewBytes);
     fillRepeat(op + viewBytes, length - len, pad);
@@ -1799,7 +1869,7 @@ import { Str8 } from "./str8";
     const aBytes = bEnd(s) - aStart;
     const bStart2 = bStart(other);
     const bBytes = bEnd(other) - bStart2;
-    const out = allocString(aBytes + bBytes);
+    const out = allocString(<u64>aBytes + <u64>bBytes);
     const op = changetype<usize>(out);
     copyBytes(op, aStart, aBytes);
     copyBytes(op + aBytes, bStart2, bBytes);
@@ -1829,7 +1899,7 @@ import { Str8 } from "./str8";
     const viewBytes = end - start;
     const rBytes = (<usize>replacement.length) << 1;
     const idxBytes = (<usize>idx) << 1;
-    const out = allocString(viewBytes - sBytes + rBytes);
+    const out = allocString(<u64>viewBytes - <u64>sBytes + <u64>rBytes);
     let op = changetype<usize>(out);
     copyBytes(op, start, idxBytes); // before the match
     op += idxBytes;
@@ -1854,6 +1924,8 @@ import { Str8 } from "./str8";
     const end = bEnd(s);
     const sLen = search.length;
     if (sLen == 0) {
+      const units = <u64>unitLength(start, end);
+      checkedSize((units + (units + 1) * <u64>replacement.length) << 1);
       return materialize(start, end).replaceAll(search, replacement);
     }
     const sp = changetype<usize>(search);
@@ -1868,11 +1940,12 @@ import { Str8 } from "./str8";
     }
     if (count == 0) return materialize(start, end);
 
-    const viewUnits = unitLength(start, end);
     const rLen = replacement.length;
     const rBytes = (<usize>rLen) << 1;
     const rp = changetype<usize>(replacement);
-    const out = allocString((<usize>(viewUnits + count * (rLen - sLen))) << 1);
+    const out = allocString(
+      <u64>(end - start) - <u64>count * <u64>sBytes + <u64>count * <u64>rBytes,
+    );
 
     let op = changetype<usize>(out);
     let prev = 0; // code-unit index just past the previous match
@@ -1914,14 +1987,7 @@ import { Str8 } from "./str8";
 function fillRepeat(dst: usize, count: i32, pad: string): i32 {
   const padBytes = (<usize>pad.length) << 1;
   const pp = changetype<usize>(pad);
-  let remaining = (<usize>count) << 1;
-  let p = dst;
-  while (remaining >= padBytes) {
-    copyBytes(p, pp, padBytes);
-    p += padBytes;
-    remaining -= padBytes;
-  }
-  if (remaining) copyBytes(p, pp, remaining);
+  repeatBytes(dst, pp, padBytes, (<usize>count) << 1);
   return count;
 }
 

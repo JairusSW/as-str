@@ -1,7 +1,9 @@
 import {
   BinaryExpression,
+  BlockStatement,
   CallExpression,
   Expression,
+  ExpressionStatement,
   IdentifierExpression,
   Node,
   ParameterKind,
@@ -57,29 +59,33 @@ function viewCallParts(expression: CallExpression): ViewCallParts | null {
 function parameterCanUsePackedSpan(
   body: Statement,
   name: string,
-): { safe: boolean; caseInsensitive: boolean } {
+): { safe: boolean; lowercase: boolean } {
   let safe = true;
   let uses = 0;
-  let firstLowercase = Number.MAX_SAFE_INTEGER;
-  walk(body, (node) => {
-    if (
-      node instanceof BinaryExpression &&
-      node.operator === Token.Equals &&
-      node.left instanceof IdentifierExpression &&
-      node.left.text === name &&
-      node.right instanceof CallExpression
-    ) {
-      const property = propertyCall(node.right);
-      if (
-        property?.property.text === "toLowerCase" &&
-        property.expression instanceof IdentifierExpression &&
-        property.expression.text === name
-      ) {
-        firstLowercase = Math.min(firstLowercase, node.range.start);
-      }
-    }
-  });
+  // Only defer a lowercase assignment that runs before every use. Once deferred,
+  // every consumer must compare the lowercase result against a string literal.
+  // Length, indexing and conditional assignments need the actual native result.
+  const first = body instanceof BlockStatement ? body.statements[0] : null;
+  const assignment =
+    first instanceof ExpressionStatement &&
+    first.expression instanceof BinaryExpression
+      ? first.expression
+      : null;
+  const lowerCall =
+    assignment?.operator === Token.Equals &&
+    assignment.left instanceof IdentifierExpression &&
+    assignment.left.text === name &&
+    assignment.right instanceof CallExpression &&
+    assignment.right.args.length === 0
+      ? assignment.right
+      : null;
+  const lowerProperty = lowerCall ? propertyCall(lowerCall) : null;
+  const deferredLowercase =
+    lowerProperty?.property.text === "toLowerCase" &&
+    lowerProperty.expression instanceof IdentifierExpression &&
+    lowerProperty.expression.text === name;
   walk(body, (node, ref): boolean | void => {
+    if (deferredLowercase && node === assignment) return false;
     if (
       !(node instanceof IdentifierExpression) ||
       node.text !== name ||
@@ -88,53 +94,13 @@ function parameterCanUsePackedSpan(
       return;
     }
     uses++;
-    if (ref.parent instanceof BinaryExpression) {
-      const binary = ref.parent;
-      if (
-        binary.operator === Token.Equals &&
-        binary.left instanceof IdentifierExpression &&
-        binary.left.text === name &&
-        binary.right instanceof CallExpression
-      ) {
-        const property = propertyCall(binary.right);
-        if (
-          property?.property.text === "toLowerCase" &&
-          property.expression instanceof IdentifierExpression &&
-          property.expression.text === name
-        ) {
-          return;
-        }
-      }
-      if (
-        (binary.operator === Token.Equals_Equals ||
-          binary.operator === Token.Equals_Equals_Equals ||
-          binary.operator === Token.Exclamation_Equals ||
-          binary.operator === Token.Exclamation_Equals_Equals) &&
-        firstLowercase !== Number.MAX_SAFE_INTEGER
-      ) {
-        const other = binary.left === node ? binary.right : binary.left;
-        if (
-          binary.range.start < firstLowercase &&
-          other instanceof StringLiteralExpression &&
-          /[A-Za-z]/.test(other.value)
-        ) {
-          safe = false;
-        }
-        return;
-      }
-    }
     if (
+      !deferredLowercase &&
       ref.parent instanceof PropertyAccessExpression &&
       ref.key === "expression"
     ) {
       const member = ref.parent.property.text;
       if (member === "length" || member === "isEmpty") return;
-      if (
-        member === "toLowerCase" &&
-        firstLowercase !== Number.MAX_SAFE_INTEGER
-      ) {
-        return;
-      }
       if (
         operationSemantics(member).spanScalar &&
         ref.grandparent instanceof CallExpression &&
@@ -150,13 +116,18 @@ function parameterCanUsePackedSpan(
         ref.parent.operator === Token.Exclamation_Equals ||
         ref.parent.operator === Token.Exclamation_Equals_Equals)
     ) {
+      const other =
+        ref.parent.left === node ? ref.parent.right : ref.parent.left;
+      if (deferredLowercase && !(other instanceof StringLiteralExpression)) {
+        safe = false;
+      }
       return;
     }
     safe = false;
   });
   return {
     safe: safe && uses > 0,
-    caseInsensitive: firstLowercase !== Number.MAX_SAFE_INTEGER,
+    lowercase: deferredLowercase,
   };
 }
 
@@ -198,8 +169,8 @@ export function planPackedSpanParameters(
         index,
         `__as_str_owner_${parameter.name.text}`,
       );
-      if (packed.caseInsensitive) {
-        signature.caseInsensitiveSpanParameters.add(index);
+      if (packed.lowercase) {
+        signature.lowercaseSpanParameters.add(index);
       }
     });
   }
@@ -237,8 +208,8 @@ export function planPackedSpanParameters(
         context.parameterSpans.set(parameter.name.text, {
           owner: { kind: "identifier", name: ownerName },
         });
-        if (signature.caseInsensitiveSpanParameters.has(index)) {
-          context.caseInsensitiveSpans.add(parameter.name.text);
+        if (signature.lowercaseSpanParameters.has(index)) {
+          context.lowercaseSpans.add(parameter.name.text);
         }
       }
       signature.spanAppliedDeclarations.add(declaration);

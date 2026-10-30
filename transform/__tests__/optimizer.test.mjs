@@ -8,9 +8,13 @@ const operations = await import(
 );
 
 const strSource = readFileSync(path.join(repo, "assembly/str.ts"), "utf8");
+const staticMethodsStart = strSource.search(
+  /^ {2}(?:@inline )?static slice<T>/m,
+);
+assert.notEqual(staticMethodsStart, -1, "missing Str static API boundary");
 const instanceSection = strSource.slice(
   strSource.indexOf("@final export class Str"),
-  strSource.indexOf("  static slice<T>"),
+  staticMethodsStart,
 );
 const instanceMethods = [
   ...instanceSection.matchAll(

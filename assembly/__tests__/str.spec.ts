@@ -235,6 +235,33 @@ describe("allocating helpers match native String", () => {
     expect(str.repeat(str.slice("__xy", 2), 3)).toBe("xyxyxy");
   });
 
+  test("repeat and padding preserve content across copy tiers", () => {
+    const patterns = ["a", "ab", "abc", "😀é", "x".repeat(129)];
+    const counts = [0, 1, 2, 3, 7, 8, 17, 65, 257];
+    const lengths = [0, 1, 3, 7, 8, 15, 16, 127, 128, 129, 255, 256, 257, 1025];
+    for (let p = 0; p < patterns.length; p++) {
+      const pattern = patterns[p];
+      const view = str.from("<" + pattern + ">").slice(1, -1);
+      for (let i = 0; i < counts.length; i++) {
+        expect(view.repeat(counts[i])).toBe(pattern.repeat(counts[i]));
+      }
+      for (let i = 0; i < lengths.length; i++) {
+        expect(str.padStart("xy", lengths[i], pattern)).toBe(
+          "xy".padStart(lengths[i], pattern),
+        );
+        expect(str.padEnd("xy", lengths[i], pattern)).toBe(
+          "xy".padEnd(lengths[i], pattern),
+        );
+      }
+    }
+  });
+
+  test("betweenLength agrees with an empty closing delimiter", () => {
+    expect(str.betweenLength("abc", "a", "")).toBe(
+      str.between("abc", "a", "").length,
+    );
+  });
+
   test("padStart / padEnd match native across pad widths", () => {
     const cases: string[] = ["7", "ab", "hello"];
     const pads: string[] = ["0", ".", "ab", "xyz"];

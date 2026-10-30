@@ -23,7 +23,7 @@ export interface FunctionSignature {
   spanArgumentCounts: Map<number, number>;
   directCallCount: number;
   spanParameters: Map<number, string>;
-  caseInsensitiveSpanParameters: Set<number>;
+  lowercaseSpanParameters: Set<number>;
   spanAppliedDeclarations: Set<FunctionDeclaration>;
 }
 
@@ -49,7 +49,7 @@ export interface FunctionContext {
   bindings: Map<string, Binding>;
   parameters: Map<string, Representation>;
   parameterSpans: Map<string, PackedSpanLink>;
-  caseInsensitiveSpans: Set<string>;
+  lowercaseSpans: Set<string>;
   repeatedLowercaseReceivers: Set<string>;
   profitableLowercaseCalls: Set<number>;
   fields: Map<string, Representation>;

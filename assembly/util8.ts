@@ -1,5 +1,5 @@
 // Low-level UTF-8 byte helpers for `str8`. Scans use SIMD, SWAR, then scalar tails.
-import { copyBytes, equalsBytes } from "./util";
+import { checkedSize, copyBytes, equalsBytes } from "./util";
 
 // Per-byte-lane constants for the SWAR zero/diff detection (Mycroft's trick).
 const LANE_ONES_8: u64 = 0x0101010101010101;
@@ -174,19 +174,28 @@ export function asciiCaseFold(
 export function findByte(start: usize, end: usize, needle: u8): i32 {
   let p = start;
   if (ASC_FEATURE_SIMD) {
-    const splat = i8x16.splat(<i8>needle);
-    while (p + 16 <= end) {
-      const mask = i8x16.bitmask(i8x16.eq(v128.load(p), splat));
+    if (p + 16 <= end) {
+      const splat = i8x16.splat(<i8>needle);
+      let mask = 0;
+      do {
+        mask = i8x16.bitmask(i8x16.eq(v128.load(p), splat));
+        if (mask) break;
+        p += 16;
+      } while (p + 16 <= end);
+      // Calculate the position only after the scan has found a matching block.
       if (mask) return <i32>(p - start) + ctz(mask);
-      p += 16;
     }
   } else {
-    const bcast = <u64>needle * LANE_ONES_8;
-    while (p + 8 <= end) {
-      const x = load<u64>(p) ^ bcast;
-      const t = (x - LANE_ONES_8) & ~x & LANE_HIGH_8;
-      if (t) return <i32>(p - start) + <i32>(ctz(t) >> 3);
-      p += 8;
+    if (p + 8 <= end) {
+      const bcast = <u64>needle * LANE_ONES_8;
+      let mask: u64 = 0;
+      do {
+        const x = load<u64>(p) ^ bcast;
+        mask = (x - LANE_ONES_8) & ~x & LANE_HIGH_8;
+        if (mask) break;
+        p += 8;
+      } while (p + 8 <= end);
+      if (mask) return <i32>(p - start) + <i32>(ctz(mask) >> 3);
     }
   }
   while (p < end) {
@@ -194,6 +203,39 @@ export function findByte(start: usize, end: usize, needle: u8): i32 {
     p++;
   }
   return -1;
+}
+
+/** Find the last matching byte without reading outside `[start, end)`. */
+export function findLastByte(start: usize, end: usize, needle: u8): i32 {
+  let p = end;
+  if (ASC_FEATURE_SIMD) {
+    const splat = i8x16.splat(<i8>needle);
+    while (p - start >= 16) {
+      p -= 16;
+      const mask = i8x16.bitmask(i8x16.eq(v128.load(p), splat));
+      if (mask) return <i32>(p - start) + 31 - clz(mask);
+    }
+  } else {
+    const bcast = <u64>needle * LANE_ONES_8;
+    while (p - start >= 8) {
+      p -= 8;
+      const mask = zeroByteMask(load<u64>(p) ^ bcast);
+      if (mask) return <i32>(p - start) + 7 - <i32>(clz(mask) >> 3);
+    }
+  }
+  while (p > start) {
+    p--;
+    if (load<u8>(p) == needle) return <i32>(p - start);
+  }
+  return -1;
+}
+
+// Exact zero lanes are required when selecting the last match: subtraction
+// masks used by forward scans can also mark adjacent nonzero higher lanes.
+// @ts-ignore: decorator
+@inline function zeroByteMask(x: u64): u64 {
+  const low = ~LANE_HIGH_8;
+  return ~(((x & low) + low) | x | low);
 }
 
 /** Find the first needle byte range in the haystack. */
@@ -215,18 +257,121 @@ export function indexOfBytes(
   const scanEnd = hStart + <usize>(last + 1);
   const tailBytes = <usize>(nLen - 1);
   let i = max(from, 0);
+  if (i > last) return -1;
+  if (nLen == 2 && last - i < 16) {
+    const pair = load<u16>(nStart);
+    for (; i <= last; i++) {
+      if (load<u16>(hStart + <usize>i) == pair) return i;
+    }
+    return -1;
+  }
+  const rel = findByte(hStart + <usize>i, scanEnd, first);
+  if (rel < 0) return -1;
+  i += rel;
+  if (
+    nLen == 1 ||
+    equalsBytes(hStart + <usize>(i + 1), nStart + 1, tailBytes)
+  ) {
+    return i;
+  }
+  return indexOfBytesRemainder(hStart, nStart, nLen, i + 1, last);
+}
+
+// Keep failed-candidate bookkeeping out of the common first-match path.
+function indexOfBytesRemainder(
+  hStart: usize,
+  nStart: usize,
+  nLen: i32,
+  i: i32,
+  last: i32,
+): i32 {
+  const first = load<u8>(nStart);
+  const scanEnd = hStart + <usize>(last + 1);
+  const tailBytes = <usize>(nLen - 1);
+  if (last - i < 16) {
+    for (; i <= last; i++) {
+      const p = hStart + <usize>i;
+      if (load<u8>(p) == first && equalsBytes(p + 1, nStart + 1, tailBytes)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+  let windowStart = i - 1;
+  let failures = 1;
 
   while (i <= last) {
     const rel = findByte(hStart + <usize>i, scanEnd, first);
     if (rel < 0) return -1;
     i += rel;
-    if (
-      nLen == 1 ||
-      equalsBytes(hStart + <usize>(i + 1), nStart + 1, tailBytes)
-    ) {
+    if (equalsBytes(hStart + <usize>(i + 1), nStart + 1, tailBytes)) {
       return i;
     }
     i++;
+    // Keep the cheaper single-byte scan for sparse matches. Dense failed
+    // candidates benefit from filtering both ends of the needle at once.
+    if (++failures == 4) {
+      if (i - windowStart <= 32 && last - i >= 16) {
+        return indexOfBytesWide(hStart, nStart, nLen, i, scanEnd);
+      }
+      failures = 0;
+      windowStart = i;
+    }
+  }
+  return -1;
+}
+
+function indexOfBytesWide(
+  hStart: usize,
+  nStart: usize,
+  nLen: i32,
+  i: i32,
+  scanEnd: usize,
+): i32 {
+  let p = hStart + <usize>i;
+  const tailBytes = <usize>(nLen - 1);
+  const first = load<u8>(nStart);
+  // Prefer a distinct byte when the needle repeats its first byte at the end.
+  let anchor = tailBytes;
+  while (anchor > 1 && load<u8>(nStart + anchor) == first) anchor--;
+  const second = load<u8>(nStart + anchor);
+  if (ASC_FEATURE_SIMD) {
+    const firsts = i8x16.splat(<i8>first);
+    const seconds = i8x16.splat(<i8>second);
+    while (scanEnd - p >= 16) {
+      let mask = i8x16.bitmask(i8x16.eq(v128.load(p), firsts));
+      if (mask) mask &= i8x16.bitmask(i8x16.eq(v128.load(p + anchor), seconds));
+      while (mask) {
+        const at = p + <usize>ctz(mask);
+        if (nLen == 2 || equalsBytes(at + 1, nStart + 1, tailBytes)) {
+          return <i32>(at - hStart);
+        }
+        mask &= mask - 1;
+      }
+      p += 16;
+    }
+  } else {
+    const firsts = <u64>first * LANE_ONES_8;
+    const seconds = <u64>second * LANE_ONES_8;
+    while (scanEnd - p >= 8) {
+      const diff = load<u64>(p) ^ firsts;
+      let mask = (diff - LANE_ONES_8) & ~diff & LANE_HIGH_8;
+      if (mask) mask = zeroByteMask(diff | (load<u64>(p + anchor) ^ seconds));
+      while (mask) {
+        const at = p + <usize>(ctz(mask) >> 3);
+        if (nLen == 2 || equalsBytes(at + 1, nStart + 1, tailBytes)) {
+          return <i32>(at - hStart);
+        }
+        mask &= mask - 1;
+      }
+      p += 8;
+    }
+  }
+  while (p < scanEnd) {
+    if (load<u8>(p) == first && equalsBytes(p + 1, nStart + 1, tailBytes)) {
+      return <i32>(p - hStart);
+    }
+    p++;
   }
   return -1;
 }
@@ -245,15 +390,89 @@ export function lastIndexOfBytes(
   if (nLen == 0) return hLen;
   if (nLen > hLen) return -1;
 
+  let i = min(max(from, 0), hLen - nLen);
+  if (i >= 16) return lastIndexOfBytesWide(hStart, nStart, nLen, i);
+  if (nLen == 2) {
+    const pair = load<u16>(nStart);
+    for (; i >= 0; i--) {
+      if (load<u16>(hStart + <usize>i) == pair) return i;
+    }
+    return -1;
+  }
   const first = load<u8>(nStart);
   const tailBytes = <usize>(nLen - 1);
-  for (let i = min(max(from, 0), hLen - nLen); i >= 0; i--) {
+  for (; i >= 0; i--) {
     if (load<u8>(hStart + <usize>i) != first) continue;
     if (
       nLen == 1 ||
       equalsBytes(hStart + <usize>(i + 1), nStart + 1, tailBytes)
-    ) {
+    )
       return i;
+  }
+  return -1;
+}
+
+// Keep vector setup out of the short-search helper so runtimes can inline it.
+function lastIndexOfBytesWide(
+  hStart: usize,
+  nStart: usize,
+  nLen: i32,
+  i: i32,
+): i32 {
+  const first = load<u8>(nStart);
+  const tailBytes = <usize>(nLen - 1);
+  const nEnd = nStart + <usize>nLen;
+  let p = hStart + <usize>i;
+  if (
+    load<u8>(p) == first &&
+    (nLen == 1 || equalsBytes(p + 1, nStart + 1, tailBytes))
+  )
+    return i;
+  if (nLen == 1) return findLastByte(hStart, p, first);
+
+  const last = load<u8>(nEnd - 1);
+  if (ASC_FEATURE_SIMD) {
+    const firsts = i8x16.splat(<i8>first);
+    const lasts = i8x16.splat(<i8>last);
+    while (p - hStart >= 16) {
+      p -= 16;
+      let mask = i8x16.bitmask(
+        v128.and(
+          i8x16.eq(v128.load(p), firsts),
+          i8x16.eq(v128.load(p + tailBytes), lasts),
+        ),
+      );
+      while (mask) {
+        const lane = 31 - clz(mask);
+        const at = p + <usize>lane;
+        if (nLen == 2 || equalsBytes(at + 1, nStart + 1, tailBytes)) {
+          return <i32>(at - hStart);
+        }
+        mask &= ~(1 << lane);
+      }
+    }
+  } else {
+    const firsts = <u64>first * LANE_ONES_8;
+    const lasts = <u64>last * LANE_ONES_8;
+    while (p - hStart >= 8) {
+      p -= 8;
+      let mask = zeroByteMask(
+        (load<u64>(p) ^ firsts) | (load<u64>(p + tailBytes) ^ lasts),
+      );
+      while (mask) {
+        const lane = 7 - <i32>(clz(mask) >> 3);
+        const at = p + <usize>lane;
+        if (nLen == 2 || equalsBytes(at + 1, nStart + 1, tailBytes)) {
+          return <i32>(at - hStart);
+        }
+        mask &= ~((<u64>0x80) << (lane << 3));
+      }
+    }
+  }
+  while (p > hStart) {
+    p--;
+    if (load<u8>(p) == first && equalsBytes(p + 1, nStart + 1, tailBytes)) {
+      return <i32>(p - hStart);
     }
   }
   return -1;
@@ -314,9 +533,11 @@ export function compareBytes(
 
 /** Allocate an uninitialized `ArrayBuffer` of `bytes` bytes. */
 // @ts-ignore: decorator
-@inline export function allocBuffer(bytes: usize): ArrayBuffer {
+@inline export function allocBuffer(bytes: u64): ArrayBuffer {
   // @ts-expect-error: exists
-  return changetype<ArrayBuffer>(__new(bytes, idof<ArrayBuffer>()));
+  return changetype<ArrayBuffer>(
+    __new(checkedSize(bytes), idof<ArrayBuffer>()),
+  );
 }
 
 /** Allocate a fresh `ArrayBuffer` and copy `[start, end)` bytes into it. */
