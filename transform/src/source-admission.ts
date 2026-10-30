@@ -1,4 +1,7 @@
 import { ImportStatement, Source } from "assemblyscript/dist/assemblyscript.js";
+import { readFileSync, realpathSync } from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 export const PACKAGE_NAME = "as-str";
 export const VIEW_NAME = "str";
@@ -12,14 +15,32 @@ const VIEW_CLASS_USES =
   /(?:\bStr\s*\.|:\s*Str\b|\bnew\s+Str\b|<\s*Str\s*>|\bStr\s*\[\s*\])/;
 const VIEW_CLASS_BINDS =
   /(?:\b(?:const|let|var|function|class|namespace|type)\s+Str\b|\(\s*Str\s*:|,\s*Str\s*:)/;
-const OWN_SOURCES = new Set([
+export const PACKAGE_SOURCE_FILES = [
+  "index.ts",
   "assembly/index.ts",
   "assembly/str.ts",
   "assembly/str8.ts",
   "assembly/util.ts",
   "assembly/util8.ts",
-  "index.ts",
-]);
+] as const;
+const OWN_SOURCES = new Set<string>(PACKAGE_SOURCE_FILES);
+
+const PACKAGE_ROOT = realpathSync(
+  path.resolve(fileURLToPath(import.meta.url), "..", "..", ".."),
+);
+const sourceBases = new WeakMap<Source, string>();
+const packageSources = new WeakMap<Source, boolean>();
+
+export function configureSourceAdmission(
+  sources: readonly Source[],
+  baseCWD: string,
+): void {
+  const base = path.resolve(baseCWD);
+  for (const source of sources) {
+    if (sourceBases.get(source) !== base) packageSources.delete(source);
+    sourceBases.set(source, base);
+  }
+}
 
 export interface SourceAdmission {
   readonly semanticFacts: boolean;
@@ -45,14 +66,34 @@ function sourceIsConfigured(source: Source): boolean {
 }
 
 function isPackageSource(source: Source): boolean {
-  if (OWN_SOURCES.has(source.normalizedPath)) return true;
+  const known = packageSources.get(source);
+  if (known !== undefined) return known;
   const internalPath = source.internalPath.replace(/\.ts$/, "");
-  if (internalPath === `~lib/${PACKAGE_NAME}/index`) return true;
-  const libraryPrefix = `~lib/${PACKAGE_NAME}/`;
-  return (
-    internalPath.startsWith(libraryPrefix) &&
-    OWN_SOURCES.has(internalPath.slice(libraryPrefix.length) + ".ts")
-  );
+  const prefix = `~lib/${PACKAGE_NAME}/`;
+  let owned =
+    internalPath.startsWith(prefix) &&
+    OWN_SOURCES.has(internalPath.slice(prefix.length) + ".ts");
+  if (!owned && !internalPath.startsWith("~lib")) {
+    try {
+      const file = realpathSync(
+        path.resolve(
+          sourceBases.get(source) ?? process.cwd(),
+          source.normalizedPath,
+        ),
+      );
+      const relative = path
+        .relative(PACKAGE_ROOT, file)
+        .split(path.sep)
+        .join("/");
+      // A virtual application source may use the same filename as a runtime file.
+      owned =
+        OWN_SOURCES.has(relative) && source.text === readFileSync(file, "utf8");
+    } catch {
+      owned = false;
+    }
+  }
+  packageSources.set(source, owned);
+  return owned;
 }
 
 function importedNames(source: Source): Set<string> {

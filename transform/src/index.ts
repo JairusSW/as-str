@@ -7,9 +7,14 @@ import {
 import path from "path";
 import { fileURLToPath } from "url";
 import { injectViewImports } from "./imports.js";
-import { readSemanticManifest, writeSemanticManifest } from "./manifest.js";
+import {
+  createSemanticScope,
+  readSemanticManifest,
+  writeSemanticManifest,
+  SemanticScope,
+} from "./manifest.js";
 import { optimizeSources } from "./optimizer.js";
-import { admitSource } from "./source-admission.js";
+import { admitSource, configureSourceAdmission } from "./source-admission.js";
 import { OptimizationDiagnostic, OptimizationResult } from "./model.js";
 import { buildShadowSemanticManifest } from "./analysis.js";
 
@@ -20,6 +25,8 @@ function enabled(name: string): boolean {
 export default class StrAsTransform extends Transform {
   protected optimize = false;
   protected dualPass = false;
+  private outputScope: SemanticScope | undefined;
+  private outputTransformed = false;
 
   afterParse(parser: Parser): void {
     const debug = enabled("STR_AS_DEBUG");
@@ -33,7 +40,8 @@ export default class StrAsTransform extends Transform {
       "..",
       "..",
     );
-    const baseCWD = path.join(process.cwd(), this.baseDir ?? ".");
+    const baseCWD = path.resolve(process.cwd(), this.baseDir ?? ".");
+    configureSourceAdmission(parser.sources, baseCWD);
     if (debugSources) {
       for (const source of parser.sources) {
         this.log(
@@ -44,11 +52,20 @@ export default class StrAsTransform extends Transform {
       }
     }
 
+    // Resolve explicit view imports before matching an external cache's input graph.
+    if (manifestIn && !this.dualPass)
+      injectViewImports(parser, {
+        baseCWD,
+        packageDir,
+        debug: false,
+        log: () => {},
+      });
     const manifest = this.dualPass
       ? buildShadowSemanticManifest(
           this.program,
           parser.sources,
           (shadow) => {
+            configureSourceAdmission(shadow.sources, baseCWD);
             const preliminary = optimizeSources(shadow.sources);
             injectViewImports(shadow, {
               baseCWD,
@@ -63,7 +80,12 @@ export default class StrAsTransform extends Transform {
                 this.log(`[as-str] semantic analysis failed: ${reason}`)
             : undefined,
         )
-      : readSemanticManifest(manifestIn);
+      : manifestIn
+        ? readSemanticManifest(
+            manifestIn,
+            createSemanticScope(parser.sources, this.program.options),
+          )
+        : null;
     if (debug && this.dualPass) {
       this.log(
         manifest
@@ -71,6 +93,12 @@ export default class StrAsTransform extends Transform {
           : "[as-str] semantic analysis unavailable; using conservative syntax analysis",
       );
     }
+    if (debug && manifestIn && !this.dualPass)
+      this.log(
+        manifest
+          ? `[as-str] semantic manifest: ${manifest.facts.length} facts`
+          : "[as-str] semantic manifest rejected; using conservative syntax analysis",
+      );
     const optimization: OptimizationResult =
       this.optimize && !analyzeOnly
         ? optimizeSources(parser.sources, manifest)
@@ -93,6 +121,14 @@ export default class StrAsTransform extends Transform {
       force: optimization.changedSources,
       log: (message) => this.log(message),
     });
+
+    if (process.env["AS_STR_MANIFEST_OUT"]) {
+      this.outputScope = createSemanticScope(
+        parser.sources,
+        this.program.options,
+      );
+      this.outputTransformed = this.optimize && !analyzeOnly;
+    }
 
     if (debug) {
       for (const diagnostic of optimization.diagnostics) {
@@ -120,6 +156,12 @@ export default class StrAsTransform extends Transform {
 
   afterCompile(): void {
     const manifestOut = process.env["AS_STR_MANIFEST_OUT"];
-    if (manifestOut) writeSemanticManifest(this.program, manifestOut);
+    if (manifestOut)
+      writeSemanticManifest(
+        this.program,
+        manifestOut,
+        this.outputScope,
+        this.outputTransformed,
+      );
   }
 }

@@ -1,3 +1,9 @@
+import {
+  FunctionSignatures,
+  declaredCallSignature,
+  signatureForCall,
+  signatureForDeclaration,
+} from "./signatures.js";
 import { SourceClassTypes } from "./class-types.js";
 import {
   AssertionExpression,
@@ -7,7 +13,9 @@ import {
   ClassDeclaration,
   CommaExpression,
   ElementAccessExpression,
+  ExpressionStatement,
   FunctionDeclaration,
+  FunctionExpression,
   IdentifierExpression,
   NewExpression,
   ParenthesizedExpression,
@@ -115,15 +123,12 @@ function functionIsClosed(declaration, owner) {
   return !owner && !declaration.isAny(1 | 4 | 32768 | 256 | 8192 | 536870912);
 }
 function collectFunctionSignatures(source, semanticFacts) {
-  const signatures = new Map();
+  const signatures = new FunctionSignatures();
   const ambiguous = new Set();
   walk(source, (node, ref) => {
     if (!(node instanceof FunctionDeclaration)) return;
     const name = node.name.text;
-    if (signatures.has(name)) {
-      ambiguous.add(name);
-      return;
-    }
+    if (signatures.has(name)) ambiguous.add(name);
     const annotatedResult = representationOfType(node.signature.returnType);
     signatures.set(name, {
       declaration: node,
@@ -137,10 +142,15 @@ function collectFunctionSignatures(source, semanticFacts) {
             "unknown")
           : annotatedResult,
       callable: true,
-      promotable: functionIsClosed(
-        node,
-        ref.parent instanceof ClassDeclaration ? ref.parent : null,
-      ),
+      promotable:
+        !(
+          ref.parent instanceof FunctionExpression &&
+          !(ref.grandparent instanceof ExpressionStatement)
+        ) &&
+        functionIsClosed(
+          node,
+          ref.parent instanceof ClassDeclaration ? ref.parent : null,
+        ),
       spanArgumentCounts: new Map(),
       directCallCount: 0,
       spanParameters: new Map(),
@@ -148,7 +158,7 @@ function collectFunctionSignatures(source, semanticFacts) {
       spanAppliedDeclarations: new Set(),
     });
   });
-  for (const name of ambiguous) signatures.delete(name);
+  for (const name of ambiguous) signatures.rejectAmbiguousName(name);
   walk(source, (node) => {
     if (
       !(node instanceof VariableDeclaration) ||
@@ -410,17 +420,21 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
       const name = node.name.text;
       if (bindings.has(name) || parameters.has(name)) duplicateNames.add(name);
       const declared = representationOfType(node.type);
-      const semantic =
-        semanticFacts.get(`local:${node.range.start}`)?.representation ??
-        declared;
+      const fact = semanticFacts.get(`local:${node.range.start}`);
+      const nullable = node.type?.isNullable || fact?.nullable === true;
+      const semantic = nullable
+        ? "unknown"
+        : (fact?.representation ?? declared);
       const noView =
         hasDecorator(node.decorators, "noView") ||
         hasLocalPragma(node, "no-view");
       const preferView =
         hasDecorator(node.decorators, "preferView") ||
         hasLocalPragma(node, "prefer-view");
-      const explicitView = expressionIsExplicitView(node.initializer);
+      const explicitView =
+        !nullable && expressionIsExplicitView(node.initializer);
       const candidate =
+        !nullable &&
         !noView &&
         !explicitView &&
         (declared === "unknown" || declared === "native") &&
@@ -431,7 +445,13 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
         name,
         declared,
         semantic: explicitView ? "view" : semantic,
-        decision: noView ? "native" : explicitView ? "view" : declared,
+        decision: nullable
+          ? "unknown"
+          : noView
+            ? "native"
+            : explicitView
+              ? "view"
+              : declared,
         candidate,
         preferred: preferView,
         forcedReason: noView
@@ -563,11 +583,13 @@ function collectGlobalRepresentations(source, facts) {
       if (!globals.has(name))
         globals.set(
           name,
-          declared !== "unknown"
-            ? declared
-            : declaration.initializer instanceof StringLiteralExpression
-              ? "native"
-              : "unknown",
+          declaration.type?.isNullable
+            ? "unknown"
+            : declared !== "unknown"
+              ? declared
+              : declaration.initializer instanceof StringLiteralExpression
+                ? "native"
+                : "unknown",
         );
     }
   }
@@ -575,6 +597,10 @@ function collectGlobalRepresentations(source, facts) {
 }
 function expectedCallArgument(call, index, signatures, context) {
   if (isStrStaticCall(call)) return "view";
+  const declared = context
+    ? declaredCallSignature(call, context, signatures)
+    : undefined;
+  if (declared) return declared.parameters[index] ?? "unknown";
   const property =
     call.expression instanceof PropertyAccessExpression
       ? call.expression
@@ -595,7 +621,9 @@ function expectedCallArgument(call, index, signatures, context) {
       ? property.property.text
       : null);
   if (!name) return "unknown";
-  const signature = signatures.get(name);
+  const signature = context
+    ? signatureForCall(call, context, signatures)
+    : signatures.get(name);
   if (!signature || !signature.callable) return "unknown";
   return signature.parameters[index] ?? "unknown";
 }
@@ -835,6 +863,14 @@ function analyzeCandidates(context, signatures) {
     ) {
       continue;
     }
+    const receiver = isStrStaticCall(binding.declaration.initializer)
+      ? binding.declaration.initializer.args[0]
+      : initializer.expression;
+    if (
+      !receiver ||
+      expressionRepresentation(receiver, context, signatures) === "unknown"
+    )
+      continue;
     let onlyLengthReads = true;
     walk(body, (node, ref) => {
       if (node instanceof FunctionDeclaration && node !== declaration)
@@ -885,6 +921,11 @@ function analyzeCandidates(context, signatures) {
       const receiver = isStrStaticCall(binding.declaration.initializer)
         ? binding.declaration.initializer.args[0]
         : initializer.expression;
+      if (
+        !receiver ||
+        expressionRepresentation(receiver, context, signatures) === "unknown"
+      )
+        continue;
       const receiverBinding =
         receiver instanceof IdentifierExpression
           ? context.bindings.get(receiver.text)
@@ -1062,14 +1103,12 @@ export function optimizeSource(
   }
   const localSignatures = collectFunctionSignatures(source, semanticFacts);
   const signatures = sharedSignatures
-    ? new Map(sharedSignatures)
+    ? new FunctionSignatures(sharedSignatures)
     : localSignatures;
   if (sharedSignatures) {
     for (const [name, local] of localSignatures) {
-      const shared = sharedSignatures.get(name);
-      if (!shared || !shared.declarations.has(local.declaration)) {
-        signatures.set(name, local);
-      }
+      const shared = sharedSignatures.forDeclaration(local.declaration);
+      signatures.set(name, shared ?? local);
     }
   }
   const classes = new SourceClassTypes(source);
@@ -1104,7 +1143,7 @@ export function optimizeSource(
   }
   for (const declaration of functions) {
     const context = contexts.get(declaration);
-    const signature = signatures.get(declaration.name.text);
+    const signature = signatureForDeclaration(declaration, signatures);
     const packedSpanPlan = canPromoteBoundaries
       ? planPackedSpanParameters(context, signature)
       : null;
@@ -1132,7 +1171,7 @@ export function optimizeSource(
   }
   for (const declaration of functions) {
     const context = contexts.get(declaration);
-    const signature = signatures.get(declaration.name.text);
+    const signature = signatureForDeclaration(declaration, signatures);
     const promotion = canPromoteBoundaries
       ? analyzeReturnPromotion(context, signature, source, signatures)
       : null;
@@ -1187,13 +1226,14 @@ export function optimizeSources(sources, manifest = null) {
   const userSources = sources.filter(
     (source) => admitSource(source).optimization,
   );
-  const sharedSignatures = new Map();
+  const sharedSignatures = new FunctionSignatures();
   const ambiguous = new Set();
   for (const source of userSources) {
     const sourceSignatures = collectFunctionSignatures(
       source,
       factsForSource(manifest, source),
     );
+    sharedSignatures.includeDeclarations(sourceSignatures);
     for (const [name, signature] of sourceSignatures) {
       const existing = sharedSignatures.get(name);
       if (!existing) {
@@ -1207,12 +1247,15 @@ export function optimizeSources(sources, manifest = null) {
         for (const declaration of signature.declarations) {
           existing.declarations.add(declaration);
         }
+        sharedSignatures.remember(existing);
       } else if (existing.declaration !== signature.declaration) {
+        existing.promotable = false;
+        signature.promotable = false;
         ambiguous.add(name);
       }
     }
   }
-  for (const name of ambiguous) sharedSignatures.delete(name);
+  for (const name of ambiguous) sharedSignatures.rejectAmbiguousName(name);
   for (const source of sources) {
     const scopes = [];
     const sourceFacts = factsForSource(manifest, source);
@@ -1246,20 +1289,31 @@ export function optimizeSources(sources, manifest = null) {
     };
     walk(source, (node, ref) => {
       if (!(node instanceof IdentifierExpression)) return;
-      const signature = sharedSignatures.get(node.text);
+      if (isDeclarationIdentifier(node, ref)) return;
+      const namedSignature = sharedSignatures.get(node.text);
+      if (!namedSignature) return;
+      const call =
+        ref.parent instanceof CallExpression && ref.parent.expression === node
+          ? ref.parent
+          : null;
+      const context =
+        (call &&
+          scopes.find(
+            (scope) =>
+              scope.declaration.range.start <= node.range.start &&
+              scope.declaration.range.end >= node.range.end,
+          )) ||
+        topContext;
+      const signature = call
+        ? signatureForCall(call, context, sharedSignatures)
+        : namedSignature;
       if (
         !signature ||
         [...signature.declarations].some(
           (declaration) => node === declaration.name,
         )
-      ) {
+      )
         return;
-      }
-      if (isDeclarationIdentifier(node, ref)) return;
-      const call =
-        ref.parent instanceof CallExpression && ref.parent.expression === node
-          ? ref.parent
-          : null;
       if (!call || !userSources.includes(source)) {
         signature.promotable = false;
       } else {
@@ -1273,11 +1327,7 @@ export function optimizeSources(sources, manifest = null) {
               isStrStaticCall(argument)
                 ? argument.args[0]
                 : propertyCall(argument).expression,
-              scopes.find(
-                (scope) =>
-                  scope.declaration.range.start <= argument.range.start &&
-                  scope.declaration.range.end >= argument.range.end,
-              ) ?? topContext,
+              context,
               sharedSignatures,
             ) !== "unknown"
           ) {

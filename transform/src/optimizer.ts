@@ -1,3 +1,9 @@
+import {
+  FunctionSignatures,
+  declaredCallSignature,
+  signatureForCall,
+  signatureForDeclaration,
+} from "./signatures.js";
 import { SourceClassTypes } from "./class-types.js";
 import {
   AssertionExpression,
@@ -10,7 +16,9 @@ import {
   DecoratorNode,
   ElementAccessExpression,
   Expression,
+  ExpressionStatement,
   FunctionDeclaration,
+  FunctionExpression,
   IdentifierExpression,
   NewExpression,
   ParenthesizedExpression,
@@ -170,17 +178,14 @@ function functionIsClosed(
 function collectFunctionSignatures(
   source: Source,
   semanticFacts: Map<string, SemanticFact>,
-): Map<string, FunctionSignature> {
-  const signatures = new Map<string, FunctionSignature>();
+): FunctionSignatures {
+  const signatures = new FunctionSignatures();
   const ambiguous = new Set<string>();
 
   walk(source, (node, ref): boolean | void => {
     if (!(node instanceof FunctionDeclaration)) return;
     const name = node.name.text;
-    if (signatures.has(name)) {
-      ambiguous.add(name);
-      return;
-    }
+    if (signatures.has(name)) ambiguous.add(name);
     const annotatedResult = representationOfType(node.signature.returnType);
     signatures.set(name, {
       declaration: node,
@@ -194,10 +199,17 @@ function collectFunctionSignatures(
             "unknown")
           : annotatedResult,
       callable: true,
-      promotable: functionIsClosed(
-        node,
-        ref.parent instanceof ClassDeclaration ? ref.parent : null,
-      ),
+      // A function value can have an explicit callback type or escape through
+      // an indirect call. Its ABI is not established by its internal name.
+      promotable:
+        !(
+          ref.parent instanceof FunctionExpression &&
+          !(ref.grandparent instanceof ExpressionStatement)
+        ) &&
+        functionIsClosed(
+          node,
+          ref.parent instanceof ClassDeclaration ? ref.parent : null,
+        ),
       spanArgumentCounts: new Map(),
       directCallCount: 0,
       spanParameters: new Map(),
@@ -206,7 +218,7 @@ function collectFunctionSignatures(
     });
   });
 
-  for (const name of ambiguous) signatures.delete(name);
+  for (const name of ambiguous) signatures.rejectAmbiguousName(name);
 
   // Preserve precision for direct, immutable local aliases such as
   // `const callback = helper; callback(value)`. The alias shares the original
@@ -268,7 +280,7 @@ function countViewBoundaryUses(
   body: Statement,
   name: string,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): number {
   let count = 0;
   walk(body, (node, ref): boolean | void => {
@@ -297,7 +309,7 @@ function countViewBoundaryUses(
 function analyzeParameterPromotions(
   context: FunctionContext,
   signature: FunctionSignature | undefined,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): ParameterPromotion[] {
   const declaration = context.declaration;
   if (!declaration) return [];
@@ -389,7 +401,7 @@ function returnCallUseReason(
   call: CallExpression,
   ref: WalkRef,
   declaration: FunctionDeclaration,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): string | null {
   const parent = ref.parent;
   if (
@@ -425,7 +437,7 @@ function analyzeReturnPromotion(
   context: FunctionContext,
   signature: FunctionSignature | undefined,
   source: Source,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): ReturnPromotion | null {
   const declaration = context.declaration;
   const body = declaration.body;
@@ -517,17 +529,21 @@ function collectLocalBindings(
       const name = node.name.text;
       if (bindings.has(name) || parameters.has(name)) duplicateNames.add(name);
       const declared = representationOfType(node.type);
-      const semantic =
-        semanticFacts.get(`local:${node.range.start}`)?.representation ??
-        declared;
+      const fact = semanticFacts.get(`local:${node.range.start}`);
+      const nullable = node.type?.isNullable || fact?.nullable === true;
+      const semantic = nullable
+        ? "unknown"
+        : (fact?.representation ?? declared);
       const noView =
         hasDecorator(node.decorators, "noView") ||
         hasLocalPragma(node, "no-view");
       const preferView =
         hasDecorator(node.decorators, "preferView") ||
         hasLocalPragma(node, "prefer-view");
-      const explicitView = expressionIsExplicitView(node.initializer);
+      const explicitView =
+        !nullable && expressionIsExplicitView(node.initializer);
       const candidate =
+        !nullable &&
         !noView &&
         !explicitView &&
         (declared === "unknown" || declared === "native") &&
@@ -538,7 +554,13 @@ function collectLocalBindings(
         name,
         declared,
         semantic: explicitView ? "view" : semantic,
-        decision: noView ? "native" : explicitView ? "view" : declared,
+        decision: nullable
+          ? "unknown"
+          : noView
+            ? "native"
+            : explicitView
+              ? "view"
+              : declared,
         candidate,
         preferred: preferView,
         forcedReason: noView
@@ -677,11 +699,13 @@ function collectGlobalRepresentations(
       if (!globals.has(name))
         globals.set(
           name,
-          declared !== "unknown"
-            ? declared
-            : declaration.initializer instanceof StringLiteralExpression
-              ? "native"
-              : "unknown",
+          declaration.type?.isNullable
+            ? "unknown"
+            : declared !== "unknown"
+              ? declared
+              : declaration.initializer instanceof StringLiteralExpression
+                ? "native"
+                : "unknown",
         );
     }
   }
@@ -691,10 +715,14 @@ function collectGlobalRepresentations(
 function expectedCallArgument(
   call: CallExpression,
   index: number,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
   context?: FunctionContext,
 ): Representation {
   if (isStrStaticCall(call)) return "view";
+  const declared = context
+    ? declaredCallSignature(call, context, signatures)
+    : undefined;
+  if (declared) return declared.parameters[index] ?? "unknown";
   const property =
     call.expression instanceof PropertyAccessExpression
       ? call.expression
@@ -715,7 +743,9 @@ function expectedCallArgument(
       ? property.property.text
       : null);
   if (!name) return "unknown";
-  const signature = signatures.get(name);
+  const signature = context
+    ? signatureForCall(call, context, signatures)
+    : signatures.get(name);
   if (!signature || !signature.callable) return "unknown";
   return signature.parameters[index] ?? "unknown";
 }
@@ -724,7 +754,7 @@ function reasonForUse(
   node: IdentifierExpression,
   ref: WalkRef,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): string | null {
   let parent = ref.parent;
   let grandparent = ref.grandparent;
@@ -831,7 +861,7 @@ function derivedViewUseReason(
   call: CallExpression,
   ref: WalkRef,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): string | null {
   const parent = ref.parent;
 
@@ -914,14 +944,14 @@ function bindingViewBoundaryUses(
   body: Statement,
   name: string,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): number {
   return countViewBoundaryUses(body, name, context, signatures);
 }
 
 function analyzeCandidates(
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): void {
   const declaration = context.declaration;
   if (!declaration) return;
@@ -1002,6 +1032,14 @@ function analyzeCandidates(
     ) {
       continue;
     }
+    const receiver = isStrStaticCall(binding.declaration.initializer)
+      ? binding.declaration.initializer.args[0]
+      : initializer.expression;
+    if (
+      !receiver ||
+      expressionRepresentation(receiver, context, signatures) === "unknown"
+    )
+      continue;
     let onlyLengthReads = true;
     walk(body, (node, ref): boolean | void => {
       if (node instanceof FunctionDeclaration && node !== declaration)
@@ -1054,6 +1092,11 @@ function analyzeCandidates(
       const receiver = isStrStaticCall(binding.declaration.initializer)
         ? binding.declaration.initializer.args[0]
         : initializer.expression;
+      if (
+        !receiver ||
+        expressionRepresentation(receiver, context, signatures) === "unknown"
+      )
+        continue;
       const receiverBinding =
         receiver instanceof IdentifierExpression
           ? context.bindings.get(receiver.text)
@@ -1216,7 +1259,7 @@ function sourceUsesViewName(source: Source): boolean {
 export function optimizeSource(
   source: Source,
   manifest: SemanticManifest | null = null,
-  sharedSignatures: Map<string, FunctionSignature> | null = null,
+  sharedSignatures: FunctionSignatures | null = null,
 ): OptimizationResult {
   const changedSources = new Set<Source>();
   const diagnostics: OptimizationDiagnostic[] = [];
@@ -1238,14 +1281,12 @@ export function optimizeSource(
   }
   const localSignatures = collectFunctionSignatures(source, semanticFacts);
   const signatures = sharedSignatures
-    ? new Map(sharedSignatures)
+    ? new FunctionSignatures(sharedSignatures)
     : localSignatures;
   if (sharedSignatures) {
     for (const [name, local] of localSignatures) {
-      const shared = sharedSignatures.get(name);
-      if (!shared || !shared.declarations.has(local.declaration)) {
-        signatures.set(name, local);
-      }
+      const shared = sharedSignatures.forDeclaration(local.declaration);
+      signatures.set(name, shared ?? local);
     }
   }
   const classes = new SourceClassTypes(source);
@@ -1290,7 +1331,7 @@ export function optimizeSource(
   // Parameter decisions precede local rewrites so call sites see final types.
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
-    const signature = signatures.get(declaration.name.text);
+    const signature = signatureForDeclaration(declaration, signatures);
     const packedSpanPlan = canPromoteBoundaries
       ? planPackedSpanParameters(context, signature)
       : null;
@@ -1319,7 +1360,7 @@ export function optimizeSource(
 
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
-    const signature = signatures.get(declaration.name.text);
+    const signature = signatureForDeclaration(declaration, signatures);
     const promotion = canPromoteBoundaries
       ? analyzeReturnPromotion(context, signature, source, signatures)
       : null;
@@ -1381,13 +1422,14 @@ export function optimizeSources(
   const userSources = sources.filter(
     (source) => admitSource(source).optimization,
   );
-  const sharedSignatures = new Map<string, FunctionSignature>();
+  const sharedSignatures = new FunctionSignatures();
   const ambiguous = new Set<string>();
   for (const source of userSources) {
     const sourceSignatures = collectFunctionSignatures(
       source,
       factsForSource(manifest, source),
     );
+    sharedSignatures.includeDeclarations(sourceSignatures);
     for (const [name, signature] of sourceSignatures) {
       const existing = sharedSignatures.get(name);
       if (!existing) {
@@ -1401,12 +1443,15 @@ export function optimizeSources(
         for (const declaration of signature.declarations) {
           existing.declarations.add(declaration);
         }
+        sharedSignatures.remember(existing);
       } else if (existing.declaration !== signature.declaration) {
+        existing.promotable = false;
+        signature.promotable = false;
         ambiguous.add(name);
       }
     }
   }
-  for (const name of ambiguous) sharedSignatures.delete(name);
+  for (const name of ambiguous) sharedSignatures.rejectAmbiguousName(name);
 
   // `export` in AssemblyScript dependency code usually means "available to
   // another source module", not "part of the final WebAssembly ABI". Those
@@ -1447,20 +1492,31 @@ export function optimizeSources(
     };
     walk(source, (node, ref) => {
       if (!(node instanceof IdentifierExpression)) return;
-      const signature = sharedSignatures.get(node.text);
+      if (isDeclarationIdentifier(node, ref)) return;
+      const namedSignature = sharedSignatures.get(node.text);
+      if (!namedSignature) return;
+      const call =
+        ref.parent instanceof CallExpression && ref.parent.expression === node
+          ? ref.parent
+          : null;
+      const context =
+        (call &&
+          scopes.find(
+            (scope) =>
+              scope.declaration!.range.start <= node.range.start &&
+              scope.declaration!.range.end >= node.range.end,
+          )) ||
+        topContext;
+      const signature = call
+        ? signatureForCall(call, context, sharedSignatures)
+        : namedSignature;
       if (
         !signature ||
         [...signature.declarations].some(
           (declaration) => node === declaration.name,
         )
-      ) {
+      )
         return;
-      }
-      if (isDeclarationIdentifier(node, ref)) return;
-      const call =
-        ref.parent instanceof CallExpression && ref.parent.expression === node
-          ? ref.parent
-          : null;
       if (!call || !userSources.includes(source)) {
         signature.promotable = false;
       } else {
@@ -1474,11 +1530,7 @@ export function optimizeSources(
               isStrStaticCall(argument)
                 ? argument.args[0]
                 : propertyCall(argument)!.expression,
-              scopes.find(
-                (scope) =>
-                  scope.declaration!.range.start <= argument.range.start &&
-                  scope.declaration!.range.end >= argument.range.end,
-              ) ?? topContext,
+              context,
               sharedSignatures,
             ) !== "unknown"
           ) {

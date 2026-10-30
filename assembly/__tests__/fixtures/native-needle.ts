@@ -58,3 +58,7 @@ export function nativeProperties(): i32 {
 export function bufferProperties(): i32 {
   return (str8.isAscii(key.buffer) ? 100 : 0) + str8.codePointCount(key.buffer);
 }
+
+export function nativeOrdering(): i32 {
+  return str8.compare("Résumé 日本語 😀", "Résumé 日本語 🌍");
+}

@@ -388,3 +388,26 @@ describe("str() converter and cross-conversion", () => {
     expect(a.length).toBe(SAMPLE.length);
   });
 });
+
+describe("packed-span nullable comparisons", () => {
+  test("null is distinct from empty and nonempty spans", () => {
+    const owner = "abc";
+    const value = str.sliceSpan(owner, 1);
+    const empty = str.sliceSpan(owner, 100);
+    for (let cleared = 0; cleared < 2; cleared++) {
+      const native: string | null = cleared ? null : "bc";
+      const view: str | null = cleared ? null : str.from("bc");
+      expect(str.equalsSpan(owner, value, native)).toBe(!cleared);
+      expect(str.equalsSpan(owner, value, view)).toBe(!cleared);
+      expect(str.notEqualsSpan(owner, value, native)).toBe(!!cleared);
+      expect(str.notEqualsSpan(owner, value, view)).toBe(!!cleared);
+      expect(str.equalsSpan(owner, empty, native)).toBe(false);
+      expect(str.equalsSpan(owner, empty, view)).toBe(false);
+    }
+    expect(str.equalsSpan(owner, value, null)).toBe(false);
+    expect(str.equalsSpan(owner, empty, null)).toBe(false);
+    expect(str.notEqualsSpan(owner, empty, null)).toBe(true);
+    expect(str.equalsSpan(owner, empty, "")).toBe(true);
+    expect(str.equalsSpan(owner, empty, str.from(""))).toBe(true);
+  });
+});

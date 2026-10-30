@@ -8,6 +8,7 @@ import {
   CommaExpression,
   CommonFlags,
   Node,
+  NullExpression,
   DoStatement,
   ElementAccessExpression,
   Expression,
@@ -37,7 +38,6 @@ import {
 import {
   materializeView,
   expressionRangeKey,
-  typeName,
   identifier,
   i32Type,
   Representation,
@@ -48,6 +48,11 @@ import {
   wrapAsView,
   wrapUnknownAsView,
 } from "./ast.js";
+import {
+  FunctionSignatures,
+  declaredCallSignature,
+  signatureForCall,
+} from "./signatures.js";
 import { operationSemantics } from "./operations.js";
 import {
   lowerPackedLengthInitializer,
@@ -56,7 +61,7 @@ import {
   spanOwnerExpression,
 } from "./packed-span.js";
 import { expressionCanProduceView } from "./expressions.js";
-import { FunctionContext, FunctionSignature } from "./model.js";
+import { FunctionContext } from "./model.js";
 import { calleeName, isStrStaticCall, propertyCall, walk } from "./visitor.js";
 
 function viewCallParts(expression: CallExpression): {
@@ -99,12 +104,14 @@ function nativeLowercaseBenefitsFromViewHelper(
 function bindingRepresentation(
   expression: IdentifierExpression,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): Representation {
   const name = expression.text;
   if (context.duplicateNames.has(name)) {
     const declaration = context.classes.declarationOf(expression, context);
     if (!declaration) return context.parameters.get(name) ?? "unknown";
+    if (context.classes.typeOf(expression, context)?.isNullable)
+      return "unknown";
     const declared = representationOfType(declaration.type);
     if (declared !== "unknown") return declared;
     const initializer = declaration.initializer;
@@ -130,7 +137,7 @@ function bindingRepresentation(
 export function expressionRepresentation(
   expression: Expression,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): Representation {
   if (expression instanceof ParenthesizedExpression) {
     return expressionRepresentation(expression.expression, context, signatures);
@@ -139,18 +146,11 @@ export function expressionRepresentation(
     expression instanceof AssertionExpression &&
     expression.assertionKind === AssertionKind.NonNull
   ) {
-    if (expression.expression instanceof IdentifierExpression) {
-      const name = expression.expression.text;
-      const type =
-        context.bindings.get(name)?.declaration.type ??
-        context.declaration?.signature.parameters.find(
-          (p) => p.name.text === name,
-        )?.type ??
-        null;
-      const named = typeName(type);
-      if (named === "string" || named === "String") return "native";
-      if (named === "str" || named === "Str") return "view";
-    }
+    const asserted = representationOfType(
+      context.classes.typeOf(expression.expression, context),
+      true,
+    );
+    if (asserted !== "unknown") return asserted;
     return expressionRepresentation(expression.expression, context, signatures);
   }
   if (expression instanceof StringLiteralExpression) return "native";
@@ -191,7 +191,7 @@ export function expressionRepresentation(
     return representation;
   }
   if (expression instanceof PropertyAccessExpression) {
-    return context.classes.fieldOf(expression, context);
+    return context.classes.propertyOf(expression, context);
   }
   if (
     expression instanceof ElementAccessExpression &&
@@ -245,6 +245,8 @@ export function expressionRepresentation(
         return "native";
       }
     }
+    const declared = declaredCallSignature(expression, context, signatures);
+    if (declared) return declared.result;
     if (operationSemantics(property.property.text).result === "view") {
       return expressionRepresentation(property.expression, context, signatures);
     }
@@ -258,14 +260,13 @@ export function expressionRepresentation(
         : "native";
     }
   }
-  const name = calleeName(expression.expression);
-  return name ? (signatures.get(name)?.result ?? "unknown") : "unknown";
+  return signatureForCall(expression, context, signatures)?.result ?? "unknown";
 }
 
 export function recordOriginalViewReceivers(
   node: Node,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): void {
   context.originalViewReceivers ??= new Set();
   walk(node, (child) => {
@@ -286,8 +287,10 @@ function convertExpression(
   expression: Expression,
   expected: Representation,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): Expression {
+  if (expression instanceof NullExpression) return expression;
+
   if (
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
@@ -321,25 +324,6 @@ function convertExpression(
       expression.args.length === 1
     ) {
       const argument = expression.args[0];
-      const argumentCall =
-        argument instanceof CallExpression ? propertyCall(argument) : null;
-      if (
-        argument instanceof CallExpression &&
-        argumentCall?.property.text === "toString" &&
-        argument.args.length === 0 &&
-        expressionRepresentation(
-          argumentCall.expression,
-          context,
-          signatures,
-        ) === "view"
-      ) {
-        return convertExpression(
-          argumentCall.expression,
-          expected,
-          context,
-          signatures,
-        );
-      }
       if (expressionRepresentation(argument, context, signatures) === "view") {
         return convertExpression(argument, expected, context, signatures);
       }
@@ -366,13 +350,6 @@ function convertExpression(
           context,
           signatures,
         );
-      }
-      if (
-        expected === "view" &&
-        expressionRepresentation(property.expression, context, signatures) ===
-          "view"
-      ) {
-        return property.expression;
       }
     }
   }
@@ -402,7 +379,7 @@ function rewriteExpression(
   expression: Expression,
   expected: Representation,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): Expression {
   if (
     expression instanceof PropertyAccessExpression &&
@@ -446,7 +423,7 @@ function rewriteExpression(
       context,
       signatures,
     );
-    return expression;
+    return convertExpression(expression, expected, context, signatures);
   }
 
   if (expression instanceof TernaryExpression) {
@@ -630,7 +607,7 @@ function rewriteExpression(
       if (expression.left instanceof IdentifierExpression) {
         target = bindingRepresentation(expression.left, context, signatures);
       } else if (expression.left instanceof PropertyAccessExpression) {
-        target = context.classes.fieldOf(expression.left, context);
+        target = context.classes.propertyOf(expression.left, context);
       } else if (
         expression.left instanceof ElementAccessExpression &&
         expression.left.expression instanceof IdentifierExpression
@@ -688,6 +665,11 @@ function rewriteExpression(
     const property = propertyCall(expression);
     if (property) {
       const method = property.property.text;
+      const methodSignature = declaredCallSignature(
+        expression,
+        context,
+        signatures,
+      );
       const originalReceiverRepresentation = expressionRepresentation(
         property.expression,
         context,
@@ -736,18 +718,21 @@ function rewriteExpression(
       expression.args = expression.args.map((argument, index) =>
         rewriteExpression(
           argument,
-          [
-            "push",
-            "unshift",
-            "fill",
-            "includes",
-            "indexOf",
-            "lastIndexOf",
-          ].includes(method)
-            ? containerElement
-            : operationSemantics(method).result !== "unknown"
-              ? "unknown"
-              : (signatures.get(method)?.parameters[index] ?? "unknown"),
+          methodSignature
+            ? (methodSignature.parameters[index] ?? "unknown")
+            : [
+                  "push",
+                  "unshift",
+                  "fill",
+                  "includes",
+                  "indexOf",
+                  "lastIndexOf",
+                ].includes(method)
+              ? containerElement
+              : operationSemantics(method).result !== "unknown"
+                ? "unknown"
+                : (signatureForCall(expression, context, signatures)
+                    ?.parameters[index] ?? "unknown"),
           context,
           signatures,
         ),
@@ -802,8 +787,7 @@ function rewriteExpression(
         }
       }
     } else {
-      const name = calleeName(expression.expression);
-      const signature = name ? signatures.get(name) : null;
+      const signature = signatureForCall(expression, context, signatures);
       const rewrittenArgs: Expression[] = [];
       expression.args.forEach((argument, index) => {
         if (
@@ -952,7 +936,7 @@ function rewriteExpression(
 export function rewriteStatement(
   statement: Statement,
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): void {
   if (statement instanceof BlockStatement) {
     for (const child of statement.statements) {
@@ -1131,7 +1115,7 @@ export function rewriteStatement(
 export function rewriteDeclarationBoundaries(
   statements: Statement[],
   context: FunctionContext,
-  signatures: Map<string, FunctionSignature>,
+  signatures: FunctionSignatures,
 ): void {
   for (const statement of statements) {
     if (statement instanceof VariableStatement) {

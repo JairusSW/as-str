@@ -270,11 +270,11 @@ const roundTrips = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/redundantRoundTrips",
 );
-assert.doesNotMatch(roundTrips, /call \$assembly\/str\/Str#toString/);
+assert.match(roundTrips, /call \$assembly\/str\/Str#toString/);
 assert.equal(
   (roundTrips.match(/call \$assembly\/str\/Str\.from/g) ?? []).length,
-  1,
-  "only the one required native-to-view conversion should remain",
+  2,
+  "explicit rewrapping must preserve an independent view",
 );
 const typedContainers = functionBody(
   local.wat,

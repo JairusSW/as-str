@@ -1026,6 +1026,8 @@ import { Str } from "./str";
 
   /** Byte (codepoint) ordering. Free-function form of {@link Str8#compareTo}. */
   static compare<T, U>(a: T, b: U): i32 {
+    if (isString<T>() && isString<U>())
+      return compareNativeStrings(changetype<string>(a), changetype<string>(b));
     const va = asView(a);
     const vb = asView(b);
     return compareBytes(va.start, va.end, vb.start, vb.end);
@@ -1546,6 +1548,89 @@ function lastIndexOfNativeAscii(
     return Str8.fromBuffer(changetype<ArrayBuffer>(s));
   }
   return changetype<Str8>(s);
+}
+
+// WTF-8 byte order follows code point order, including lone surrogates.
+// Scan equal UTF-16 blocks directly, then decode only the first differing point.
+function compareNativeStrings(a: string, b: string): i32 {
+  const aStart = changetype<usize>(a),
+    bStart = changetype<usize>(b);
+  if (aStart == bStart) return 0;
+  const aEnd = aStart + ((<usize>a.length) << 1);
+  const bEnd = bStart + ((<usize>b.length) << 1);
+  // Short ASCII strings have the same order in their UTF-16 byte layout.
+  // Reuse the byte comparator without encoding or decoding individual points.
+  if (
+    a.length <= 64 &&
+    b.length <= 64 &&
+    isAscii16Range(aStart, aEnd) &&
+    isAscii16Range(bStart, bEnd)
+  )
+    return compareBytes(aStart, aEnd, bStart, bEnd);
+  let pa = aStart,
+    pb = bStart;
+  let remaining = min(a.length, b.length);
+  if (ASC_FEATURE_SIMD) {
+    while (remaining >= 8) {
+      const equal =
+        i16x8.bitmask(i16x8.eq(v128.load(pa), v128.load(pb))) & 0xff;
+      if (equal != 0xff) {
+        const units = ctz(~equal & 0xff);
+        pa += (<usize>units) << 1;
+        pb += (<usize>units) << 1;
+        remaining -= units;
+        break;
+      }
+      pa += 16;
+      pb += 16;
+      remaining -= 8;
+    }
+  } else {
+    while (remaining >= 4) {
+      const diff = load<u64>(pa) ^ load<u64>(pb);
+      if (diff) {
+        const units = <i32>(ctz(diff) >> 4);
+        pa += (<usize>units) << 1;
+        pb += (<usize>units) << 1;
+        remaining -= units;
+        break;
+      }
+      pa += 8;
+      pb += 8;
+      remaining -= 4;
+    }
+  }
+  while (remaining && load<u16>(pa) == load<u16>(pb)) {
+    pa += 2;
+    pb += 2;
+    remaining--;
+  }
+  // A matching high surrogate can pair on only one side of the mismatch or
+  // prefix boundary. Include it when decoding the first differing code point.
+  if (
+    pa > aStart &&
+    (load<u16>(pa - 2) & 0xfc00) == 0xd800 &&
+    ((pa < aEnd && (load<u16>(pa) & 0xfc00) == 0xdc00) ||
+      (pb < bEnd && (load<u16>(pb) & 0xfc00) == 0xdc00))
+  ) {
+    pa -= 2;
+    pb -= 2;
+  }
+  if (pa == aEnd || pb == bEnd) return pa == aEnd ? (pb == bEnd ? 0 : -1) : 1;
+  const left = nativeCodePoint(pa, aEnd),
+    right = nativeCodePoint(pb, bEnd);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+// @ts-ignore: decorator
+@inline function nativeCodePoint(p: usize, end: usize): u32 {
+  const high = <u32>load<u16>(p);
+  if ((high & 0xfc00) == 0xd800 && p + 2 < end) {
+    const low = <u32>load<u16>(p + 2);
+    if ((low & 0xfc00) == 0xdc00)
+      return 0x10000 + ((high - 0xd800) << 10) + low - 0xdc00;
+  }
+  return high;
 }
 
 function byteOffsetOfChar(start: usize, end: usize, index: i32): usize {

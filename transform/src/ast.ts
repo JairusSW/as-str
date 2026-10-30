@@ -22,8 +22,11 @@ export function typeName(type: TypeNode | null): string | null {
   return parts.join(".");
 }
 
-export function representationOfType(type: TypeNode | null): Representation {
-  if (type?.isNullable) return "unknown";
+export function representationOfType(
+  type: TypeNode | null,
+  nonNull = false,
+): Representation {
+  if (!nonNull && type?.isNullable) return "unknown";
   const name = typeName(type);
   if (name === "string" || name === "String") return "native";
   if (name === "str" || name === "Str") return "view";

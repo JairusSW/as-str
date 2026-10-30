@@ -409,3 +409,106 @@ function shadowFoldedValue(value: string): i32 {
 export function packedLowercaseShadow(): i32 {
   return shadowFoldedValue("xABC".slice(1));
 }
+
+function collidingPackedOwner(value: string, __as_str_owner_value: i32): i32 {
+  return value.length + __as_str_owner_value;
+}
+export function packedOwnerParameterCollision(): i32 {
+  return collidingPackedOwner("xabc".slice(1), 17);
+}
+
+function collidingPackedOwnerLocal(value: string): i32 {
+  const __as_str_owner_value = 17;
+  return value.length + __as_str_owner_value;
+}
+export function packedOwnerLocalCollision(): i32 {
+  return collidingPackedOwnerLocal("xabc".slice(1));
+}
+
+const __as_str_owner_text = 23;
+function collidingPackedOwnerGlobal(text: string): i32 {
+  return text.length + __as_str_owner_text;
+}
+export function packedOwnerGlobalCollision(): i32 {
+  return collidingPackedOwnerGlobal("xabc".slice(1));
+}
+
+export function explicitCopyBacking(): i32 {
+  const source = "abc";
+  const view: str = str.from(source).slice(1);
+  const copy: str = str.from(view.toString());
+  return copy.data.length;
+}
+
+export function explicitCopyViewMutation(): i32 {
+  const existing: str = str.from("abc");
+  const copy: str = str.from(existing.toString());
+  copy.start += 2;
+  return existing.length * 10 + copy.length;
+}
+
+function collidingPackedOwners(value: string, value_: string): i32 {
+  const __as_str_owner_value = 7;
+  const __as_str_owner_value_ = 11;
+  return (
+    value.length * 100 +
+    value_.length * 10 +
+    __as_str_owner_value +
+    __as_str_owner_value_
+  );
+}
+export function packedOwnerPlanCollision(): i32 {
+  return collidingPackedOwners("xabc".slice(1), "xyab".slice(2));
+}
+
+function mutableAliasTarget(value: string): i32 {
+  return value.length;
+}
+function mutableAliasReplacement(value: string): i32 {
+  return value.length + 100;
+}
+export function mutableFunctionAlias(): i32 {
+  let callback = mutableAliasTarget;
+  const initial = callback("ab");
+  callback = mutableAliasReplacement;
+  return initial + callback("xabc".slice(1));
+}
+
+function shadowedCallbackName(value: string): i32 {
+  return value.length;
+}
+export function realFunctionCall(): i32 {
+  return shadowedCallbackName("xabc".slice(1));
+}
+export function shadowedFunctionCall(): i32 {
+  const shadowedCallbackName = (value: string): i32 => value.length + 100;
+  return shadowedCallbackName("xabc".slice(1));
+}
+
+function invokeShadowedCallback(
+  shadowedCallbackName: (value: string) => i32,
+): i32 {
+  return shadowedCallbackName("xabc".slice(1));
+}
+export function functionParameterShadow(): i32 {
+  return invokeShadowedCallback((value: string): i32 => value.length + 200);
+}
+
+function aliasedViewLength(value: str): i32 {
+  return value.length;
+}
+function aliasedNativeLength(value: string): i32 {
+  return value.length + 100;
+}
+export function blockScopedCallbacks(): i32 {
+  let score = 0;
+  {
+    const scopedCallback = aliasedViewLength;
+    score += scopedCallback(str.from("abc"));
+  }
+  {
+    const scopedCallback = aliasedNativeLength;
+    score += scopedCallback("abcd");
+  }
+  return score;
+}

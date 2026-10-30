@@ -84,7 +84,7 @@ try {
   const input = path.join(scratch, "index.ts");
   writeFileSync(
     input,
-    'export function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\n',
+    'export function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\nexport function checkEntryView(): i32 { return str.from("abcdef").slice(1, 4).length; }\n',
   );
   const asc = path.join(scratch, "node_modules/assemblyscript/bin/asc.js");
   for (const [name, heading, transform, optimized] of [
@@ -206,6 +206,79 @@ try {
     },
   });
   assert.equal(autoModule.instance.exports.check(), 3);
+  assert.equal(autoModule.instance.exports.checkEntryView(), 3);
+  const assemblyEntry = path.join(scratch, "assembly/index.ts");
+  mkdirSync(path.dirname(assemblyEntry), { recursive: true });
+  writeFileSync(assemblyEntry, readFileSync(input, "utf8"));
+  for (const mode of ["global", "auto", "single"]) {
+    for (const absoluteBase of [false, true]) {
+      const entryWasm = path.join(
+        scratch,
+        `entry-${mode}-${absoluteBase}.wasm`,
+      );
+      const entryWat = path.join(scratch, `entry-${mode}-${absoluteBase}.wat`);
+      run(
+        process.execPath,
+        [
+          asc,
+          "assembly/index.ts",
+          "--transform",
+          `as-str/${mode}`,
+          ...(absoluteBase ? ["--baseDir", scratch] : []),
+          "-o",
+          entryWasm,
+          "--textFile",
+          entryWat,
+        ],
+        absoluteBase ? repo : scratch,
+      );
+      const { instance } = await WebAssembly.instantiate(
+        readFileSync(entryWasm),
+        {
+          env: {
+            abort() {
+              throw new Error("AssemblyScript abort");
+            },
+          },
+        },
+      );
+      assert.equal(instance.exports.check(), 3);
+      assert.equal(instance.exports.checkEntryView(), 3);
+      if (mode !== "global")
+        assert.doesNotMatch(
+          readFileSync(entryWat, "utf8"),
+          /call \$~lib\/string\/String#slice/,
+          "standard entry filenames must retain automatic optimization",
+        );
+    }
+  }
+  const relativeBaseWasm = path.join(scratch, "relative-base.wasm");
+  run(
+    process.execPath,
+    [
+      asc,
+      "assembly/index.ts",
+      "--baseDir",
+      path.relative(repo, scratch),
+      "--transform",
+      "as-str/auto",
+      "-o",
+      relativeBaseWasm,
+    ],
+    repo,
+  );
+  assert.equal(
+    (
+      await WebAssembly.instantiate(readFileSync(relativeBaseWasm), {
+        env: {
+          abort() {
+            throw new Error("AssemblyScript abort");
+          },
+        },
+      })
+    ).instance.exports.checkEntryView(),
+    3,
+  );
 
   const dependencyDir = path.join(scratch, "node_modules", "view-dependency");
   mkdirSync(dependencyDir, { recursive: true });

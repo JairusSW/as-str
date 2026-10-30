@@ -3,8 +3,10 @@ import {
   AssertionKind,
   BlockStatement,
   ExpressionStatement,
+  ElementAccessExpression,
   ClassDeclaration,
   CallExpression,
+  CommonFlags,
   FunctionDeclaration,
   FunctionExpression,
   FunctionTypeNode,
@@ -14,25 +16,33 @@ import {
   ForOfStatement,
   IdentifierExpression,
   NamespaceDeclaration,
+  NamedTypeNode,
   NewExpression,
   Node,
   ParenthesizedExpression,
   PropertyAccessExpression,
   Source,
+  TypeNode,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { Representation, representationOfType, typeName } from "./ast.js";
 import type { FunctionContext } from "./model.js";
 import { walk } from "./visitor.js";
 
+interface PropertyInfo {
+  readonly declaration: FieldDeclaration | FunctionDeclaration;
+  readonly type: TypeNode | null;
+  readonly initializer: Expression | null;
+  readonly representation: Representation;
+}
+
 interface ClassInfo {
   declaration: ClassDeclaration;
-  fields: Map<string, Representation>;
-  fieldDeclarations: Map<string, FieldDeclaration>;
+  properties: Map<string, PropertyInfo>;
   methods: Map<string, FunctionDeclaration | null>;
 }
 
-/** Source-local class identity and inherited field types, without leaf-name guesses. */
+/** Source-local class, property and callable types, without leaf-name guesses. */
 export class SourceClassTypes {
   private readonly classes = new Map<string, ClassInfo>();
   private readonly owners = new Map<Node, string>();
@@ -110,29 +120,43 @@ export class SourceClassTypes {
       const scope = this.namespaceAt(node.range.start);
       const owner = scope ? `${scope}.${node.name.text}` : node.name.text;
       if (this.classes.has(owner)) this.ambiguous.add(owner);
-      const fields = new Map<string, Representation>();
-      const fieldDeclarations = new Map<string, FieldDeclaration>();
+      const properties = new Map<string, PropertyInfo>();
       const methods = new Map<string, FunctionDeclaration | null>();
       this.owners.set(node, owner);
       for (const member of node.members) {
         this.owners.set(member, owner);
-        if (member instanceof FunctionDeclaration)
-          methods.set(
-            member.name.text,
-            methods.has(member.name.text) ? null : member,
-          );
-        if (!(member instanceof FieldDeclaration)) continue;
-        const name = member.name.text;
-        fieldDeclarations.set(name, member);
-        fields.set(
-          name,
-          fields.has(name) ? "unknown" : representationOfType(member.type),
-        );
+        const key = member.is(CommonFlags.Static)
+          ? `static:${member.name.text}`
+          : member.name.text;
+        if (member instanceof FieldDeclaration) {
+          properties.set(key, {
+            declaration: member,
+            type: member.type,
+            initializer: member.initializer,
+            representation: properties.has(key)
+              ? "unknown"
+              : representationOfType(member.type),
+          });
+        } else if (member instanceof FunctionDeclaration) {
+          if (member.isAny(CommonFlags.Get | CommonFlags.Set)) {
+            const getter = member.is(CommonFlags.Get);
+            const type = getter
+              ? member.signature.returnType
+              : (member.signature.parameters[0]?.type ?? null);
+            // Prefer the getter declaration when both accessors are present.
+            if (getter || !properties.has(key))
+              properties.set(key, {
+                declaration: member,
+                type,
+                initializer: null,
+                representation: representationOfType(type),
+              });
+          } else methods.set(key, methods.has(key) ? null : member);
+        }
       }
       this.classes.set(owner, {
         declaration: node,
-        fields,
-        fieldDeclarations,
+        properties,
         methods,
       });
     });
@@ -149,14 +173,8 @@ export class SourceClassTypes {
         : null;
       if (!this.ambiguous.has(owner) && parent && !this.ambiguous.has(parent)) {
         inherit(parent);
-        for (const [name, representation] of this.classes.get(parent)!.fields) {
-          if (!info.fields.has(name)) {
-            info.fields.set(name, representation);
-            info.fieldDeclarations.set(
-              name,
-              this.classes.get(parent)!.fieldDeclarations.get(name)!,
-            );
-          }
+        for (const [name, property] of this.classes.get(parent)!.properties) {
+          if (!info.properties.has(name)) info.properties.set(name, property);
         }
         for (const [name, method] of this.classes.get(parent)!.methods) {
           if (!info.methods.has(name)) info.methods.set(name, method);
@@ -179,15 +197,206 @@ export class SourceClassTypes {
     return this.localVariable(expression.text, expression.range.start, context);
   }
 
-  fieldOf(
+  propertyOf(
     expression: PropertyAccessExpression,
     context: FunctionContext,
   ): Representation {
-    const owner = this.classOf(expression.expression, context, new Set());
-    if (!owner || this.ambiguous.has(owner)) return "unknown";
+    return this.propertyInfo(expression, context)?.representation ?? "unknown";
+  }
+
+  typeOf(expression: Expression, context: FunctionContext): TypeNode | null {
+    return this.declaredType(expression, context, new Set());
+  }
+
+  private declaredType(
+    expression: Expression,
+    context: FunctionContext,
+    seen: Set<Expression>,
+    globalScope = false,
+  ): TypeNode | null {
+    if (seen.has(expression)) return null;
+    seen.add(expression);
+    if (
+      expression instanceof ParenthesizedExpression ||
+      (expression instanceof AssertionExpression &&
+        expression.assertionKind === AssertionKind.NonNull)
+    )
+      return this.declaredType(
+        expression.expression,
+        context,
+        seen,
+        globalScope,
+      );
+    if (expression instanceof AssertionExpression) return expression.toType;
+    if (expression instanceof NewExpression)
+      return Node.createNamedType(
+        expression.typeName,
+        expression.typeArguments,
+        false,
+        expression.range,
+      );
+    if (expression instanceof FunctionExpression)
+      return expression.declaration.signature;
+    if (expression instanceof IdentifierExpression && !globalScope) {
+      const variable = this.localVariable(
+        expression.text,
+        expression.range.start,
+        context,
+      );
+      if (variable)
+        return (
+          variable.type ??
+          (variable.initializer
+            ? this.declaredType(variable.initializer, context, seen)
+            : null)
+        );
+      const parameter = context.declaration?.signature.parameters.find(
+        (p) => p.name.text === expression.text,
+      );
+      if (parameter) return parameter.type;
+      if (context.parameters.has(expression.text)) return null;
+    }
+    if (expression instanceof PropertyAccessExpression) {
+      const property = this.propertyInfo(
+        expression,
+        context,
+        seen,
+        globalScope,
+      );
+      if (property) return property.type;
+    }
+    if (expression instanceof ElementAccessExpression) {
+      const array = this.declaredType(
+        expression.expression,
+        context,
+        seen,
+        globalScope,
+      );
+      return array instanceof NamedTypeNode &&
+        ["Array", "StaticArray"].includes(typeName(array) ?? "")
+        ? (array.typeArguments?.[0] ?? null)
+        : null;
+    }
+    if (expression instanceof CallExpression) {
+      const declaration = this.callableOf(expression.expression, context);
+      if (declaration) return declaration.signature.returnType;
+      const callback = this.declaredType(
+        expression.expression,
+        context,
+        seen,
+        globalScope,
+      );
+      return callback instanceof FunctionTypeNode ? callback.returnType : null;
+    }
+    const path = this.unshadowedPath(expression, context, globalScope);
+    const key = path ? this.runtimeKey(path, expression.range.start) : null;
+    const variable = key ? this.globals.get(key) : null;
     return (
-      this.classes.get(owner)?.fields.get(expression.property.text) ?? "unknown"
+      variable?.type ??
+      (variable?.initializer
+        ? this.declaredType(
+            variable.initializer,
+            {
+              ...context,
+              declaration: null,
+              bindings: new Map(),
+              parameters: new Map(),
+            },
+            seen,
+            true,
+          )
+        : null)
     );
+  }
+
+  private propertyInfo(
+    expression: PropertyAccessExpression,
+    context: FunctionContext,
+    seen = new Set<Expression>(),
+    globalScope = false,
+  ): PropertyInfo | undefined {
+    const owner = this.classOf(
+      expression.expression,
+      context,
+      seen,
+      globalScope,
+    );
+    if (!owner || this.ambiguous.has(owner)) return undefined;
+    return this.classes
+      .get(owner)
+      ?.properties.get(
+        this.memberKey(
+          expression.property.text,
+          expression.expression,
+          context,
+          globalScope,
+        ),
+      );
+  }
+
+  /** Null denotes a known shadow; undefined permits imported-name fallback. */
+  callableOf(
+    expression: Expression,
+    context: FunctionContext,
+    seen = new Set<Expression>(),
+  ): FunctionDeclaration | null | undefined {
+    if (seen.has(expression)) return null;
+    seen.add(expression);
+    if (expression instanceof ParenthesizedExpression)
+      return this.callableOf(expression.expression, context, seen);
+    if (expression instanceof FunctionExpression) return expression.declaration;
+    if (expression instanceof IdentifierExpression) {
+      const variable = this.localVariable(
+        expression.text,
+        expression.range.start,
+        context,
+      );
+      if (variable) {
+        return variable.is(CommonFlags.Const) && variable.initializer
+          ? this.callableOf(variable.initializer, context, seen)
+          : null;
+      }
+      if (context.parameters.has(expression.text)) return null;
+      const local = this.lexicalFunction(
+        expression.text,
+        expression.range.start,
+      );
+      if (local !== undefined) return local;
+    }
+    const path = this.unshadowedPath(expression, context, false);
+    const key = path ? this.runtimeKey(path, expression.range.start) : null;
+    if (key && this.globals.has(key)) {
+      const variable = this.globals.get(key)!;
+      return variable.is(CommonFlags.Const) && variable.initializer
+        ? this.callableOf(
+            variable.initializer,
+            {
+              ...context,
+              declaration: null,
+              bindings: new Map(),
+              parameters: new Map(),
+            },
+            seen,
+          )
+        : null;
+    }
+    if (key && this.functions.has(key)) return this.functions.get(key);
+    if (expression instanceof PropertyAccessExpression) {
+      const owner = this.classOf(expression.expression, context, new Set());
+      if (owner && !this.ambiguous.has(owner))
+        return (
+          this.classes
+            .get(owner)
+            ?.methods.get(
+              this.memberKey(
+                expression.property.text,
+                expression.expression,
+                context,
+              ),
+            ) ?? null
+        );
+    }
+    return undefined;
   }
 
   private classOf(
@@ -254,7 +463,14 @@ export class SourceClassTypes {
         if (owner && !this.ambiguous.has(owner))
           declaration = this.classes
             .get(owner)
-            ?.methods.get(callee.property.text);
+            ?.methods.get(
+              this.memberKey(
+                callee.property.text,
+                callee.expression,
+                context,
+                globalScope,
+              ),
+            );
       }
       const result = typeName(declaration?.signature.returnType ?? null);
       return result ? this.resolve(result, declaration!.range.start) : null;
@@ -299,28 +515,18 @@ export class SourceClassTypes {
       return this.globalOrClass(name, expression.range.start, context, seen);
     }
     if (expression instanceof PropertyAccessExpression) {
-      const owner = this.classOf(
-        expression.expression,
-        context,
-        seen,
-        globalScope,
-      );
-      const field =
-        owner && !this.ambiguous.has(owner)
-          ? this.classes
-              .get(owner)
-              ?.fieldDeclarations.get(expression.property.text)
-          : null;
+      const field = this.propertyInfo(expression, context, seen, globalScope);
       if (field) {
         const declared = typeName(field.type);
-        if (declared) return this.resolve(declared, field.range.start);
+        if (declared)
+          return this.resolve(declared, field.declaration.range.start);
         if (field.initializer)
           return this.classOf(
             field.initializer,
             {
               ...context,
               declaration: null,
-              className: this.ownerOf(field),
+              className: this.ownerOf(field.declaration),
               bindings: new Map(),
               parameters: new Map(),
               duplicateNames: new Set(),
@@ -426,6 +632,27 @@ export class SourceClassTypes {
     )
       return null;
     return [root.text, ...parts].join(".");
+  }
+
+  private memberKey(
+    name: string,
+    receiver: Expression,
+    context: FunctionContext,
+    globalScope = false,
+  ): string {
+    while (
+      receiver instanceof ParenthesizedExpression ||
+      (receiver instanceof AssertionExpression &&
+        receiver.assertionKind === AssertionKind.NonNull)
+    )
+      receiver = receiver.expression;
+    if (receiver instanceof IdentifierExpression && receiver.text === "this")
+      return context.declaration?.is(CommonFlags.Static)
+        ? `static:${name}`
+        : name;
+    const path = this.unshadowedPath(receiver, context, globalScope);
+    const key = path ? this.runtimeKey(path, receiver.range.start) : null;
+    return key && this.classes.has(key) ? `static:${name}` : name;
   }
 
   private runtimeKey(name: string, position: number): string | null {

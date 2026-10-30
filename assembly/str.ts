@@ -968,6 +968,10 @@ import { Str8 } from "./str8";
   // @ts-ignore: decorator
   @inline static equalsSpan<T, U>(owner: T, value: u64, other: U): bool {
     bData(owner);
+    // A span always represents a non-null string. Null literals may infer a
+    // value type, while nullable string/view references require a pointer test.
+    if ((isNullable<U>() || !isReference<U>()) && changetype<usize>(other) == 0)
+      return false;
     return rangeEquals(
       Str.spanStart(value),
       Str.spanEnd(value),

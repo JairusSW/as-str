@@ -2,7 +2,12 @@ import { Node } from "assemblyscript/dist/assemblyscript.js";
 import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
-import { admitSource, PACKAGE_NAME } from "./source-admission.js";
+import {
+  admitSource,
+  configureSourceAdmission,
+  PACKAGE_NAME,
+  PACKAGE_SOURCE_FILES,
+} from "./source-admission.js";
 export {
   PACKAGE_NAME,
   VIEW_CLASS_NAME,
@@ -44,15 +49,7 @@ function parseIfMissing(parser, file, internalPath) {
   );
 }
 function seedAsStrSources(parser, packageDir, rootInternal) {
-  const files = [
-    "index.ts",
-    "assembly/index.ts",
-    "assembly/str.ts",
-    "assembly/str8.ts",
-    "assembly/util.ts",
-    "assembly/util8.ts",
-  ];
-  for (const relative of files) {
+  for (const relative of PACKAGE_SOURCE_FILES) {
     parseIfMissing(
       parser,
       path.join(packageDir, ...relative.split("/")),
@@ -103,6 +100,7 @@ function packageRootInternal(source, specifier) {
   return path.posix.dirname(path.posix.dirname(target));
 }
 export function injectViewImports(parser, options) {
+  configureSourceAdmission(parser.sources, options.baseCWD);
   const specifiers = new Set();
   const injected = [];
   for (const source of parser.sources) {
@@ -127,6 +125,22 @@ export function injectViewImports(parser, options) {
         baseRel === PACKAGE_NAME
           ? PACKAGE_NAME
           : path.posix.join(baseRel, "assembly", "index");
+    }
+    if (specifier !== PACKAGE_NAME) {
+      const root = packageRootInternal(source, specifier);
+      const runtimePaths = new Set(
+        PACKAGE_SOURCE_FILES.map((file) =>
+          path.posix.join(root, file).replace(/\.ts$/, ""),
+        ),
+      );
+      if (
+        parser.sources.some(
+          (candidate) =>
+            runtimePaths.has(candidate.internalPath) &&
+            !admitSource(candidate).packageSource,
+        )
+      )
+        specifier = PACKAGE_NAME;
     }
     specifiers.add(specifier);
     injected.push({ source, specifier });
@@ -174,4 +188,5 @@ export function injectViewImports(parser, options) {
     parser.parseFile(readFileSync(file, "utf8"), internal + ".ts", false);
     if (options.debug) options.log(`[as-str] force-parsed ${internal}`);
   }
+  configureSourceAdmission(parser.sources, options.baseCWD);
 }

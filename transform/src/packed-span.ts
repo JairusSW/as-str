@@ -172,10 +172,20 @@ export function planPackedSpanParameters(
       ) {
         return;
       }
-      signature.spanParameters.set(
-        index,
-        `__as_str_owner_${parameter.name.text}`,
-      );
+      let ownerName = `__as_str_owner_${parameter.name.text}`;
+      // A generated parameter must not redeclare a local or hide a global that
+      // the original body references. Reserve earlier plans as well as source
+      // names, since distinct parameters can converge on the same suffix.
+      const plannedOwners = new Set(signature.spanParameters.values());
+      while (
+        declaration.range.source.text.includes(ownerName) ||
+        context.bindings.has(ownerName) ||
+        context.parameters.has(ownerName) ||
+        plannedOwners.has(ownerName)
+      ) {
+        ownerName += "_";
+      }
+      signature.spanParameters.set(index, ownerName);
       if (packed.lowercase) {
         signature.lowercaseSpanParameters.add(index);
       }

@@ -15,8 +15,8 @@ export function typeName(type) {
   }
   return parts.join(".");
 }
-export function representationOfType(type) {
-  if (type?.isNullable) return "unknown";
+export function representationOfType(type, nonNull = false) {
+  if (!nonNull && type?.isNullable) return "unknown";
   const name = typeName(type);
   if (name === "string" || name === "String") return "native";
   if (name === "str" || name === "Str") return "view";

@@ -131,10 +131,17 @@ export function planPackedSpanParameters(context, signature) {
       ) {
         return;
       }
-      signature.spanParameters.set(
-        index,
-        `__as_str_owner_${parameter.name.text}`,
-      );
+      let ownerName = `__as_str_owner_${parameter.name.text}`;
+      const plannedOwners = new Set(signature.spanParameters.values());
+      while (
+        declaration.range.source.text.includes(ownerName) ||
+        context.bindings.has(ownerName) ||
+        context.parameters.has(ownerName) ||
+        plannedOwners.has(ownerName)
+      ) {
+        ownerName += "_";
+      }
+      signature.spanParameters.set(index, ownerName);
       if (packed.lowercase) {
         signature.lowercaseSpanParameters.add(index);
       }

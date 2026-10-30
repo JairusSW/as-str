@@ -178,8 +178,8 @@ memory use, or Wasm size matters.
 **Single-Pass Automatic Mode**
 
 Single-pass mode skips the shadow semantic compilation and only applies
-syntax-proven local optimizations. It does not promote function parameters or
-returns, making it faster to compile but potentially less aggressive than
+syntax-proven local optimizations. Without cached semantic metadata it does not
+promote function parameters or returns, making it faster to compile but potentially less aggressive than
 `as-str/auto` on codebases where complete semantic analysis succeeds.
 
 ```bash
@@ -202,6 +202,23 @@ export function containsMarker(value: string): bool {
   );
 }
 ```
+
+**Cached Semantic Metadata**
+
+For code that type-checks in global mode, single-pass mode can reuse a semantic
+pass. Keep the entry files and compiler options the same in both commands:
+
+```bash
+mkdir -p build
+AS_STR_MANIFEST_OUT=build/types.json npx asc assembly/index.ts --transform as-str/global -o build/module.wasm
+AS_STR_MANIFEST_IN=build/types.json npx asc assembly/index.ts --transform as-str/single -o build/module.wasm
+```
+
+Caches record the compiler version, options, and source identities, including
+dependencies. Changed inputs, malformed files, version 1 caches, and caches from
+optimized runs are rejected; single-pass mode then falls back to syntax analysis.
+Regenerate version 2 metadata with `as-str/global` after changes. Set
+`STR_AS_DEBUG=1` to see whether a cache was accepted.
 
 ## Docs
 

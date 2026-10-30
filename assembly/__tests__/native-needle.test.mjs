@@ -59,6 +59,7 @@ for (const simd of [false, true]) {
   for (const [name, result, allocs] of [
     ["nativeMetadata", 3 * Buffer.byteLength(text) + 2 * text.length, 0],
     ["nativeProperties", [...text].length, 0],
+    ["nativeOrdering", 1, 0],
     ["bufferProperties", 112, 0],
     ["nativeEncode8", Buffer.byteLength(text), 1],
     ["nativeEncode16", 2 * text.length, 1],
