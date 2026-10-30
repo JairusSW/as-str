@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { ASTBuilder, Parser } from "assemblyscript/dist/assemblyscript.js";
 import {
@@ -40,6 +43,46 @@ assert.equal(
     path.posix,
   ),
   "..",
+);
+
+for (const [filename, prefix] of [
+  ["root-entry.ts", "./assembly/index"],
+  ["build/nested-entry.ts", "../assembly/index"],
+]) {
+  const parser = new Parser();
+  parser.parseFile(
+    "export function run(): i32 { return str.from('abc').length; }",
+    filename,
+    true,
+  );
+  const entry = parser.sources[0];
+  injectViewImports(parser, {
+    baseCWD: repo,
+    packageDir: repo,
+    debug: false,
+    log() {},
+  });
+  assert.ok(
+    ASTBuilder.build(entry).includes(`from "${prefix}"`),
+    `relative import for ${filename}`,
+  );
+}
+
+assert.equal(
+  computeImportBaseRel(
+    "D:\\workspace\\app\\src",
+    "C:\\tools\\runtime-copy",
+    path.win32,
+  ),
+  "as-str",
+);
+assert.equal(
+  computeImportBaseRel(
+    "\\\\server-one\\share\\src",
+    "\\\\server-two\\share\\runtime-copy",
+    path.win32,
+  ),
+  "as-str",
 );
 
 const parser = new Parser();
@@ -114,5 +157,34 @@ injectViewImports(packageParser, {
   log() {},
 });
 assert.doesNotMatch(ASTBuilder.build(packageSource), /^import /);
+
+const rootEntry = path.join(repo, `import-path-${randomUUID()}.tmp.ts`);
+writeFileSync(
+  rootEntry,
+  "export function run(): i32 { return str.from('abc').length; }",
+);
+try {
+  for (const mode of ["index", "auto", "single"]) {
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(repo, "node_modules/assemblyscript/bin/asc.js"),
+        rootEntry,
+        "--transform",
+        path.join(repo, `transform/lib/${mode}.js`),
+        "--noEmit",
+      ],
+      { cwd: repo, encoding: "utf8", timeout: 15000 },
+    );
+    assert.ifError(result.error);
+    assert.equal(
+      result.status,
+      0,
+      `${mode}: ${result.stdout}\n${result.stderr}`,
+    );
+  }
+} finally {
+  unlinkSync(rootEntry);
+}
 
 console.log("transform import path tests passed");

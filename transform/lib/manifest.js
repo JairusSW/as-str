@@ -4,11 +4,24 @@ import {
   Local,
   Property,
 } from "assemblyscript/dist/assemblyscript.js";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, readdirSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
+import { URL } from "url";
 import { version as compilerVersion } from "assemblyscript/dist/asc.js";
 import { admitSource } from "./source-admission.js";
+import { isPackageSource } from "./source-identity.js";
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+const transformDirectory = new URL(".", import.meta.url);
+const transformDigest = createHash("sha256");
+for (const name of readdirSync(transformDirectory)
+  .filter((name) => name.endsWith(".js"))
+  .sort()) {
+  transformDigest.update(name).update("\0");
+  transformDigest
+    .update(readFileSync(new URL(name, transformDirectory)))
+    .update("\0");
+}
+const transformHash = transformDigest.digest("hex");
 export function createSemanticScope(sources, options) {
   const inputs = Object.create(null);
   for (const source of sources)
@@ -26,6 +39,7 @@ export function createSemanticScope(sources, options) {
   ]);
   return {
     compiler: compilerVersion,
+    transformHash,
     optionsHash: sha256(JSON.stringify(settings)),
     sources: inputs,
   };
@@ -34,6 +48,7 @@ function matchingScope(actual, expected) {
   const keys = Object.keys(actual.sources);
   return (
     actual.compiler === expected.compiler &&
+    actual.transformHash === expected.transformHash &&
     actual.optionsHash === expected.optionsHash &&
     keys.length === Object.keys(expected.sources).length &&
     keys.every((key) => {
@@ -73,6 +88,7 @@ function validScope(value) {
   return (
     typeof scope.compiler === "string" &&
     scope.compiler.length > 0 &&
+    hash(scope.transformHash) &&
     hash(scope.optionsHash) &&
     !!scope.sources &&
     typeof scope.sources === "object" &&
@@ -92,15 +108,33 @@ function validScope(value) {
 }
 function representationOfResolvedType(type) {
   if (!type.isClass || type.isNullableReference) return "unknown";
-  const name = type.toString();
-  if (name === "string" || /(?:^|\/)string\/String$/.test(name))
+  const declaration = type.classReference?.prototype.declaration;
+  if (!declaration) return "unknown";
+  const source = declaration.range.source;
+  if (
+    declaration.name.text === "String" &&
+    source.internalPath === "~lib/string"
+  )
     return "native";
-  if (name === "str" || /(?:^|\/)str\/Str$/.test(name)) return "view";
+  if (
+    declaration.name.text === "Str" &&
+    isPackageSource(source) &&
+    /(?:^|\/)str$/.test(source.internalPath)
+  )
+    return "view";
   return "unknown";
 }
 export function buildSemanticManifest(program) {
   const factsByKey = new Map();
   const conflicts = new Set();
+  const admitted = new WeakMap();
+  function includes(source) {
+    const known = admitted.get(source);
+    if (known !== undefined) return known;
+    const selected = admitSource(source).semanticFacts;
+    admitted.set(source, selected);
+    return selected;
+  }
   function addFact(key, fact) {
     const previous = factsByKey.get(key);
     if (!previous) {
@@ -122,7 +156,7 @@ export function buildSemanticManifest(program) {
       if (!element.declaration) continue;
       const range = element.declaration.range;
       const source = range.source;
-      if (!admitSource(source).semanticFacts) continue;
+      if (!includes(source)) continue;
       const resolvedType = element.type.toString();
       const representation = representationOfResolvedType(element.type);
       const kind = element instanceof Property ? "field" : "global";
@@ -141,7 +175,7 @@ export function buildSemanticManifest(program) {
     }
     if (!(element instanceof ASFunction)) continue;
     const functionSource = element.prototype.declaration.range.source;
-    if (!admitSource(functionSource).semanticFacts) continue;
+    if (!includes(functionSource)) continue;
     const functionRange = element.prototype.declaration.range;
     const returnType = element.signature.returnType.toString();
     const returnRepresentation = representationOfResolvedType(
@@ -184,7 +218,7 @@ export function buildSemanticManifest(program) {
       if (!(local instanceof Local) || !local.declaration) continue;
       const range = local.declaration.range;
       const source = range.source;
-      if (!admitSource(source).semanticFacts) continue;
+      if (!includes(source)) continue;
       const resolvedType = local.type.toString();
       const representation = representationOfResolvedType(local.type);
       const key = `${source.normalizedPath}:${range.start}:local`;

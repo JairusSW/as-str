@@ -214,9 +214,10 @@ AS_STR_MANIFEST_OUT=build/types.json npx asc assembly/index.ts --transform as-st
 AS_STR_MANIFEST_IN=build/types.json npx asc assembly/index.ts --transform as-str/single -o build/module.wasm
 ```
 
-Caches record the compiler version, options, and source identities, including
-dependencies. Changed inputs, malformed files, version 1 caches, and caches from
-optimized runs are rejected; single-pass mode then falls back to syntax analysis.
+Caches record the compiler version, transform implementation, options, and source
+identities, including dependencies. Changed inputs, malformed files, version 1
+caches, and caches from optimized runs are rejected; single-pass mode then falls
+back to syntax analysis.
 Regenerate version 2 metadata with `as-str/global` after changes. Set
 `STR_AS_DEBUG=1` to see whether a cache was accepted.
 

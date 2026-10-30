@@ -5,6 +5,8 @@ import {
   Source,
   Tokenizer,
 } from "assemblyscript/dist/assemblyscript.js";
+import { arrayElementType, stringRepresentation } from "./type-resolution.js";
+import { requestViewTypeAlias } from "./view-aliases.js";
 export function typeName(type) {
   if (!(type instanceof NamedTypeNode)) return null;
   const parts = [];
@@ -16,26 +18,26 @@ export function typeName(type) {
   return parts.join(".");
 }
 export function representationOfType(type, nonNull = false) {
-  if (!nonNull && type?.isNullable) return "unknown";
-  const name = typeName(type);
-  if (name === "string" || name === "String") return "native";
-  if (name === "str" || name === "Str") return "view";
-  return "unknown";
+  return stringRepresentation(type, nonNull);
 }
 export function elementRepresentationOfType(type) {
-  if (!(type instanceof NamedTypeNode) || type.isNullable) return "unknown";
-  const name = typeName(type);
-  if (name !== "Array" && name !== "StaticArray") return "unknown";
-  const element = type.typeArguments?.[0] ?? null;
-  return representationOfType(element);
+  return representationOfType(arrayElementType(type));
 }
 export function viewType(range) {
-  return Node.createNamedType(
+  const type = Node.createNamedType(
     Node.createSimpleTypeName("str", range),
     null,
     false,
     range,
   );
+  return stringRepresentation(type) === "view"
+    ? type
+    : Node.createNamedType(
+        Node.createSimpleTypeName(requestViewTypeAlias(range.source), range),
+        null,
+        false,
+        range,
+      );
 }
 export function i32Type(range) {
   return Node.createNamedType(

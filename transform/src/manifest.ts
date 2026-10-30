@@ -9,11 +9,13 @@ import {
   Source,
   Type,
 } from "assemblyscript/dist/assemblyscript.js";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, readdirSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
+import { URL } from "url";
 import { version as compilerVersion } from "assemblyscript/dist/asc.js";
 import { Representation } from "./ast.js";
 import { admitSource } from "./source-admission.js";
+import { isPackageSource } from "./source-identity.js";
 
 export interface SemanticFact {
   source: string;
@@ -28,6 +30,7 @@ export interface SemanticFact {
 
 export interface SemanticScope {
   compiler: string;
+  transformHash: string;
   optionsHash: string;
   sources: Record<string, { hash: string; length: number; kind: number }>;
 }
@@ -42,6 +45,20 @@ export interface SemanticManifest {
 
 const sha256 = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
+
+// Source/compiler identity alone cannot invalidate metadata from an older
+// transform whose type classification or preliminary rewrites were different.
+const transformDirectory = new URL(".", import.meta.url);
+const transformDigest = createHash("sha256");
+for (const name of readdirSync(transformDirectory)
+  .filter((name) => name.endsWith(".js"))
+  .sort()) {
+  transformDigest.update(name).update("\0");
+  transformDigest
+    .update(readFileSync(new URL(name, transformDirectory)))
+    .update("\0");
+}
+const transformHash = transformDigest.digest("hex");
 
 export function createSemanticScope(
   sources: readonly Source[],
@@ -63,6 +80,7 @@ export function createSemanticScope(
   ]);
   return {
     compiler: compilerVersion,
+    transformHash,
     optionsHash: sha256(JSON.stringify(settings)),
     sources: inputs,
   };
@@ -75,6 +93,7 @@ function matchingScope(
   const keys = Object.keys(actual.sources);
   return (
     actual.compiler === expected.compiler &&
+    actual.transformHash === expected.transformHash &&
     actual.optionsHash === expected.optionsHash &&
     keys.length === Object.keys(expected.sources).length &&
     keys.every((key) => {
@@ -116,6 +135,7 @@ function validScope(value: unknown): value is SemanticScope {
   return (
     typeof scope.compiler === "string" &&
     scope.compiler.length > 0 &&
+    hash(scope.transformHash) &&
     hash(scope.optionsHash) &&
     !!scope.sources &&
     typeof scope.sources === "object" &&
@@ -136,16 +156,34 @@ function validScope(value: unknown): value is SemanticScope {
 
 function representationOfResolvedType(type: Type): Representation {
   if (!type.isClass || type.isNullableReference) return "unknown";
-  const name = type.toString();
-  if (name === "string" || /(?:^|\/)string\/String$/.test(name))
+  const declaration = type.classReference?.prototype.declaration;
+  if (!declaration) return "unknown";
+  const source = declaration.range.source;
+  if (
+    declaration.name.text === "String" &&
+    source.internalPath === "~lib/string"
+  )
     return "native";
-  if (name === "str" || /(?:^|\/)str\/Str$/.test(name)) return "view";
+  if (
+    declaration.name.text === "Str" &&
+    isPackageSource(source) &&
+    /(?:^|\/)str$/.test(source.internalPath)
+  )
+    return "view";
   return "unknown";
 }
 
 export function buildSemanticManifest(program: Program): SemanticManifest {
   const factsByKey = new Map<string, SemanticFact>();
   const conflicts = new Set<string>();
+  const admitted = new WeakMap<Source, boolean>();
+  function includes(source: Source): boolean {
+    const known = admitted.get(source);
+    if (known !== undefined) return known;
+    const selected = admitSource(source).semanticFacts;
+    admitted.set(source, selected);
+    return selected;
+  }
 
   function addFact(key: string, fact: SemanticFact): void {
     const previous = factsByKey.get(key);
@@ -169,7 +207,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       if (!element.declaration) continue;
       const range = element.declaration.range;
       const source = range.source;
-      if (!admitSource(source).semanticFacts) continue;
+      if (!includes(source)) continue;
       const resolvedType = element.type.toString();
       const representation = representationOfResolvedType(element.type);
       const kind = element instanceof Property ? "field" : "global";
@@ -188,7 +226,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
     }
     if (!(element instanceof ASFunction)) continue;
     const functionSource = element.prototype.declaration.range.source;
-    if (!admitSource(functionSource).semanticFacts) continue;
+    if (!includes(functionSource)) continue;
 
     const functionRange = element.prototype.declaration.range;
     const returnType = element.signature.returnType.toString();
@@ -233,7 +271,7 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       if (!(local instanceof Local) || !local.declaration) continue;
       const range = local.declaration.range;
       const source = range.source;
-      if (!admitSource(source).semanticFacts) continue;
+      if (!includes(source)) continue;
       const resolvedType = local.type.toString();
       const representation = representationOfResolvedType(local.type);
       const key = `${source.normalizedPath}:${range.start}:local`;

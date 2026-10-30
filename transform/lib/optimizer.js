@@ -1,6 +1,8 @@
+import { callArgumentType, typeIsNullable } from "./type-resolution.js";
 import {
   FunctionSignatures,
   declaredCallSignature,
+  declaredCallType,
   signatureForCall,
   signatureForDeclaration,
 } from "./signatures.js";
@@ -32,7 +34,7 @@ import {
   representationOfType,
   viewType,
 } from "./ast.js";
-import { operationSemantics } from "./operations.js";
+import { containerArgumentKind, operationSemantics } from "./operations.js";
 import { planPackedSpanParameters } from "./packed-span.js";
 import { factsForSource } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
@@ -146,6 +148,9 @@ function collectFunctionSignatures(source, semanticFacts) {
         !(
           ref.parent instanceof FunctionExpression &&
           !(ref.grandparent instanceof ExpressionStatement)
+        ) &&
+        !node.signature.parameters.some(
+          (parameter) => parameter.parameterKind === 2,
         ) &&
         functionIsClosed(
           node,
@@ -421,7 +426,7 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
       if (bindings.has(name) || parameters.has(name)) duplicateNames.add(name);
       const declared = representationOfType(node.type);
       const fact = semanticFacts.get(`local:${node.range.start}`);
-      const nullable = node.type?.isNullable || fact?.nullable === true;
+      const nullable = typeIsNullable(node.type) || fact?.nullable === true;
       const semantic = nullable
         ? "unknown"
         : (fact?.representation ?? declared);
@@ -432,7 +437,9 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
         hasDecorator(node.decorators, "preferView") ||
         hasLocalPragma(node, "prefer-view");
       const explicitView =
-        !nullable && expressionIsExplicitView(node.initializer);
+        !nullable &&
+        declared !== "native" &&
+        expressionIsExplicitView(node.initializer);
       const candidate =
         !nullable &&
         !noView &&
@@ -448,7 +455,11 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
         decision: nullable
           ? "unknown"
           : noView
-            ? "native"
+            ? declared !== "unknown"
+              ? declared
+              : explicitView
+                ? "view"
+                : semantic
             : explicitView
               ? "view"
               : declared,
@@ -583,7 +594,7 @@ function collectGlobalRepresentations(source, facts) {
       if (!globals.has(name))
         globals.set(
           name,
-          declaration.type?.isNullable
+          typeIsNullable(declaration.type)
             ? "unknown"
             : declared !== "unknown"
               ? declared
@@ -601,19 +612,24 @@ function expectedCallArgument(call, index, signatures, context) {
     ? declaredCallSignature(call, context, signatures)
     : undefined;
   if (declared) return declared.parameters[index] ?? "unknown";
+  const callback = context ? declaredCallType(call, context) : undefined;
+  if (callback) return representationOfType(callArgumentType(callback, index));
   const property =
     call.expression instanceof PropertyAccessExpression
       ? call.expression
       : null;
-  if (
-    property?.expression instanceof IdentifierExpression &&
-    ["push", "unshift", "fill", "includes", "indexOf", "lastIndexOf"].includes(
-      property.property.text,
-    )
-  ) {
-    return (
-      context?.bindings.get(property.expression.text)?.element ?? "unknown"
-    );
+  const containerArgument = property
+    ? containerArgumentKind(property.property.text, index)
+    : null;
+  if (containerArgument) {
+    if (containerArgument === "other") return "unknown";
+    const type = context?.classes.typeOf(property.expression, context);
+    return type
+      ? elementRepresentationOfType(type)
+      : property.expression instanceof IdentifierExpression
+        ? (context?.bindings.get(property.expression.text)?.element ??
+          "unknown")
+        : "unknown";
   }
   const name =
     calleeName(call.expression) ??
@@ -796,6 +812,19 @@ function analyzeCandidates(context, signatures) {
   if (!declaration) return;
   const body = declaration.body;
   if (!body) return;
+  for (const binding of context.bindings.values()) {
+    if (
+      binding.forcedReason === "@as-str no-view" &&
+      binding.decision === "unknown" &&
+      !typeIsNullable(binding.declaration.type) &&
+      binding.declaration.initializer
+    )
+      binding.decision = expressionRepresentation(
+        binding.declaration.initializer,
+        context,
+        signatures,
+      );
+  }
   for (const binding of context.bindings.values()) {
     const init = binding.declaration.initializer;
     if (!binding.candidate || !(init instanceof CallExpression)) continue;

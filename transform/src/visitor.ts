@@ -32,7 +32,15 @@ export function walk(
   if (!node) return;
   if (visitor(node, { parent, key, grandparent }) === false) return;
 
-  for (const [childKey, value] of Object.entries(node)) {
+  // Snapshot values before visiting children: a visitor may replace a sibling.
+  // Separate key/value arrays avoid allocating a pair for every AST property.
+  const keys = Object.keys(node);
+  const values = keys.map(
+    (key) => (node as unknown as Record<string, unknown>)[key],
+  );
+  for (let i = 0; i < keys.length; i++) {
+    const childKey = keys[i];
+    const value = values[i];
     if (
       childKey === "range" ||
       childKey === "implicitFieldDeclaration" ||

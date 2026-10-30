@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
+  cpSync,
+  appendFileSync,
   mkdtempSync,
   readFileSync,
   writeFileSync,
   rmSync,
 } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   Options,
   Source,
@@ -34,6 +37,25 @@ try {
   );
   const options = new Options();
   const scope = createSemanticScope([source, dependency], options);
+  const copy = path.join(scratch, "transform", "lib");
+  cpSync(path.join(repo, "transform", "lib"), copy, { recursive: true });
+  const copiedModule = pathToFileURL(path.join(copy, "manifest.js"));
+  const unchangedTransform = await import(copiedModule.href);
+  assert.equal(
+    unchangedTransform.createSemanticScope([source, dependency], options)
+      .transformHash,
+    scope.transformHash,
+  );
+  appendFileSync(
+    path.join(copy, "ast.js"),
+    "\n// Different transform implementation.\n",
+  );
+  const changedTransform = await import(copiedModule.href + "?changed");
+  assert.notEqual(
+    changedTransform.createSemanticScope([source, dependency], options)
+      .transformHash,
+    scope.transformHash,
+  );
   const fact = {
     source: "input.ts",
     start: 0,
@@ -67,6 +89,8 @@ try {
     { ...valid, scope: null },
     { ...valid, scope: { ...scope, sources: [] } },
     { ...valid, scope: { ...scope, optionsHash: "bad" } },
+    { ...valid, scope: { ...scope, transformHash: undefined } },
+    { ...valid, scope: { ...scope, transformHash: "bad" } },
   ])
     assert.equal(read(value), null);
   for (const patch of [
@@ -96,6 +120,7 @@ try {
     null,
   );
   assert.equal(read(valid, { ...scope, compiler: "another compiler" }), null);
+  assert.equal(read(valid, { ...scope, transformHash: "0".repeat(64) }), null);
   assert.equal(
     read(
       valid,

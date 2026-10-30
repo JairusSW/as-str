@@ -8,6 +8,8 @@ import {
   Tokenizer,
   TypeNode,
 } from "assemblyscript/dist/assemblyscript.js";
+import { arrayElementType, stringRepresentation } from "./type-resolution.js";
+import { requestViewTypeAlias } from "./view-aliases.js";
 
 export type Representation = "native" | "view" | "unknown";
 
@@ -26,30 +28,30 @@ export function representationOfType(
   type: TypeNode | null,
   nonNull = false,
 ): Representation {
-  if (!nonNull && type?.isNullable) return "unknown";
-  const name = typeName(type);
-  if (name === "string" || name === "String") return "native";
-  if (name === "str" || name === "Str") return "view";
-  return "unknown";
+  return stringRepresentation(type, nonNull);
 }
 
 export function elementRepresentationOfType(
   type: TypeNode | null,
 ): Representation {
-  if (!(type instanceof NamedTypeNode) || type.isNullable) return "unknown";
-  const name = typeName(type);
-  if (name !== "Array" && name !== "StaticArray") return "unknown";
-  const element = type.typeArguments?.[0] ?? null;
-  return representationOfType(element);
+  return representationOfType(arrayElementType(type));
 }
 
 export function viewType(range: Source["range"]): NamedTypeNode {
-  return Node.createNamedType(
+  const type = Node.createNamedType(
     Node.createSimpleTypeName("str", range),
     null,
     false,
     range,
   );
+  return stringRepresentation(type) === "view"
+    ? type
+    : Node.createNamedType(
+        Node.createSimpleTypeName(requestViewTypeAlias(range.source), range),
+        null,
+        false,
+        range,
+      );
 }
 
 export function i32Type(range: Source["range"]): NamedTypeNode {

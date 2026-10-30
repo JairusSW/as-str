@@ -1,3 +1,18 @@
+const ARRAY_ELEMENT_METHODS = new Set([
+  "push",
+  "unshift",
+  "fill",
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+]);
+export function containerArgumentKind(method, index) {
+  return ARRAY_ELEMENT_METHODS.has(method)
+    ? index === 0
+      ? "element"
+      : "other"
+    : null;
+}
 const VIEW_PRODUCING_METHODS = new Set([
   "slice",
   "substring",

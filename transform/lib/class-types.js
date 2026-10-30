@@ -1,4 +1,15 @@
 import {
+  arrayElementType,
+  classDeclarationOfType,
+  classMemberType,
+  constructedType,
+  declaredValueType,
+  expandedType,
+  functionDeclarationOfName,
+  functionCallType,
+  nonNullableType,
+} from "./type-resolution.js";
+import {
   AssertionExpression,
   BlockStatement,
   ExpressionStatement,
@@ -13,16 +24,18 @@ import {
   ForOfStatement,
   IdentifierExpression,
   NamespaceDeclaration,
-  NamedTypeNode,
   NewExpression,
   Node,
   ParenthesizedExpression,
   PropertyAccessExpression,
+  StringLiteralExpression,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
-import { representationOfType, typeName } from "./ast.js";
+import { representationOfType, viewType } from "./ast.js";
 import { walk } from "./visitor.js";
+const resolvingDefaultInitializers = new WeakSet();
 export class SourceClassTypes {
+  source;
   classes = new Map();
   owners = new Map();
   namespaces = [];
@@ -31,7 +44,12 @@ export class SourceClassTypes {
   functions = new Map();
   variables = new Map();
   lexicalFunctions = [];
+  resolvingClasses = new Set();
+  foreignAnalyzers = new WeakMap();
+  completedClasses = new Set();
+  visitingClasses = new Set();
   constructor(source) {
+    this.source = source;
     walk(source, (node) => {
       if (!(node instanceof NamespaceDeclaration)) return;
       const scope = this.namespaceAt(node.range.start);
@@ -90,69 +108,66 @@ export class SourceClassTypes {
       const scope = this.namespaceAt(node.range.start);
       const owner = scope ? `${scope}.${node.name.text}` : node.name.text;
       if (this.classes.has(owner)) this.ambiguous.add(owner);
-      const properties = new Map();
-      const methods = new Map();
-      this.owners.set(node, owner);
-      for (const member of node.members) {
-        this.owners.set(member, owner);
-        const key = member.is(32)
-          ? `static:${member.name.text}`
-          : member.name.text;
-        if (member instanceof FieldDeclaration) {
-          properties.set(key, {
-            declaration: member,
-            type: member.type,
-            initializer: member.initializer,
-            representation: properties.has(key)
-              ? "unknown"
-              : representationOfType(member.type),
-          });
-        } else if (member instanceof FunctionDeclaration) {
-          if (member.isAny(2048 | 4096)) {
-            const getter = member.is(2048);
-            const type = getter
-              ? member.signature.returnType
-              : (member.signature.parameters[0]?.type ?? null);
-            if (getter || !properties.has(key))
-              properties.set(key, {
-                declaration: member,
-                type,
-                initializer: null,
-                representation: representationOfType(type),
-              });
-          } else methods.set(key, methods.has(key) ? null : member);
-        }
-      }
-      this.classes.set(owner, {
-        declaration: node,
-        properties,
-        methods,
-      });
+      this.registerClass(node, owner);
     });
-    const done = new Set(),
-      visiting = new Set();
-    const inherit = (owner) => {
-      if (done.has(owner) || visiting.has(owner)) return;
-      const info = this.classes.get(owner);
-      if (!info) return;
-      visiting.add(owner);
-      const base = typeName(info.declaration.extendsType);
-      const parent = base
-        ? this.resolve(base, info.declaration.range.start)
-        : null;
-      if (!this.ambiguous.has(owner) && parent && !this.ambiguous.has(parent)) {
-        inherit(parent);
-        for (const [name, property] of this.classes.get(parent).properties) {
-          if (!info.properties.has(name)) info.properties.set(name, property);
-        }
-        for (const [name, method] of this.classes.get(parent).methods) {
-          if (!info.methods.has(name)) info.methods.set(name, method);
-        }
+    for (const owner of this.classes.keys()) this.inheritClass(owner);
+  }
+  registerClass(node, owner) {
+    const properties = new Map();
+    const methods = new Map();
+    this.owners.set(node, owner);
+    for (const member of node.members) {
+      this.owners.set(member, owner);
+      const key = member.is(32)
+        ? `static:${member.name.text}`
+        : member.name.text;
+      if (member instanceof FieldDeclaration) {
+        properties.set(key, {
+          declaration: member,
+          type: member.type,
+          initializer: member.initializer,
+          representation: properties.has(key)
+            ? "unknown"
+            : representationOfType(member.type),
+        });
+      } else if (member instanceof FunctionDeclaration) {
+        if (member.isAny(2048 | 4096)) {
+          const getter = member.is(2048);
+          const type = getter
+            ? member.signature.returnType
+            : (member.signature.parameters[0]?.type ?? null);
+          if (getter || !properties.has(key))
+            properties.set(key, {
+              declaration: member,
+              type,
+              initializer: null,
+              representation: representationOfType(type),
+            });
+        } else methods.set(key, methods.has(key) ? null : member);
       }
-      visiting.delete(owner);
-      done.add(owner);
-    };
-    for (const owner of this.classes.keys()) inherit(owner);
+    }
+    this.classes.set(owner, {
+      declaration: node,
+      properties,
+      methods,
+    });
+  }
+  inheritClass(owner) {
+    if (this.completedClasses.has(owner) || this.visitingClasses.has(owner))
+      return;
+    const info = this.classes.get(owner);
+    if (!info) return;
+    this.visitingClasses.add(owner);
+    const parent = this.classFromType(info.declaration.extendsType);
+    if (!this.ambiguous.has(owner) && parent && !this.ambiguous.has(parent)) {
+      this.inheritClass(parent);
+      for (const [name, property] of this.classes.get(parent).properties)
+        if (!info.properties.has(name)) info.properties.set(name, property);
+      for (const [name, method] of this.classes.get(parent).methods)
+        if (!info.methods.has(name)) info.methods.set(name, method);
+    }
+    this.visitingClasses.delete(owner);
+    this.completedClasses.add(owner);
   }
   ownerOf(declaration) {
     return this.owners.get(declaration);
@@ -164,30 +179,182 @@ export class SourceClassTypes {
     return this.propertyInfo(expression, context)?.representation ?? "unknown";
   }
   typeOf(expression, context) {
-    return this.declaredType(expression, context, new Set());
+    return expandedType(this.declaredType(expression, context, new Set()));
+  }
+  callType(call, context, declaration) {
+    return this.resolveCallType(call, context, new Set(), false, declaration);
+  }
+  resolveCallType(
+    call,
+    context,
+    seen,
+    globalScope,
+    declaration = this.callableOf(call.expression, context),
+  ) {
+    if (declaration) {
+      let signature = declaration.signature;
+      let defaults;
+      let receiver = null;
+      const owner = this.ownerOf(declaration);
+      const classDeclaration = owner
+        ? this.classes.get(owner)?.declaration
+        : null;
+      if (
+        classDeclaration?.typeParameters?.length &&
+        call.expression instanceof PropertyAccessExpression
+      ) {
+        receiver = this.declaredType(
+          call.expression.expression,
+          context,
+          seen,
+          globalScope,
+        );
+        signature = classMemberType(receiver, classDeclaration, signature);
+        defaults = declaration.typeParameters?.map((parameter) =>
+          classMemberType(receiver, classDeclaration, parameter.defaultType),
+        );
+      }
+      const actual = declaration.typeParameters?.length
+        ? call.args.map((argument) =>
+            this.declaredType(argument, context, new Set(seen), globalScope),
+          )
+        : [];
+      const defaultValues = [];
+      if (declaration.typeParameters?.length) {
+        for (let i = call.args.length; i < signature.parameters.length; i++) {
+          const initializer = signature.parameters[i].initializer;
+          if (
+            initializer &&
+            signature.parameters[i].type.hasGenericComponent(
+              declaration.typeParameters,
+            )
+          ) {
+            const type = this.defaultInitializerType(
+              initializer,
+              declaration,
+              context,
+            );
+            defaultValues[i] = classDeclaration
+              ? classMemberType(receiver, classDeclaration, type)
+              : type;
+          }
+        }
+      }
+      return functionCallType(
+        declaration,
+        call.typeArguments,
+        signature,
+        actual,
+        defaults,
+        defaultValues,
+      );
+    }
+    const callee = call.expression;
+    if (
+      declaration === undefined &&
+      callee instanceof IdentifierExpression &&
+      callee.text === "changetype" &&
+      call.typeArguments?.[0]
+    )
+      return Node.createFunctionType(
+        [],
+        call.typeArguments[0],
+        null,
+        false,
+        call.range,
+      );
+    const implicitView =
+      (callee instanceof IdentifierExpression && callee.text === "str") ||
+      (callee instanceof PropertyAccessExpression &&
+        callee.expression instanceof IdentifierExpression &&
+        callee.expression.text === "str" &&
+        ["from", "fromRange"].includes(callee.property.text));
+    if (implicitView && representationOfType(viewType(call.range)) === "view")
+      return Node.createFunctionType(
+        [],
+        viewType(call.range),
+        null,
+        false,
+        call.range,
+      );
+    const callback = expandedType(
+      this.declaredType(call.expression, context, seen, globalScope),
+    );
+    return callback instanceof FunctionTypeNode ? callback : null;
+  }
+  defaultInitializerType(expression, declaration, context) {
+    if (resolvingDefaultInitializers.has(expression)) return null;
+    resolvingDefaultInitializers.add(expression);
+    try {
+      const source = declaration.range.source;
+      const analyzer =
+        source === this.source
+          ? this
+          : (this.foreignAnalyzers.get(source) ?? new SourceClassTypes(source));
+      if (source !== this.source) {
+        this.foreignAnalyzers.set(source, analyzer);
+      }
+      return analyzer.typeOf(expression, {
+        ...context,
+        declaration,
+        className: analyzer.ownerOf(declaration),
+        bindings: new Map(),
+        globals: new Map(),
+        duplicateNames: new Set(),
+        parameters: new Map(
+          declaration.signature.parameters.map((parameter) => [
+            parameter.name.text,
+            representationOfType(parameter.type),
+          ]),
+        ),
+      });
+    } finally {
+      resolvingDefaultInitializers.delete(expression);
+    }
   }
   declaredType(expression, context, seen, globalScope = false) {
     if (seen.has(expression)) return null;
     seen.add(expression);
-    if (
-      expression instanceof ParenthesizedExpression ||
-      (expression instanceof AssertionExpression &&
-        expression.assertionKind === 2)
-    )
+    if (expression instanceof ParenthesizedExpression)
       return this.declaredType(
         expression.expression,
         context,
         seen,
         globalScope,
       );
+    if (
+      expression instanceof AssertionExpression &&
+      expression.assertionKind === 2
+    )
+      return nonNullableType(
+        this.declaredType(expression.expression, context, seen, globalScope),
+      );
     if (expression instanceof AssertionExpression) return expression.toType;
-    if (expression instanceof NewExpression)
+    if (expression instanceof StringLiteralExpression)
       return Node.createNamedType(
+        Node.createSimpleTypeName("string", expression.range),
+        null,
+        false,
+        expression.range,
+      );
+    if (expression instanceof NewExpression) {
+      const type = Node.createNamedType(
         expression.typeName,
         expression.typeArguments,
         false,
         expression.range,
       );
+      const declaration = classDeclarationOfType(type);
+      return declaration?.typeParameters?.length &&
+        expression.typeArguments?.length !== declaration.typeParameters.length
+        ? constructedType(
+            type,
+            expression.args.map((argument) =>
+              this.declaredType(argument, context, new Set(seen), globalScope),
+            ),
+          )
+        : type;
+    }
     if (expression instanceof FunctionExpression)
       return expression.declaration.signature;
     if (expression instanceof IdentifierExpression && !globalScope) {
@@ -225,21 +392,13 @@ export class SourceClassTypes {
         seen,
         globalScope,
       );
-      return array instanceof NamedTypeNode &&
-        ["Array", "StaticArray"].includes(typeName(array) ?? "")
-        ? (array.typeArguments?.[0] ?? null)
-        : null;
+      return arrayElementType(array);
     }
     if (expression instanceof CallExpression) {
-      const declaration = this.callableOf(expression.expression, context);
-      if (declaration) return declaration.signature.returnType;
-      const callback = this.declaredType(
-        expression.expression,
-        context,
-        seen,
-        globalScope,
+      return (
+        this.resolveCallType(expression, context, seen, globalScope)
+          ?.returnType ?? null
       );
-      return callback instanceof FunctionTypeNode ? callback.returnType : null;
     }
     const path = this.unshadowedPath(expression, context, globalScope);
     const key = path ? this.runtimeKey(path, expression.range.start) : null;
@@ -258,7 +417,9 @@ export class SourceClassTypes {
             seen,
             true,
           )
-        : null)
+        : path
+          ? declaredValueType(path, expression.range)
+          : null)
     );
   }
   propertyInfo(expression, context, seen = new Set(), globalScope = false) {
@@ -269,7 +430,7 @@ export class SourceClassTypes {
       globalScope,
     );
     if (!owner || this.ambiguous.has(owner)) return undefined;
-    return this.classes
+    const property = this.classes
       .get(owner)
       ?.properties.get(
         this.memberKey(
@@ -279,6 +440,20 @@ export class SourceClassTypes {
           globalScope,
         ),
       );
+    if (!property) return undefined;
+    const declaringOwner = this.ownerOf(property.declaration);
+    const declaration = declaringOwner
+      ? this.classes.get(declaringOwner)?.declaration
+      : null;
+    if (!declaration?.typeParameters?.length) return property;
+    const receiver = this.declaredType(
+      expression.expression,
+      context,
+      new Set(),
+      globalScope,
+    );
+    const type = classMemberType(receiver, declaration, property.type);
+    return { ...property, type, representation: representationOfType(type) };
   }
   callableOf(expression, context, seen = new Set()) {
     if (seen.has(expression)) return null;
@@ -337,9 +512,18 @@ export class SourceClassTypes {
             ) ?? null
         );
     }
-    return undefined;
+    return path ? functionDeclarationOfName(path, expression.range) : undefined;
   }
   classOf(expression, context, seen, globalScope = false) {
+    if (this.resolvingClasses.has(expression)) return null;
+    this.resolvingClasses.add(expression);
+    try {
+      return this.resolveClass(expression, context, seen, globalScope);
+    } finally {
+      this.resolvingClasses.delete(expression);
+    }
+  }
+  resolveClass(expression, context, seen, globalScope) {
     if (seen.has(expression)) return null;
     seen.add(expression);
     if (
@@ -349,70 +533,24 @@ export class SourceClassTypes {
     )
       return this.classOf(expression.expression, context, seen, globalScope);
     if (expression instanceof NewExpression)
-      return this.resolve(this.newTypeName(expression), expression.range.start);
-    if (expression instanceof CallExpression) {
-      const callee = expression.expression;
-      if (!globalScope && callee instanceof IdentifierExpression) {
-        const initializer = this.localVariable(
-          callee.text,
-          expression.range.start,
-          context,
-        )?.initializer;
-        if (initializer instanceof FunctionExpression) {
-          const result = typeName(initializer.declaration.signature.returnType);
-          return result ? this.resolve(result, initializer.range.start) : null;
-        }
-        const callback =
-          this.localVariable(callee.text, expression.range.start, context)
-            ?.type ??
-          context.declaration?.signature.parameters.find(
-            (p) => p.name.text === callee.text,
-          )?.type;
-        if (callback instanceof FunctionTypeNode) {
-          const result = typeName(callback.returnType);
-          return result ? this.resolve(result, callback.range.start) : null;
-        }
-      }
-      if (!globalScope && callee instanceof IdentifierExpression) {
-        if (
-          this.localVariable(callee.text, expression.range.start, context) ||
-          context.parameters.has(callee.text)
-        )
-          return null;
-        const local = this.lexicalFunction(callee.text, expression.range.start);
-        if (local !== undefined) {
-          const result = typeName(local?.signature.returnType ?? null);
-          return result ? this.resolve(result, local.range.start) : null;
-        }
-      }
-      const path = this.unshadowedPath(callee, context, globalScope);
-      const key = path ? this.runtimeKey(path, expression.range.start) : null;
-      let declaration = key ? this.functions.get(key) : null;
-      if (!declaration && callee instanceof PropertyAccessExpression) {
-        const owner = this.classOf(
-          callee.expression,
-          context,
-          seen,
-          globalScope,
-        );
-        if (owner && !this.ambiguous.has(owner))
-          declaration = this.classes
-            .get(owner)
-            ?.methods.get(
-              this.memberKey(
-                callee.property.text,
-                callee.expression,
-                context,
-                globalScope,
-              ),
-            );
-      }
-      const result = typeName(declaration?.signature.returnType ?? null);
-      return result ? this.resolve(result, declaration.range.start) : null;
-    }
+      return this.classFromType(
+        Node.createNamedType(
+          expression.typeName,
+          expression.typeArguments,
+          false,
+          expression.range,
+        ),
+      );
+    if (expression instanceof ElementAccessExpression)
+      return this.classFromType(
+        this.declaredType(expression, context, new Set(), globalScope),
+      );
+    if (expression instanceof CallExpression)
+      return this.classFromType(
+        this.declaredType(expression, context, new Set(), globalScope),
+      );
     if (expression instanceof AssertionExpression) {
-      const name = typeName(expression.toType);
-      return name ? this.resolve(name, expression.range.start) : null;
+      return this.classFromType(expression.toType);
     }
     if (expression instanceof IdentifierExpression) {
       const name = expression.text;
@@ -431,8 +569,7 @@ export class SourceClassTypes {
           context,
         );
         if (variable) {
-          const declared = typeName(variable.type);
-          if (declared) return this.resolve(declared, variable.range.start);
+          if (variable.type) return this.classFromType(variable.type);
           return variable.initializer
             ? this.classOf(variable.initializer, context, seen)
             : null;
@@ -441,21 +578,24 @@ export class SourceClassTypes {
           (p) => p.name.text === name,
         );
         if (parameter || context.parameters.has(name)) {
-          const declared = typeName(parameter?.type ?? null);
-          return declared
-            ? this.resolve(declared, parameter.range.start)
-            : null;
+          return this.classFromType(parameter?.type ?? null);
         }
       }
-      return this.globalOrClass(name, expression.range.start, context, seen);
+      return (
+        this.globalOrClass(name, expression.range.start, context, seen) ??
+        this.classFromType(declaredValueType(name, expression.range)) ??
+        this.classNamed(name, expression.range)
+      );
     }
     if (expression instanceof PropertyAccessExpression) {
       const field = this.propertyInfo(expression, context, seen, globalScope);
       if (field) {
-        const declared = typeName(field.type);
-        if (declared)
-          return this.resolve(declared, field.declaration.range.start);
-        if (field.initializer)
+        if (field.type) return this.classFromType(field.type);
+        if (
+          field.initializer &&
+          (field.declaration.range.source === this.source ||
+            field.initializer instanceof NewExpression)
+        )
           return this.classOf(
             field.initializer,
             {
@@ -472,7 +612,11 @@ export class SourceClassTypes {
       }
       const path = this.unshadowedPath(expression, context, globalScope);
       if (path)
-        return this.globalOrClass(path, expression.range.start, context, seen);
+        return (
+          this.globalOrClass(path, expression.range.start, context, seen) ??
+          this.classFromType(declaredValueType(path, expression.range)) ??
+          this.classNamed(path, expression.range)
+        );
     }
     return null;
   }
@@ -524,8 +668,7 @@ export class SourceClassTypes {
     const key = this.runtimeKey(name, position);
     if (key && this.globals.has(key)) {
       const global = this.globals.get(key);
-      const declared = typeName(global.type);
-      if (declared) return this.resolve(declared, global.range.start);
+      if (global.type) return this.classFromType(global.type);
       return global.initializer
         ? this.classOf(global.initializer, context, seen, true)
         : null;
@@ -558,7 +701,10 @@ export class SourceClassTypes {
       return context.declaration?.is(32) ? `static:${name}` : name;
     const path = this.unshadowedPath(receiver, context, globalScope);
     const key = path ? this.runtimeKey(path, receiver.range.start) : null;
-    return key && this.classes.has(key) ? `static:${name}` : name;
+    const staticClass = key
+      ? this.classes.has(key)
+      : path && this.classNamed(path, receiver.range);
+    return staticClass ? `static:${name}` : name;
   }
   runtimeKey(name, position) {
     return this.resolveIn(name, position, {
@@ -568,14 +714,25 @@ export class SourceClassTypes {
         this.functions.has(key),
     });
   }
-  newTypeName(expression) {
-    const parts = [];
-    let name = expression.typeName;
-    while (name) {
-      parts.push(name.identifier.text);
-      name = name.next;
-    }
-    return parts.join(".");
+  classFromType(type) {
+    const declaration = classDeclarationOfType(type);
+    if (!declaration) return null;
+    const known = this.owners.get(declaration);
+    if (known) return known;
+    const owner = `@${declaration.range.source.internalPath}:${declaration.range.start}`;
+    this.registerClass(declaration, owner);
+    this.inheritClass(owner);
+    return owner;
+  }
+  classNamed(name, range) {
+    return this.classFromType(
+      Node.createNamedType(
+        Node.createSimpleTypeName(name, range),
+        null,
+        false,
+        range,
+      ),
+    );
   }
   namespaceAt(position) {
     let best = "",
@@ -591,9 +748,6 @@ export class SourceClassTypes {
       }
     }
     return best;
-  }
-  resolve(name, position) {
-    return this.resolveIn(name, position, this.classes);
   }
   resolveIn(name, position, symbols) {
     let scope = this.namespaceAt(position);

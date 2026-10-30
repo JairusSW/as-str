@@ -1,7 +1,13 @@
-import { Node, Parser, Source } from "assemblyscript/dist/assemblyscript.js";
+import {
+  ImportStatement,
+  Node,
+  Parser,
+  Source,
+} from "assemblyscript/dist/assemblyscript.js";
 import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
+import { viewTypeAlias } from "./view-aliases.js";
 import {
   admitSource,
   configureSourceAdmission,
@@ -36,6 +42,13 @@ export function computeImportBaseRel(
   packageDir: string,
   p: typeof path = path,
 ): string {
+  // Windows cannot express a relative import between drives or UNC shares.
+  // The package namespace is independent of the runtime's physical location.
+  if (
+    p.parse(p.resolve(fromDir)).root.toLowerCase() !==
+    p.parse(p.resolve(packageDir)).root.toLowerCase()
+  )
+    return PACKAGE_NAME;
   return normalizeBaseRel(
     path.posix.join(...p.relative(fromDir, packageDir).split(p.sep)),
   );
@@ -145,7 +158,19 @@ export function injectViewImports(
     if (admission.packageSource) continue;
     const librarySource =
       source.isLibrary || source.internalPath.startsWith("~lib");
-    const names = admission.requestedViewNames;
+    const names = [...admission.requestedViewNames];
+    const alias = viewTypeAlias(source);
+    if (
+      alias &&
+      !source.statements.some(
+        (statement) =>
+          statement instanceof ImportStatement &&
+          statement.declarations?.some(
+            (declaration) => declaration.name.text === alias,
+          ),
+      )
+    )
+      names.push(alias);
     // Existing dependency sources may already obtain as-str through
     // AssemblyScript's package globals. Injecting a new explicit import into
     // those modules can create dependency cycles and change static
@@ -168,6 +193,14 @@ export function injectViewImports(
         baseRel === PACKAGE_NAME
           ? PACKAGE_NAME
           : path.posix.join(baseRel, "assembly", "index");
+      // posix.join drops a leading "./". A bare path is a package import to
+      // AssemblyScript, even when it points inside the application's directory.
+      if (
+        specifier !== PACKAGE_NAME &&
+        !specifier.startsWith(".") &&
+        !specifier.startsWith("/")
+      )
+        specifier = "./" + specifier;
     }
     if (specifier !== PACKAGE_NAME) {
       const root = packageRootInternal(source, specifier);
@@ -195,8 +228,14 @@ export function injectViewImports(
       Node.createImportStatement(
         names.map((name) =>
           Node.createImportDeclaration(
-            Node.createIdentifierExpression(name, range, false),
-            null,
+            Node.createIdentifierExpression(
+              alias === name ? "Str" : name,
+              range,
+              false,
+            ),
+            alias === name
+              ? Node.createIdentifierExpression(name, range, false)
+              : null,
             range,
           ),
         ),

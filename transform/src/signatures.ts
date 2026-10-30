@@ -1,9 +1,20 @@
 import {
   CallExpression,
   FunctionDeclaration,
+  FunctionTypeNode,
+  ParameterKind,
 } from "assemblyscript/dist/assemblyscript.js";
 import { FunctionContext, FunctionSignature } from "./model.js";
 import { calleeName, propertyCall } from "./visitor.js";
+import { representationOfType } from "./ast.js";
+import { callArgumentType } from "./type-resolution.js";
+
+export function declaredCallType(
+  call: CallExpression,
+  context: FunctionContext,
+): FunctionTypeNode | undefined {
+  return context.classes.callType(call, context) ?? undefined;
+}
 
 /** Named fallbacks and exact declarations have different ambiguity rules. */
 export class FunctionSignatures extends Map<string, FunctionSignature> {
@@ -64,7 +75,25 @@ export function declaredCallSignature(
   signatures: FunctionSignatures,
 ): FunctionSignature | undefined {
   const declaration = context.classes.callableOf(call.expression, context);
-  return declaration ? signatures.forDeclaration(declaration) : undefined;
+  const signature = declaration
+    ? signatures.forDeclaration(declaration)
+    : undefined;
+  if (!signature) return undefined;
+  const type = context.classes.callType(call, context, declaration);
+  if (
+    !type ||
+    (type === declaration!.signature &&
+      type.parameters.at(-1)?.parameterKind !== ParameterKind.Rest)
+  )
+    return signature;
+  return {
+    ...signature,
+    parameters: Array.from(
+      { length: Math.max(type.parameters.length, call.args.length) },
+      (_, index) => representationOfType(callArgumentType(type, index)),
+    ),
+    result: representationOfType(type.returnType),
+  };
 }
 
 export function signatureForCall(

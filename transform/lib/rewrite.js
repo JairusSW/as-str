@@ -1,3 +1,4 @@
+import { callArgumentType, typeIsNullable } from "./type-resolution.js";
 import {
   AssertionExpression,
   BinaryExpression,
@@ -31,8 +32,10 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   materializeView,
+  elementRepresentationOfType,
   expressionRangeKey,
   identifier,
+  parseExpression,
   i32Type,
   representationOfType,
   staticViewCall,
@@ -41,8 +44,12 @@ import {
   wrapAsView,
   wrapUnknownAsView,
 } from "./ast.js";
-import { declaredCallSignature, signatureForCall } from "./signatures.js";
-import { operationSemantics } from "./operations.js";
+import {
+  declaredCallSignature,
+  declaredCallType,
+  signatureForCall,
+} from "./signatures.js";
+import { containerArgumentKind, operationSemantics } from "./operations.js";
 import {
   lowerPackedLengthInitializer,
   lowerPackedSpanInitializer,
@@ -51,6 +58,18 @@ import {
 } from "./packed-span.js";
 import { expressionCanProduceView } from "./expressions.js";
 import { calleeName, isStrStaticCall, propertyCall, walk } from "./visitor.js";
+const VIEW_NEEDLE_SEARCH = new Set([
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "startsWith",
+  "endsWith",
+]);
+function foundIndex(call) {
+  const zero = parseExpression("0");
+  zero.range = call.range;
+  return Node.createBinaryExpression(75, call, zero, call.range);
+}
 function viewCallParts(expression) {
   const property = propertyCall(expression);
   if (!property) return null;
@@ -83,7 +102,7 @@ function bindingRepresentation(expression, context, signatures) {
   if (context.duplicateNames.has(name)) {
     const declaration = context.classes.declarationOf(expression, context);
     if (!declaration) return context.parameters.get(name) ?? "unknown";
-    if (context.classes.typeOf(expression, context)?.isNullable)
+    if (typeIsNullable(context.classes.typeOf(expression, context)))
       return "unknown";
     const declared = representationOfType(declaration.type);
     if (declared !== "unknown") return declared;
@@ -153,18 +172,22 @@ export function expressionRepresentation(expression, context, signatures) {
         );
       }
     }
-    return representation;
+    return representation !== "unknown"
+      ? representation
+      : representationOfType(context.classes.typeOf(expression, context));
   }
   if (expression instanceof PropertyAccessExpression) {
-    return context.classes.propertyOf(expression, context);
+    const property = context.classes.propertyOf(expression, context);
+    return property !== "unknown"
+      ? property
+      : representationOfType(context.classes.typeOf(expression, context));
   }
-  if (
-    expression instanceof ElementAccessExpression &&
-    expression.expression instanceof IdentifierExpression
-  ) {
-    return (
-      context.bindings.get(expression.expression.text)?.element ?? "unknown"
-    );
+  if (expression instanceof ElementAccessExpression) {
+    const type = context.classes.typeOf(expression, context);
+    if (type) return representationOfType(type);
+    return expression.expression instanceof IdentifierExpression
+      ? (context.bindings.get(expression.expression.text)?.element ?? "unknown")
+      : "unknown";
   }
   if (expression instanceof AssertionExpression) {
     const asserted = representationOfType(expression.toType);
@@ -225,7 +248,12 @@ export function expressionRepresentation(expression, context, signatures) {
         : "native";
     }
   }
-  return signatureForCall(expression, context, signatures)?.result ?? "unknown";
+  const signature =
+    declaredCallSignature(expression, context, signatures) ??
+    signatureForCall(expression, context, signatures);
+  return signature?.result && signature.result !== "unknown"
+    ? signature.result
+    : representationOfType(context.classes.typeOf(expression, context));
 }
 export function recordOriginalViewReceivers(node, context, signatures) {
   context.originalViewReceivers ??= new Set();
@@ -539,13 +567,8 @@ function rewriteExpression(expression, expected, context, signatures) {
         target = bindingRepresentation(expression.left, context, signatures);
       } else if (expression.left instanceof PropertyAccessExpression) {
         target = context.classes.propertyOf(expression.left, context);
-      } else if (
-        expression.left instanceof ElementAccessExpression &&
-        expression.left.expression instanceof IdentifierExpression
-      ) {
-        target =
-          context.bindings.get(expression.left.expression.text)?.element ??
-          "unknown";
+      } else if (expression.left instanceof ElementAccessExpression) {
+        target = expressionRepresentation(expression.left, context, signatures);
       }
       expression.left = rewriteExpression(
         expression.left,
@@ -595,6 +618,7 @@ function rewriteExpression(expression, expected, context, signatures) {
     const property = propertyCall(expression);
     if (property) {
       const method = property.property.text;
+      const callbackType = declaredCallType(expression, context);
       const methodSignature = declaredCallSignature(
         expression,
         context,
@@ -613,19 +637,61 @@ function rewriteExpression(expression, expected, context, signatures) {
         const args = expression.args.map((argument) =>
           rewriteExpression(argument, "unknown", context, signatures),
         );
+        const positionedIncludes = method === "includes" && args.length > 1;
+        const call = staticViewCall(
+          positionedIncludes ? "indexOfSpan" : `${method}Span`,
+          spanOwnerExpression(spanLink.owner, expression.range),
+          [property.expression, ...args],
+        );
         return convertExpression(
-          staticViewCall(
-            `${method}Span`,
-            spanOwnerExpression(spanLink.owner, expression.range),
-            [property.expression, ...args],
-          ),
+          positionedIncludes ? foundIndex(call) : call,
           expected,
           context,
           signatures,
         );
       }
-      const containerElement =
-        property.expression instanceof IdentifierExpression
+      const positionedIncludes =
+        method === "includes" &&
+        expression.args.length > 1 &&
+        originalReceiverRepresentation !== "unknown";
+      const nativeViewNeedle =
+        originalReceiverRepresentation === "native" &&
+        VIEW_NEEDLE_SEARCH.has(method) &&
+        expression.args[0] &&
+        expressionRepresentation(expression.args[0], context, signatures) ===
+          "view";
+      if (positionedIncludes || nativeViewNeedle) {
+        const receiver = rewriteExpression(
+          property.expression,
+          originalReceiverRepresentation === "native" &&
+            expressionCanProduceView(property.expression)
+            ? "view"
+            : originalReceiverRepresentation,
+          context,
+          signatures,
+        );
+        const args = expression.args.map((argument) =>
+          rewriteExpression(argument, "unknown", context, signatures),
+        );
+        const call = staticViewCall(
+          positionedIncludes ? "indexOf" : method,
+          receiver,
+          args,
+        );
+        return convertExpression(
+          positionedIncludes ? foundIndex(call) : call,
+          expected,
+          context,
+          signatures,
+        );
+      }
+      const containerType = context.classes.typeOf(
+        property.expression,
+        context,
+      );
+      const containerElement = containerType
+        ? elementRepresentationOfType(containerType)
+        : property.expression instanceof IdentifierExpression
           ? (context.bindings.get(property.expression.text)?.element ??
             "unknown")
           : "unknown";
@@ -645,28 +711,26 @@ function rewriteExpression(expression, expected, context, signatures) {
         context,
         signatures,
       );
-      expression.args = expression.args.map((argument, index) =>
-        rewriteExpression(
+      expression.args = expression.args.map((argument, index) => {
+        const containerArgument = containerArgumentKind(method, index);
+        return rewriteExpression(
           argument,
           methodSignature
             ? (methodSignature.parameters[index] ?? "unknown")
-            : [
-                  "push",
-                  "unshift",
-                  "fill",
-                  "includes",
-                  "indexOf",
-                  "lastIndexOf",
-                ].includes(method)
-              ? containerElement
-              : operationSemantics(method).result !== "unknown"
-                ? "unknown"
-                : (signatureForCall(expression, context, signatures)
-                    ?.parameters[index] ?? "unknown"),
+            : callbackType
+              ? representationOfType(callArgumentType(callbackType, index))
+              : containerArgument
+                ? containerArgument === "element"
+                  ? containerElement
+                  : "unknown"
+                : operationSemantics(method).result !== "unknown"
+                  ? "unknown"
+                  : (signatureForCall(expression, context, signatures)
+                      ?.parameters[index] ?? "unknown"),
           context,
           signatures,
-        ),
-      );
+        );
+      });
       if (
         method === "toLowerCase" &&
         (originalReceiverRepresentation === "view" ||
@@ -714,7 +778,10 @@ function rewriteExpression(expression, expected, context, signatures) {
         }
       }
     } else {
-      const signature = signatureForCall(expression, context, signatures);
+      const signature =
+        declaredCallSignature(expression, context, signatures) ??
+        signatureForCall(expression, context, signatures);
+      const callbackType = declaredCallType(expression, context);
       const rewrittenArgs = [];
       expression.args.forEach((argument, index) => {
         if (
@@ -784,7 +851,7 @@ function rewriteExpression(expression, expected, context, signatures) {
             argument,
             signature?.callable
               ? (signature.parameters[index] ?? "unknown")
-              : "unknown",
+              : representationOfType(callArgumentType(callbackType, index)),
             context,
             signatures,
           ),
