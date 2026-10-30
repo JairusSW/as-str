@@ -4,6 +4,7 @@ import {
   ParameterNode,
   StringLiteralExpression,
   ClassDeclaration,
+  EnumDeclaration,
   ExportStatement,
   FunctionDeclaration,
   FunctionExpression,
@@ -42,6 +43,7 @@ function index(source) {
       node instanceof VariableDeclaration ||
       node instanceof ParameterNode ||
       node instanceof ClassDeclaration ||
+      node instanceof EnumDeclaration ||
       node instanceof NamespaceDeclaration ||
       node instanceof TypeDeclaration ||
       (node instanceof FunctionDeclaration &&
@@ -51,6 +53,7 @@ function index(source) {
     const parent = ref.parent ? (parents.get(ref.parent) ?? root) : root;
     if (
       node instanceof ClassDeclaration ||
+      node instanceof EnumDeclaration ||
       node instanceof TypeDeclaration ||
       node instanceof NamespaceDeclaration
     ) {
@@ -60,6 +63,7 @@ function index(source) {
         !(
           node instanceof NamespaceDeclaration &&
           (previous instanceof ClassDeclaration ||
+            previous instanceof EnumDeclaration ||
             previous instanceof TypeDeclaration ||
             previous instanceof NamespaceDeclaration)
         )
@@ -87,6 +91,7 @@ function index(source) {
     if (
       node instanceof BlockStatement ||
       node instanceof ClassDeclaration ||
+      node instanceof EnumDeclaration ||
       node instanceof TypeDeclaration ||
       node instanceof NamespaceDeclaration ||
       node instanceof FunctionDeclaration

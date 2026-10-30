@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] - 2026-10-30
+## [0.7.0] - 2026-10-30
 
 ### Changed
 
@@ -27,7 +27,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Preserve search positions when lowering `includes`, support view needles on
   native-string searches, and keep `localeCompare` type-correct after promotion.
 - Avoid generated helper and type-name collisions, including constructor
-  parameter properties, nested functions, and imported helpers.
+  parameter properties, nested functions, enums, and imported helpers.
+- Preserve native repeat-count and padding-length validation when receivers
+  are promoted to views, including argument evaluation before an error.
+- Keep native string allocation identity in functions that observe raw pointers,
+  including observations through method results and local aliases.
 - Correct relative imports at package roots and across Windows drives or shares.
 - Honor UTF-8 encoding flags and error modes, reject malformed checked UTF-8
   inputs, and validate allocation sizes before narrowing to wasm32.

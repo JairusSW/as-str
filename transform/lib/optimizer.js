@@ -414,6 +414,7 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
   const lowercaseReceiverCounts = new Map();
   const localUseCounts = new Map();
   const profitableLowercaseCalls = new Set();
+  let representationSensitive = false;
   for (const parameter of declaration.signature.parameters) {
     parameters.set(parameter.name.text, representationOfType(parameter.type));
   }
@@ -421,6 +422,8 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
     walk(body, (node) => {
       if (node instanceof FunctionDeclaration && node !== declaration)
         return false;
+      if (node instanceof CallExpression && isUnsafeIntrinsic(node))
+        representationSensitive = true;
       if (!(node instanceof VariableDeclaration)) return;
       const name = node.name.text;
       if (bindings.has(name) || parameters.has(name)) duplicateNames.add(name);
@@ -573,6 +576,7 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
         .map(([name]) => name),
     ),
     profitableLowercaseCalls,
+    representationSensitive,
     classes,
     duplicateNames,
   };
@@ -826,6 +830,8 @@ function analyzeCandidates(context, signatures) {
       );
   }
   for (const binding of context.bindings.values()) {
+    if (context.representationSensitive && binding.candidate)
+      binding.forcedReason ??= "raw-memory or representation intrinsic";
     const init = binding.declaration.initializer;
     if (!binding.candidate || !(init instanceof CallExpression)) continue;
     const property = propertyCall(init);
@@ -1146,10 +1152,17 @@ export function optimizeSource(
   const functions = collectFunctions(source);
   const contexts = new Map();
   for (const declaration of functions) {
-    contexts.set(
+    const context = collectLocalBindings(
       declaration,
-      collectLocalBindings(declaration, semanticFacts, classes, globals),
+      semanticFacts,
+      classes,
+      globals,
     );
+    contexts.set(declaration, context);
+    if (context.representationSensitive) {
+      const signature = signatureForDeclaration(declaration, signatures);
+      if (signature) signature.promotable = false;
+    }
   }
   const sourceContext = {
     declaration: null,

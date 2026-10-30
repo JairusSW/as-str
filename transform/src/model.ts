@@ -60,6 +60,7 @@ export interface FunctionContext {
   globals?: Map<string, Representation>;
   className?: string;
   originalViewReceivers?: Set<string>;
+  representationSensitive?: boolean;
   resolvingTypeInitializers?: Set<Expression>;
   duplicateNames: Set<string>;
 }

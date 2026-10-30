@@ -5,6 +5,7 @@ import {
   ParameterKind,
   StringLiteralExpression,
   ClassDeclaration,
+  EnumDeclaration,
   CommonFlags,
   ExportStatement,
   FunctionDeclaration,
@@ -29,6 +30,7 @@ import { viewTypeAlias } from "./view-aliases.js";
 import type { Representation } from "./ast.js";
 
 type SymbolNode =
+  | EnumDeclaration
   | ClassDeclaration
   | TypeDeclaration
   | NamespaceDeclaration
@@ -70,6 +72,7 @@ function index(source: Source): SourceTypes {
       node instanceof VariableDeclaration ||
       node instanceof ParameterNode ||
       node instanceof ClassDeclaration ||
+      node instanceof EnumDeclaration ||
       node instanceof NamespaceDeclaration ||
       node instanceof TypeDeclaration ||
       (node instanceof FunctionDeclaration &&
@@ -79,6 +82,7 @@ function index(source: Source): SourceTypes {
     const parent = ref.parent ? (parents.get(ref.parent) ?? root) : root;
     if (
       node instanceof ClassDeclaration ||
+      node instanceof EnumDeclaration ||
       node instanceof TypeDeclaration ||
       node instanceof NamespaceDeclaration
     ) {
@@ -89,6 +93,7 @@ function index(source: Source): SourceTypes {
         !(
           node instanceof NamespaceDeclaration &&
           (previous instanceof ClassDeclaration ||
+            previous instanceof EnumDeclaration ||
             previous instanceof TypeDeclaration ||
             previous instanceof NamespaceDeclaration)
         )
@@ -116,6 +121,7 @@ function index(source: Source): SourceTypes {
     if (
       node instanceof BlockStatement ||
       node instanceof ClassDeclaration ||
+      node instanceof EnumDeclaration ||
       node instanceof TypeDeclaration ||
       node instanceof NamespaceDeclaration ||
       node instanceof FunctionDeclaration

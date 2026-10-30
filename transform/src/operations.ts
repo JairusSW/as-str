@@ -100,6 +100,9 @@ const SPAN_SCALAR_METHODS = new Set([
 const NATIVE_PRODUCING_METHODS = new Set([
   "concat",
   "repeat",
+  "repeatNative",
+  "padStartNative",
+  "padEndNative",
   "padStart",
   "padEnd",
   "replace",

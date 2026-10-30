@@ -521,6 +521,7 @@ function collectLocalBindings(
   const lowercaseReceiverCounts = new Map<string, number>();
   const localUseCounts = new Map<string, number>();
   const profitableLowercaseCalls = new Set<number>();
+  let representationSensitive = false;
 
   for (const parameter of declaration.signature.parameters) {
     parameters.set(parameter.name.text, representationOfType(parameter.type));
@@ -530,6 +531,8 @@ function collectLocalBindings(
     walk(body, (node): boolean | void => {
       if (node instanceof FunctionDeclaration && node !== declaration)
         return false;
+      if (node instanceof CallExpression && isUnsafeIntrinsic(node))
+        representationSensitive = true;
       if (!(node instanceof VariableDeclaration)) return;
 
       const name = node.name.text;
@@ -686,6 +689,7 @@ function collectLocalBindings(
         .map(([name]) => name),
     ),
     profitableLowercaseCalls,
+    representationSensitive,
     classes,
     duplicateNames,
   };
@@ -994,6 +998,10 @@ function analyzeCandidates(
 
   // A familiar method name on a non-string object is not a string operation.
   for (const binding of context.bindings.values()) {
+    // Raw pointers can observe allocation identity through methods and aliases,
+    // even when the candidate identifier is not an intrinsic's direct argument.
+    if (context.representationSensitive && binding.candidate)
+      binding.forcedReason ??= "raw-memory or representation intrinsic";
     const init = binding.declaration.initializer;
     if (!binding.candidate || !(init instanceof CallExpression)) continue;
     const property = propertyCall(init);
@@ -1330,10 +1338,17 @@ export function optimizeSource(
   const functions = collectFunctions(source);
   const contexts = new Map<FunctionDeclaration, FunctionContext>();
   for (const declaration of functions) {
-    contexts.set(
+    const context = collectLocalBindings(
       declaration,
-      collectLocalBindings(declaration, semanticFacts, classes, globals),
+      semanticFacts,
+      classes,
+      globals,
     );
+    contexts.set(declaration, context);
+    if (context.representationSensitive) {
+      const signature = signatureForDeclaration(declaration, signatures);
+      if (signature) signature.promotable = false;
+    }
   }
 
   const sourceContext: FunctionContext = {

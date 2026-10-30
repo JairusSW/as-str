@@ -9,7 +9,7 @@ fi
 
 msg="$(head -n 1 "$msg_file" | tr -d '\r')"
 
-pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([[:alnum:]_.\/-]+\))?(!)?: .+'
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|release|revert|style|test)(\([[:alnum:]_.\/-]+\))?(!)?: .+'
 
 if ! printf '%s\n' "$msg" | grep -Eq "$pattern"; then
   cat <<'EOF'
@@ -19,6 +19,7 @@ Commit message must follow Conventional Commits:
 Examples:
   feat: add zero-copy split returning str pieces
   fix(str): clamp negative slice indices to range
+  release: v0.6.1
   chore!: rename str.wrap to str.from
 EOF
   exit 1

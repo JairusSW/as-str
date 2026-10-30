@@ -1830,6 +1830,30 @@ import { Str8 } from "./str8";
     return out;
   }
 
+  /** Native String.repeat validation for transform-generated calls. @internal */
+  static repeatNative<T>(s: T, count: i32 = 0): string {
+    const length = unitLength(bStart(s), bEnd(s));
+    if (count < 0 || <u64>length * <u64>count > 1 << 28)
+      throw new RangeError("Invalid length");
+    return Str.repeat<T>(s, count);
+  }
+
+  /** Native padding's byte-size shift discards the length's sign bit. @internal */
+  // @ts-ignore: decorator
+  @inline static padStartNative<T>(
+    s: T,
+    length: i32,
+    pad: string = " ",
+  ): string {
+    return Str.padStart<T>(s, length & i32.MAX_VALUE, pad);
+  }
+
+  /** Native String.padEnd length semantics for promoted receivers. @internal */
+  // @ts-ignore: decorator
+  @inline static padEndNative<T>(s: T, length: i32, pad: string = " "): string {
+    return Str.padEnd<T>(s, length & i32.MAX_VALUE, pad);
+  }
+
   /**
    * Free-function form of {@link Str#padStart}; `s` may be a `string` or a
    * `Str`.
@@ -2361,6 +2385,26 @@ export namespace str {
   }
   export function repeat<T>(s: T, count: i32): string {
     return Str.repeat<T>(s, count);
+  }
+  /** @internal */
+  export function repeatNative<T>(s: T, count: i32 = 0): string {
+    return Str.repeatNative<T>(s, count);
+  }
+  /** @internal */
+  export function padStartNative<T>(
+    s: T,
+    length: i32,
+    pad: string = " ",
+  ): string {
+    return Str.padStartNative<T>(s, length, pad);
+  }
+  /** @internal */
+  export function padEndNative<T>(
+    s: T,
+    length: i32,
+    pad: string = " ",
+  ): string {
+    return Str.padEndNative<T>(s, length, pad);
   }
   export function padStart<T>(s: T, length: i32, pad: string = " "): string {
     return Str.padStart<T>(s, length, pad);

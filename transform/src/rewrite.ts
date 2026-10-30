@@ -703,6 +703,13 @@ function rewriteExpression(
         context,
         signatures,
       );
+      const nativeBoundsMethod =
+        method === "repeat" || method === "padStart" || method === "padEnd";
+      const explicitViewReceiver =
+        nativeBoundsMethod &&
+        context.originalViewReceivers?.has(
+          expressionRangeKey(property.expression),
+        );
       const spanLink =
         property.expression instanceof IdentifierExpression
           ? packedSpanLink(property.expression, context)
@@ -815,7 +822,27 @@ function rewriteExpression(
       });
 
       if (
+        nativeBoundsMethod &&
+        !explicitViewReceiver &&
+        originalReceiverRepresentation !== "unknown" &&
+        expressionRepresentation(property.expression, context, signatures) ===
+          "view"
+      ) {
+        return convertExpression(
+          staticViewCall(
+            `${method}Native`,
+            property.expression,
+            expression.args,
+          ),
+          expected,
+          context,
+          signatures,
+        );
+      }
+
+      if (
         method === "toLowerCase" &&
+        !context.representationSensitive &&
         (originalReceiverRepresentation === "view" ||
           (originalReceiverRepresentation === "native" &&
             nativeLowercaseBenefitsFromViewHelper(
