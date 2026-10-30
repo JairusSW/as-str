@@ -21,7 +21,8 @@ export function walk(
   if (!node) return;
   if (visitor(node, { parent, key, grandparent }) === false) return;
   const keys = Object.keys(node);
-  const values = keys.map((key) => node[key]);
+  const values = new Array(keys.length);
+  for (let i = 0; i < keys.length; i++) values[i] = node[keys[i]];
   for (let i = 0; i < keys.length; i++) {
     const childKey = keys[i];
     const value = values[i];

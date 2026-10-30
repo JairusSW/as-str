@@ -70,6 +70,8 @@ for (const [build, extra] of [
         namespaceObjectAlias: 7,
       },
     ],
+    ["parameter-property-shadow", { run: 1 }],
+    ["imported-parameter-shadow", { run: 2 }],
     [
       "rest-conversions",
       {

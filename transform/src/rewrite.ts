@@ -734,7 +734,15 @@ function rewriteExpression(
         expression.args[0] &&
         expressionRepresentation(expression.args[0], context, signatures) ===
           "view";
-      if (positionedIncludes || nativeViewNeedle) {
+      const viewComparison =
+        method === "localeCompare" &&
+        expression.args.length === 1 &&
+        originalReceiverRepresentation !== "unknown" &&
+        (originalReceiverRepresentation === "view" ||
+          expressionCanProduceView(property.expression) ||
+          expressionRepresentation(expression.args[0], context, signatures) ===
+            "view");
+      if (positionedIncludes || nativeViewNeedle || viewComparison) {
         const receiver = rewriteExpression(
           property.expression,
           originalReceiverRepresentation === "native" &&
@@ -748,7 +756,7 @@ function rewriteExpression(
           rewriteExpression(argument, "unknown", context, signatures),
         );
         const call = staticViewCall(
-          positionedIncludes ? "indexOf" : method,
+          positionedIncludes ? "indexOf" : viewComparison ? "compare" : method,
           receiver,
           args,
         );

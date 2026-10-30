@@ -21,6 +21,23 @@ import { repo } from "./harness.mjs";
 mkdirSync(path.join(repo, "build"), { recursive: true });
 const scratch = mkdtempSync(path.join(repo, "build", "source-origin-"));
 try {
+  for (const declaration of [
+    "constructor(public str: i32) {}",
+    "constructor(private str: i32) {}",
+    "constructor(protected str: i32) {}",
+    "method(): void { const /* comment */ str = 1; }",
+    "method(): void { function str(): void {} }",
+    "method(): void { const callback = function str(): void {}; }",
+  ]) {
+    const parser = new Parser();
+    parser.parseFile(`class Box { ${declaration} }`, "helper-shadow.ts", true);
+    configureSourceAdmission(parser.sources, repo);
+    assert.equal(
+      admitSource(parser.sources[0]).optimization,
+      false,
+      declaration,
+    );
+  }
   const userText =
     'export function run(): i32 { return str.from("abc").length; }';
   for (const filename of PACKAGE_SOURCE_FILES) {

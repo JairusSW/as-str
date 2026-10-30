@@ -35,9 +35,9 @@ export function walk(
   // Snapshot values before visiting children: a visitor may replace a sibling.
   // Separate key/value arrays avoid allocating a pair for every AST property.
   const keys = Object.keys(node);
-  const values = keys.map(
-    (key) => (node as unknown as Record<string, unknown>)[key],
-  );
+  const values: unknown[] = new Array(keys.length);
+  for (let i = 0; i < keys.length; i++)
+    values[i] = (node as unknown as Record<string, unknown>)[keys[i]];
   for (let i = 0; i < keys.length; i++) {
     const childKey = keys[i];
     const value = values[i];

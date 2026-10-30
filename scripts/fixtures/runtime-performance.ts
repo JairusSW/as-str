@@ -1,4 +1,4 @@
-import { str, str8 } from "../../assembly/index";
+import { Str, str, str8 } from "../../assembly/index";
 import { equalsBytes } from "../../assembly/util";
 
 let text: string = "";
@@ -148,6 +148,31 @@ export function sliceChars(kind: i32, iterations: i32): i32 {
     else if (kind == 2) result = view.sliceChars(-4, -1);
     else result = view.sliceChars(i & 3, i32.MAX_VALUE - 1);
     sum += result.length + result.byteAt(0);
+  }
+  return sum;
+}
+
+const trimValues = new Array<string>();
+export function setupTrim(scenario: i32): void {
+  trimValues.length = 0;
+  for (let i = 0; i < 16; i++) {
+    let value = (scenario >= 3 ? "東京É😀" : "record") + i.toString();
+    if (scenario == 1) value = " \t" + value + "\r\n";
+    if (scenario == 2) value = " ".repeat(64) + value + " ".repeat(64);
+    if (scenario == 4) value = "\u2003\u3000" + value + "\u00a0\ufeff";
+    trimValues.push(value);
+  }
+}
+export function trim16(kind: i32, iterations: i32): i32 {
+  let sum = 0;
+  for (let i = 0; i < iterations; i++) {
+    const value = trimValues[i & 15];
+    if (kind == 0) sum += Str.trimLength(value);
+    else if (kind == 1) sum += Str.trimStartLength(value);
+    else if (kind == 2) sum += Str.trimEndLength(value);
+    else if (kind == 3) sum += str.trim(value).length;
+    else if (kind == 4) sum += str.trimStart(value).length;
+    else sum += str.trimEnd(value).length;
   }
   return sum;
 }

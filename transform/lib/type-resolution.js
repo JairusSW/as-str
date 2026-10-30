@@ -34,9 +34,20 @@ function index(source) {
     namespaces: new Map(),
   };
   const scopes = [root];
+  const bindingNames = new Set();
   const parents = new Map([[source, root]]);
   walk(source, (node, ref) => {
     if (node === source) return;
+    if (
+      node instanceof VariableDeclaration ||
+      node instanceof ParameterNode ||
+      node instanceof ClassDeclaration ||
+      node instanceof NamespaceDeclaration ||
+      node instanceof TypeDeclaration ||
+      (node instanceof FunctionDeclaration &&
+        !(ref.parent instanceof ClassDeclaration))
+    )
+      bindingNames.add(node.name.text);
     const parent = ref.parent ? (parents.get(ref.parent) ?? root) : root;
     if (
       node instanceof ClassDeclaration ||
@@ -103,10 +114,14 @@ function index(source) {
   const result = {
     root,
     scopes,
+    bindingNames,
     scopeCache: new WeakMap(),
   };
   indexes.set(source, result);
   return result;
+}
+export function sourceBindsName(source, name) {
+  return index(source).bindingNames.has(name);
 }
 function importedSource(source, internalPath) {
   return sourcesFor(source).find(

@@ -1,6 +1,7 @@
 // Low-level UTF-16 helpers for `str`. Scans use SIMD, SWAR, then scalar tails.
 import { OBJECT_MAXSIZE } from "rt/common";
 import { UTF8 as U8 } from "utf-as";
+import { isSpace } from "util/string";
 
 // Per-16-bit-lane constants for the SWAR zero/diff detection (Mycroft's trick).
 const LANE_ONES: u64 = 0x0001000100010001;
@@ -598,37 +599,7 @@ export function asciiCaseFold(
 // units AssemblyScript's own `String#trim` treats as trimmable.
 // @ts-ignore: decorator
 @inline export function isWhiteSpace(c: u16): bool {
-  switch (c) {
-    case 0x09: // tab
-    case 0x0a: // LF
-    case 0x0b: // VT
-    case 0x0c: // FF
-    case 0x0d: // CR
-    case 0x20: // space
-    case 0x85: // NEL
-    case 0xa0: // NBSP
-    case 0x1680:
-    case 0x2000:
-    case 0x2001:
-    case 0x2002:
-    case 0x2003:
-    case 0x2004:
-    case 0x2005:
-    case 0x2006:
-    case 0x2007:
-    case 0x2008:
-    case 0x2009:
-    case 0x200a:
-    case 0x2028: // LS
-    case 0x2029: // PS
-    case 0x202f:
-    case 0x205f:
-    case 0x3000:
-    case 0xfeff: // BOM / ZWNBSP
-      return true;
-    default:
-      return false;
-  }
+  return isSpace(c);
 }
 
 // Count a vector's bytes and carry its final high-surrogate bit. Every

@@ -26,7 +26,7 @@ for (const [build, extra] of [
     for (let owner = 0; owner < 8; owner++)
       for (let needle = 0; needle < 8; needle++)
         for (const position of positions)
-          for (let operation = 0; operation < 5; operation++) {
+          for (let operation = 0; operation < 6; operation++) {
             assert.equal(
               module.instance.exports.query(owner, needle, position, operation),
               baseline.instance.exports.query(
@@ -40,6 +40,12 @@ for (const [build, extra] of [
             count++;
           }
     assert.equal(module.instance.exports.effects(), 1123);
+    assert.equal(module.instance.exports.orderingEffects(), -988);
+    for (const name of ["orderingPacked", "orderingView"])
+      assert.equal(
+        module.instance.exports[name](),
+        baseline.instance.exports[name](),
+      );
     for (const position of positions)
       for (const name of ["positionedPacked", "positionedView"])
         assert.equal(
@@ -82,6 +88,13 @@ for (const simd of [false, true])
       runtime.counts(),
       { allocs: mode === "global" ? 5 : 0, resizes: 0 },
       `${mode}/SIMD=${simd}`,
+    );
+    runtime.resetCounts();
+    assert.equal(runtime.exports.orderingAllocations(), -1);
+    assert.deepEqual(
+      runtime.counts(),
+      { allocs: mode === "global" ? 1 : 0, resizes: 0 },
+      `${mode}/ordering/SIMD=${simd}`,
     );
   }
 console.log(

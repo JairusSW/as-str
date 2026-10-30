@@ -44,10 +44,19 @@ class EffectField { constructor(public text: string) {} }
 const names = [];
 for (const [receiverName, setup, receiver] of receivers) {
   for (const [operationName, operation] of operations) {
-    for (const consumer of ["length", "left", "right", "argument", "chain"]) {
+    for (const consumer of [
+      "length",
+      "left",
+      "right",
+      "argument",
+      "chain",
+      "compare",
+    ]) {
       const id = `${receiverName}_${operationName}_${consumer}`;
       const expression = `${receiver}.${operation}`;
       let body;
+      if (consumer === "compare")
+        body = `const score = ${expression}.localeCompare(other());`;
       if (consumer === "length")
         body = `const result = ${expression}; const score = result.length;`;
       if (consumer === "left")

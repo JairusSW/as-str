@@ -1,6 +1,6 @@
 import { ImportStatement, Node } from "assemblyscript/dist/assemblyscript.js";
 import { isPackageSource } from "./source-identity.js";
-import { stringRepresentation } from "./type-resolution.js";
+import { sourceBindsName, stringRepresentation } from "./type-resolution.js";
 export {
   PACKAGE_NAME,
   PACKAGE_SOURCE_FILES,
@@ -11,12 +11,8 @@ export const VIEW_NAME = "str";
 export const VIEW_CLASS_NAME = "Str";
 const VIEW_USES =
   /(?:\bstr\s*[.(]|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
-const VIEW_BINDS =
-  /(?:\b(?:const|let|var|function|class|namespace|type)\s+str\b|\(\s*str\s*:|,\s*str\s*:)/;
 const VIEW_CLASS_USES =
   /(?:\bStr\s*\.|:\s*Str\b|\bnew\s+Str\b|<\s*Str\s*>|\bStr\s*\[\s*\])/;
-const VIEW_CLASS_BINDS =
-  /(?:\b(?:const|let|var|function|class|namespace|type)\s+Str\b|\(\s*Str\s*:|,\s*Str\s*:)/;
 function libraryPrefixes() {
   return (process.env["AS_STR_LIBRARY_PREFIXES"] ?? "")
     .split(",")
@@ -46,16 +42,17 @@ export function admitSource(source, forcedImport = false) {
   const semanticFacts = sourceIsConfigured(source);
   const packageSource = isPackageSource(source);
   const already = importedNames(source);
-  const viewNameAvailable = already.has(VIEW_NAME)
-    ? stringRepresentation(
+  const viewNameAvailable =
+    !sourceBindsName(source, VIEW_NAME) &&
+    (!already.has(VIEW_NAME) ||
+      stringRepresentation(
         Node.createNamedType(
           Node.createSimpleTypeName(VIEW_NAME, source.range),
           null,
           false,
           source.range,
         ),
-      ) === "view"
-    : !VIEW_BINDS.test(source.text);
+      ) === "view");
   const requestedViewNames = [];
   if (
     !already.has(VIEW_NAME) &&
@@ -66,7 +63,7 @@ export function admitSource(source, forcedImport = false) {
   }
   if (
     !already.has(VIEW_CLASS_NAME) &&
-    !VIEW_CLASS_BINDS.test(source.text) &&
+    !sourceBindsName(source, VIEW_CLASS_NAME) &&
     VIEW_CLASS_USES.test(source.text)
   ) {
     requestedViewNames.push(VIEW_CLASS_NAME);

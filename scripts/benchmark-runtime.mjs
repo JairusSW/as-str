@@ -106,6 +106,24 @@ for (const size of [8, 256, 4096]) {
     });
   }
 }
+for (const [scenario, label] of [
+  "ascii-plain",
+  "ascii-short-padding",
+  "ascii-long-padding",
+  "unicode-plain",
+  "unicode-padding",
+].entries()) {
+  for (let kind = 0; kind < 6; kind++) {
+    cases.push({
+      name: `trim16/${["length", "start-length", "end-length", "view", "start-view", "end-view"][kind]}/${label}`,
+      setupMethod: "setupTrim",
+      setup: [scenario],
+      method: "trim16",
+      args: [kind],
+      iterations: scenario == 2 || kind >= 3 ? 50000 : 500000,
+    });
+  }
+}
 const selectedCases = cases.filter((item) => item.name.includes(filter));
 assert.ok(selectedCases.length > 0, `no workloads match: ${filter}`);
 const median = (values) => {
@@ -148,6 +166,18 @@ for (const simd of [false, true]) {
       sha256: createHash("sha256").update(bytes).digest("hex"),
     });
     modules[version] = await WebAssembly.compile(bytes);
+  }
+  for (const version of versions) {
+    const exports = new Set(
+      WebAssembly.Module.exports(modules[version]).map((entry) => entry.name),
+    );
+    for (const scenario of selectedCases) {
+      for (const name of [scenario.setupMethod ?? "setup", scenario.method])
+        assert.ok(
+          exports.has(name),
+          `${mode}/${version} is missing ${name}; rebuild its baseline with the current benchmark fixture`,
+        );
+    }
   }
   for (const scenario of selectedCases) {
     const times = { baseline: [], candidate: [] };

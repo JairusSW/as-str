@@ -46,6 +46,7 @@ interface Scope {
 interface SourceTypes {
   root: Scope;
   scopes: Scope[];
+  bindingNames: Set<string>;
   scopeCache: WeakMap<Source["range"], Scope>;
 }
 const indexes = new WeakMap<Source, SourceTypes>();
@@ -61,9 +62,20 @@ function index(source: Source): SourceTypes {
     namespaces: new Map(),
   };
   const scopes = [root];
+  const bindingNames = new Set<string>();
   const parents = new Map<Node, Scope>([[source, root]]);
   walk(source, (node, ref) => {
     if (node === source) return;
+    if (
+      node instanceof VariableDeclaration ||
+      node instanceof ParameterNode ||
+      node instanceof ClassDeclaration ||
+      node instanceof NamespaceDeclaration ||
+      node instanceof TypeDeclaration ||
+      (node instanceof FunctionDeclaration &&
+        !(ref.parent instanceof ClassDeclaration))
+    )
+      bindingNames.add(node.name.text);
     const parent = ref.parent ? (parents.get(ref.parent) ?? root) : root;
     if (
       node instanceof ClassDeclaration ||
@@ -131,10 +143,16 @@ function index(source: Source): SourceTypes {
   const result = {
     root,
     scopes,
+    bindingNames,
     scopeCache: new WeakMap<Source["range"], Scope>(),
   };
   indexes.set(source, result);
   return result;
+}
+
+/** Source-wide generated helper names must survive every lexical value scope. */
+export function sourceBindsName(source: Source, name: string): boolean {
+  return index(source).bindingNames.has(name);
 }
 
 function importedSource(

@@ -37,6 +37,8 @@ export function search(
         return owner.startsWith(value, position) ? 1 : 0;
       case 4:
         return owner.endsWith(value, position) ? 1 : 0;
+      case 5:
+        return owner.localeCompare(value);
     }
   } else {
     switch (operation) {
@@ -50,6 +52,8 @@ export function search(
         return owner.startsWith(needle, position) ? 1 : 0;
       case 4:
         return owner.endsWith(needle, position) ? 1 : 0;
+      case 5:
+        return owner.localeCompare(needle);
     }
   }
   return -999;
@@ -114,4 +118,25 @@ export function positionedView(position: i32): i32 {
   // @as-str prefer-view
   const part = "bcde";
   return part.includes("c", position) ? 1 : 0;
+}
+
+export function orderingAllocations(): i32 {
+  return search(owners[0], needles[1], 0, 5);
+}
+export function orderingEffects(): i32 {
+  mutable = "abcdef";
+  state = 0;
+  let result: i32;
+  if (isDefined(AS_STR_NATIVE_BASELINE))
+    result = owner().localeCompare(needle().toString());
+  else result = owner().localeCompare(needle());
+  return result * 1000 + state;
+}
+export function orderingPacked(): i32 {
+  return owners[0].slice(1, 5).localeCompare("bcde");
+}
+export function orderingView(): i32 {
+  // @as-str prefer-view
+  const part = "abc";
+  return part.localeCompare("abd");
 }
