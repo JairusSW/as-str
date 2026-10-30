@@ -53,6 +53,10 @@ export function u64Type(range) {
     range,
   );
 }
+export function expressionRangeKey(expression) {
+  const range = expression.range;
+  return `${range.source.normalizedPath}:${range.start}:${range.end}`;
+}
 export function identifier(name, range) {
   return Node.createIdentifierExpression(name, range, false);
 }

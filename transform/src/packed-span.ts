@@ -15,6 +15,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   identifier,
+  expressionRangeKey,
   representationOfType,
   staticViewCall,
   u64Type,
@@ -59,6 +60,7 @@ function viewCallParts(expression: CallExpression): ViewCallParts | null {
 function parameterCanUsePackedSpan(
   body: Statement,
   name: string,
+  context: FunctionContext,
 ): { safe: boolean; lowercase: boolean } {
   let safe = true;
   let uses = 0;
@@ -89,7 +91,8 @@ function parameterCanUsePackedSpan(
     if (
       !(node instanceof IdentifierExpression) ||
       node.text !== name ||
-      isDeclarationIdentifier(node, ref)
+      isDeclarationIdentifier(node, ref) ||
+      context.classes.declarationOf(node, context)
     ) {
       return;
     }
@@ -158,7 +161,11 @@ export function planPackedSpanParameters(
     declaration.signature.parameters.forEach((parameter, index) => {
       if (signature.spanParameters.has(index)) return;
       if (representationOfType(parameter.type) !== "native") return;
-      const packed = parameterCanUsePackedSpan(body, parameter.name.text);
+      const packed = parameterCanUsePackedSpan(
+        body,
+        parameter.name.text,
+        context,
+      );
       if (
         signature.spanArgumentCounts.get(index) !== signature.directCallCount ||
         !packed.safe
@@ -258,7 +265,13 @@ export function lowerPackedLengthInitializer(
       [span],
     );
   }
-  return staticViewCall(`${parts.method}Length`, parts.receiver, parts.args);
+  const method =
+    parts.method === "at" &&
+    !isStrStaticCall(expression) &&
+    !context.originalViewReceivers?.has(expressionRangeKey(parts.receiver))
+      ? "atNative"
+      : parts.method;
+  return staticViewCall(`${method}Length`, parts.receiver, parts.args);
 }
 
 export function spanOwnerExpression(
@@ -271,12 +284,13 @@ export function spanOwnerExpression(
 }
 
 export function packedSpanLink(
-  name: string,
+  expression: IdentifierExpression,
   context: FunctionContext,
 ): PackedSpanLink | null {
-  return (
-    context.bindings.get(name)?.packedSpan ??
-    context.parameterSpans.get(name) ??
-    null
-  );
+  const declaration = context.classes.declarationOf(expression, context);
+  if (declaration) {
+    const binding = context.bindings.get(expression.text);
+    return binding?.declaration === declaration ? binding.packedSpan : null;
+  }
+  return context.parameterSpans.get(expression.text) ?? null;
 }

@@ -34,6 +34,8 @@ for (const simd of [false, true]) {
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const module = await WebAssembly.compile(readFileSync(wasm));
   for (const [name, message] of [
+    ["nativeAtEmpty", /Index out of range/],
+    ["nativeAtLengthOverflow", /Index out of range/],
     ["repeat16Overflow", /Invalid length/],
     ["repeat8Overflow", /Invalid length/],
     ["replaceAll16Overflow", /Invalid length/],

@@ -25,6 +25,7 @@ const VIEW_PRODUCING_METHODS = new Set([
   "trimRight",
   "charAt",
   "at",
+  "atNative",
   "before",
   "after",
   "between",

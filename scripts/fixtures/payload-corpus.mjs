@@ -170,10 +170,28 @@ export function createCorpus(repo) {
             }),
       ),
     },
+    {
+      name: "text-metadata",
+      kind: 10,
+      records: records(96, (i) =>
+        i % 3 === 0
+          ? `GET ${routes[i % routes.length]} HTTP/1.1\r\nHost: api.example.org\r\n`.repeat(
+              1 + (i % 16),
+            )
+          : `${names[i % names.length]}: ${messages[i % messages.length]}\n`.repeat(
+              1 + (i % 32),
+            ),
+      ),
+    },
   ];
 }
 
 export function reference(kind, value, encoding) {
+  if (kind === 10)
+    return (
+      (Buffer.byteLength(value) === value.length ? 101 : 211) +
+      [...value].length
+    );
   if (kind === 9) return Buffer.byteLength(value);
   const len = (s) => (encoding === 8 ? Buffer.byteLength(s) : s.length);
   const first = (s, n) =>

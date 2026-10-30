@@ -1,10 +1,13 @@
 import {
   AssertionExpression,
+  AssertionKind,
   BinaryExpression,
   BlockStatement,
   CallExpression,
   ClassDeclaration,
   CommaExpression,
+  CommonFlags,
+  Node,
   DoStatement,
   ElementAccessExpression,
   Expression,
@@ -33,6 +36,9 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   materializeView,
+  expressionRangeKey,
+  typeName,
+  identifier,
   i32Type,
   Representation,
   representationOfType,
@@ -51,7 +57,7 @@ import {
 } from "./packed-span.js";
 import { expressionCanProduceView } from "./expressions.js";
 import { FunctionContext, FunctionSignature } from "./model.js";
-import { calleeName, isStrStaticCall, propertyCall } from "./visitor.js";
+import { calleeName, isStrStaticCall, propertyCall, walk } from "./visitor.js";
 
 function viewCallParts(expression: CallExpression): {
   method: string;
@@ -91,21 +97,60 @@ function nativeLowercaseBenefitsFromViewHelper(
 }
 
 function bindingRepresentation(
-  name: string,
+  expression: IdentifierExpression,
   context: FunctionContext,
+  signatures: Map<string, FunctionSignature>,
 ): Representation {
+  const name = expression.text;
+  if (context.duplicateNames.has(name)) {
+    const declaration = context.classes.declarationOf(expression, context);
+    if (!declaration) return context.parameters.get(name) ?? "unknown";
+    const declared = representationOfType(declaration.type);
+    if (declared !== "unknown") return declared;
+    const initializer = declaration.initializer;
+    if (!initializer) return "unknown";
+    const resolving = (context.resolvingTypeInitializers ??= new Set());
+    if (resolving.has(initializer)) return "unknown";
+    resolving.add(initializer);
+    try {
+      return expressionRepresentation(initializer, context, signatures);
+    } finally {
+      resolving.delete(initializer);
+    }
+  }
   const binding = context.bindings.get(name);
-  if (!binding) return context.parameters.get(name) ?? "unknown";
+  if (!binding)
+    return (
+      context.parameters.get(name) ?? context.globals?.get(name) ?? "unknown"
+    );
   if (binding.decision !== "unknown") return binding.decision;
   return binding.declared === "unknown" ? binding.semantic : binding.declared;
 }
 
-function expressionRepresentation(
+export function expressionRepresentation(
   expression: Expression,
   context: FunctionContext,
   signatures: Map<string, FunctionSignature>,
 ): Representation {
   if (expression instanceof ParenthesizedExpression) {
+    return expressionRepresentation(expression.expression, context, signatures);
+  }
+  if (
+    expression instanceof AssertionExpression &&
+    expression.assertionKind === AssertionKind.NonNull
+  ) {
+    if (expression.expression instanceof IdentifierExpression) {
+      const name = expression.expression.text;
+      const type =
+        context.bindings.get(name)?.declaration.type ??
+        context.declaration?.signature.parameters.find(
+          (p) => p.name.text === name,
+        )?.type ??
+        null;
+      const named = typeName(type);
+      if (named === "string" || named === "String") return "native";
+      if (named === "str" || named === "Str") return "view";
+    }
     return expressionRepresentation(expression.expression, context, signatures);
   }
   if (expression instanceof StringLiteralExpression) return "native";
@@ -116,10 +161,37 @@ function expressionRepresentation(
     return "native";
   }
   if (expression instanceof IdentifierExpression) {
-    return bindingRepresentation(expression.text, context);
+    const representation = bindingRepresentation(
+      expression,
+      context,
+      signatures,
+    );
+    const binding = context.bindings.get(expression.text);
+    if (
+      representation === "unknown" &&
+      !context.duplicateNames.has(expression.text) &&
+      binding?.candidate &&
+      binding.declaration.initializer instanceof CallExpression
+    ) {
+      const property = propertyCall(binding.declaration.initializer);
+      if (
+        property &&
+        !(
+          property.expression instanceof IdentifierExpression &&
+          property.expression.text === expression.text
+        )
+      ) {
+        return expressionRepresentation(
+          binding.declaration.initializer,
+          context,
+          signatures,
+        );
+      }
+    }
+    return representation;
   }
   if (expression instanceof PropertyAccessExpression) {
-    return context.fields.get(expression.property.text) ?? "unknown";
+    return context.classes.fieldOf(expression, context);
   }
   if (
     expression instanceof ElementAccessExpression &&
@@ -174,20 +246,40 @@ function expressionRepresentation(
       }
     }
     if (operationSemantics(property.property.text).result === "view") {
+      return expressionRepresentation(property.expression, context, signatures);
+    }
+    if (operationSemantics(property.property.text).result === "native") {
       return expressionRepresentation(
         property.expression,
         context,
         signatures,
-      ) === "view"
-        ? "view"
+      ) === "unknown"
+        ? "unknown"
         : "native";
-    }
-    if (operationSemantics(property.property.text).result === "native") {
-      return "native";
     }
   }
   const name = calleeName(expression.expression);
   return name ? (signatures.get(name)?.result ?? "unknown") : "unknown";
+}
+
+export function recordOriginalViewReceivers(
+  node: Node,
+  context: FunctionContext,
+  signatures: Map<string, FunctionSignature>,
+): void {
+  context.originalViewReceivers ??= new Set();
+  walk(node, (child) => {
+    if (!(child instanceof CallExpression)) return;
+    const property = propertyCall(child);
+    if (
+      property &&
+      expressionRepresentation(property.expression, context, signatures) ===
+        "view"
+    )
+      context.originalViewReceivers!.add(
+        expressionRangeKey(property.expression),
+      );
+  });
 }
 
 function convertExpression(
@@ -203,7 +295,15 @@ function convertExpression(
   ) {
     const call = expression.expression;
     const property = propertyCall(call);
-    if (property && operationSemantics(property.property.text).lengthFusible) {
+    if (
+      property &&
+      operationSemantics(property.property.text).lengthFusible &&
+      expressionRepresentation(
+        isStrStaticCall(call) ? call.args[0] : property.expression,
+        context,
+        signatures,
+      ) !== "unknown"
+    ) {
       return rewriteExpression(
         lowerPackedLengthInitializer(call, context),
         expected,
@@ -319,7 +419,7 @@ function rewriteExpression(
       expression.property.text === "isEmpty") &&
     expression.expression instanceof IdentifierExpression
   ) {
-    const link = packedSpanLink(expression.expression.text, context);
+    const link = packedSpanLink(expression.expression, context);
     if (link) {
       return staticViewCall(
         expression.property.text === "length" ? "spanLength" : "isEmptySpan",
@@ -376,6 +476,7 @@ function rewriteExpression(
       expression.operator === Token.Equals &&
       expression.left instanceof IdentifierExpression &&
       context.lowercaseSpans.has(expression.left.text) &&
+      packedSpanLink(expression.left, context) &&
       expression.right instanceof CallExpression
     ) {
       const lower = propertyCall(expression.right);
@@ -395,11 +496,11 @@ function rewriteExpression(
     if (equality) {
       const leftLink =
         expression.left instanceof IdentifierExpression
-          ? packedSpanLink(expression.left.text, context)
+          ? packedSpanLink(expression.left, context)
           : null;
       const rightLink =
         expression.right instanceof IdentifierExpression
-          ? packedSpanLink(expression.right.text, context)
+          ? packedSpanLink(expression.right, context)
           : null;
       const negate =
         expression.operator === Token.Exclamation_Equals ||
@@ -430,8 +531,15 @@ function rewriteExpression(
         const parts = viewCallParts(directView);
         if (
           parts &&
-          (parts.receiver instanceof IdentifierExpression ||
-            parts.receiver instanceof PropertyAccessExpression)
+          expressionRepresentation(parts.receiver, context, signatures) !==
+            "unknown" &&
+          // A span call evaluates its receiver and bounds before the other
+          // operand. Preserve left-to-right evaluation for a right-hand view.
+          (directView === expression.left ||
+            expression.left instanceof StringLiteralExpression) &&
+          // The owner is also passed to the comparison, so it must be safe
+          // to read twice. Property accesses may invoke a getter each time.
+          parts.receiver instanceof IdentifierExpression
         ) {
           const other =
             directView === expression.left ? expression.right : expression.left;
@@ -520,9 +628,9 @@ function rewriteExpression(
     if (expression.operator === Token.Equals) {
       let target: Representation = "unknown";
       if (expression.left instanceof IdentifierExpression) {
-        target = bindingRepresentation(expression.left.text, context);
+        target = bindingRepresentation(expression.left, context, signatures);
       } else if (expression.left instanceof PropertyAccessExpression) {
-        target = context.fields.get(expression.left.property.text) ?? "unknown";
+        target = context.classes.fieldOf(expression.left, context);
       } else if (
         expression.left instanceof ElementAccessExpression &&
         expression.left.expression instanceof IdentifierExpression
@@ -585,29 +693,18 @@ function rewriteExpression(
         context,
         signatures,
       );
-      const spanBinding =
+      const spanLink =
         property.expression instanceof IdentifierExpression
-          ? context.bindings.get(property.expression.text)
+          ? packedSpanLink(property.expression, context)
           : null;
-      const parameterSpanOwner =
-        property.expression instanceof IdentifierExpression
-          ? context.parameterSpans.get(property.expression.text)
-          : null;
-      if (
-        ((spanBinding?.scalarizedSpan && spanBinding.packedSpan) ||
-          parameterSpanOwner) &&
-        operationSemantics(method).spanScalar
-      ) {
+      if (spanLink && operationSemantics(method).spanScalar) {
         const args = expression.args.map((argument) =>
           rewriteExpression(argument, "unknown", context, signatures),
         );
         return convertExpression(
           staticViewCall(
             `${method}Span`,
-            spanOwnerExpression(
-              spanBinding?.packedSpan?.owner ?? parameterSpanOwner!.owner,
-              expression.range,
-            ),
+            spanOwnerExpression(spanLink.owner, expression.range),
             [property.expression, ...args],
           ),
           expected,
@@ -622,6 +719,8 @@ function rewriteExpression(
           : "unknown";
       let receiverExpected: Representation = "unknown";
       if (
+        expressionRepresentation(property.expression, context, signatures) !==
+          "unknown" &&
         expressionCanProduceView(property.expression) &&
         (operationSemantics(method).result === "scalar" ||
           (operationSemantics(method).result === "view" && expected === "view"))
@@ -676,13 +775,29 @@ function rewriteExpression(
         );
       }
 
+      if (
+        method === "at" &&
+        !context.originalViewReceivers?.has(
+          expressionRangeKey(property.expression),
+        ) &&
+        (originalReceiverRepresentation === "view" ||
+          (originalReceiverRepresentation === "native" && expected === "view"))
+      ) {
+        return convertExpression(
+          staticViewCall("atNative", property.expression, expression.args),
+          expected,
+          context,
+          signatures,
+        );
+      }
+
       if (operationSemantics(method).result === "view" && expected === "view") {
         const receiverRep = expressionRepresentation(
           property.expression,
           context,
           signatures,
         );
-        if (receiverRep !== "view") {
+        if (receiverRep === "native") {
           return staticViewCall(method, property.expression, expression.args);
         }
       }
@@ -698,14 +813,57 @@ function rewriteExpression(
         ) {
           const parts = viewCallParts(argument);
           if (parts && operationSemantics(parts.method).spanProducing) {
-            rewrittenArgs.push(
-              rewriteExpression(
-                lowerPackedSpanInitializer(argument, context),
-                "unknown",
-                context,
-                signatures,
+            const range = argument.range;
+            const temporaries = (context.temporaryOwners ??= []);
+            let name = `__as_str_captured_owner_${temporaries.length}`;
+            while (
+              range.source.text.includes(name) ||
+              context.bindings.has(name) ||
+              context.parameters.has(name)
+            )
+              name += "_";
+            const owner = () => identifier(name, range);
+            temporaries.push(
+              Node.createVariableStatement(
+                null,
+                [
+                  Node.createVariableDeclaration(
+                    owner(),
+                    null,
+                    CommonFlags.Let,
+                    Node.createNamedType(
+                      Node.createSimpleTypeName("string", range),
+                      null,
+                      false,
+                      range,
+                    ),
+                    Node.createStringLiteralExpression("", range),
+                    range,
+                  ),
+                ],
+                range,
               ),
+            );
+            const capture = Node.createBinaryExpression(
+              Token.Equals,
+              owner(),
               rewriteExpression(parts.receiver, "native", context, signatures),
+              range,
+            );
+            const span = staticViewCall(
+              `${operationSemantics(parts.method).normalizedSpanName}Span`,
+              owner(),
+              parts.args,
+            );
+            rewrittenArgs.push(
+              Node.createCommaExpression(
+                [
+                  capture,
+                  rewriteExpression(span, "unknown", context, signatures),
+                ],
+                range,
+              ),
+              owner(),
             );
             return;
           }
@@ -729,7 +887,9 @@ function rewriteExpression(
   if (expression instanceof PropertyAccessExpression) {
     const receiverExpected =
       operationSemantics(expression.property.text).result === "scalar" &&
-      expressionCanProduceView(expression.expression)
+      expressionCanProduceView(expression.expression) &&
+      expressionRepresentation(expression.expression, context, signatures) !==
+        "unknown"
         ? "view"
         : "unknown";
     expression.expression = rewriteExpression(
@@ -744,7 +904,11 @@ function rewriteExpression(
   if (expression instanceof ElementAccessExpression) {
     expression.expression = rewriteExpression(
       expression.expression,
-      expressionCanProduceView(expression.expression) ? "view" : "unknown",
+      expressionCanProduceView(expression.expression) &&
+        expressionRepresentation(expression.expression, context, signatures) !==
+          "unknown"
+        ? "view"
+        : "unknown",
       context,
       signatures,
     );
@@ -798,7 +962,9 @@ export function rewriteStatement(
   }
   if (statement instanceof VariableStatement) {
     for (const declaration of statement.declarations) {
-      const binding = context.bindings.get(declaration.name.text);
+      const binding = context.duplicateNames.has(declaration.name.text)
+        ? undefined
+        : context.bindings.get(declaration.name.text);
       if (
         binding?.scalarizedLength &&
         declaration.initializer instanceof CallExpression
@@ -971,6 +1137,11 @@ export function rewriteDeclarationBoundaries(
     if (statement instanceof VariableStatement) {
       for (const declaration of statement.declarations) {
         if (!declaration.initializer) continue;
+        recordOriginalViewReceivers(
+          declaration.initializer,
+          context,
+          signatures,
+        );
         declaration.initializer = rewriteExpression(
           declaration.initializer,
           representationOfType(declaration.type),
@@ -984,10 +1155,20 @@ export function rewriteDeclarationBoundaries(
       for (const member of statement.members) {
         if (!(member instanceof FieldDeclaration) || !member.initializer)
           continue;
+        const fieldContext: FunctionContext = {
+          ...context,
+          className: context.classes.ownerOf(statement),
+          originalViewReceivers: new Set(context.originalViewReceivers),
+        };
+        recordOriginalViewReceivers(
+          member.initializer,
+          fieldContext,
+          signatures,
+        );
         member.initializer = rewriteExpression(
           member.initializer,
           representationOfType(member.type),
-          context,
+          fieldContext,
           signatures,
         );
       }

@@ -147,6 +147,7 @@ for (const simd of [false, true]) {
           "encoding",
           "extract",
           "sizing",
+          "metadata",
         ][workload.kind] +
         encoding +
         (workload.kind == 4 ? "Work" : "");

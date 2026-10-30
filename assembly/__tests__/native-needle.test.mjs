@@ -58,6 +58,8 @@ for (const simd of [false, true]) {
   const text = "Résumé 日本語 😀";
   for (const [name, result, allocs] of [
     ["nativeMetadata", 3 * Buffer.byteLength(text) + 2 * text.length, 0],
+    ["nativeProperties", [...text].length, 0],
+    ["bufferProperties", 112, 0],
     ["nativeEncode8", Buffer.byteLength(text), 1],
     ["nativeEncode16", 2 * text.length, 1],
   ]) {

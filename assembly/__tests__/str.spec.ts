@@ -33,6 +33,11 @@ describe("str views (zero-copy)", () => {
     expect(str.charAt(SAMPLE, 0).toString()).toBe(SAMPLE.charAt(0));
     expect(str.charAt(SAMPLE, 99).toString()).toBe(SAMPLE.charAt(99));
     expect(str.at(SAMPLE, -1).toString()).toBe("d");
+    expect(str.at("", 0).toString()).toBe("");
+    expect(str.at(SAMPLE, i32.MIN_VALUE).toString()).toBe("");
+    expect(str.at(SAMPLE, i32.MAX_VALUE).toString()).toBe("");
+    expect(str.atNative(SAMPLE, -1).toString()).toBe(SAMPLE.at(-1));
+    expect(str.atNativeLength(SAMPLE, -1)).toBe(1);
   });
 
   test("trim family matches String#trim*", () => {

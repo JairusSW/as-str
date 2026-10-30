@@ -180,6 +180,7 @@ function messageSize<T>(value: T): i32 {
 
 // @ts-ignore: decorator
 @inline export function one16(kind: i32, index: i32): i32 {
+  if (kind == 10) return textMetadata(strings[index]);
   if (kind == 9) return messageSize(strings[index]);
   const value = str.from(strings[index]);
   if (kind == 7) return encodeView16(value);
@@ -189,6 +190,7 @@ function messageSize<T>(value: T): i32 {
 // @ts-ignore: decorator
 @inline export function one8(kind: i32, index: i32): i32 {
   const value = bytes[index];
+  if (kind == 10) return textMetadata(value);
   if (kind == 9) return messageSize(value);
   if (kind == 7) return encodeView8(value);
   return kind == 4 ? normalize8(value) : dispatch(kind, value);
@@ -269,4 +271,14 @@ export function sizing16(count: i32): i32 {
 }
 export function sizing8(count: i32): i32 {
   return run8(9, count);
+}
+
+function textMetadata<T>(value: T): i32 {
+  return (str8.isAscii(value) ? 101 : 211) + str8.codePointCount(value);
+}
+export function metadata16(count: i32): i32 {
+  return run16(10, count);
+}
+export function metadata8(count: i32): i32 {
+  return run8(10, count);
 }

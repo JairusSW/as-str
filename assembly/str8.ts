@@ -1,5 +1,7 @@
 import {
   copyBytes,
+  encodeUtf8,
+  utf8ByteLength,
   checkedSize,
   equals as rangeEquals,
   equalsBytes,
@@ -80,7 +82,7 @@ import { Str } from "./str";
    * @returns A view over the freshly encoded UTF-8 buffer (allocates).
    */
   static from(s: string): Str8 {
-    const buf = U8.encode(s);
+    const buf = encodeUtf8(s);
     const ptr = changetype<usize>(buf);
     return new Str8(buf, ptr, ptr + <usize>buf.byteLength);
   }
@@ -849,12 +851,44 @@ import { Str } from "./str";
 
   /** Free-function form of {@link Str8#codePointCount}. */
   static codePointCount<T>(s: T): i32 {
+    if (isString<T>()) {
+      const text = changetype<string>(s);
+      let count = text.length;
+      const start = changetype<usize>(text);
+      const end = start + ((<usize>count) << 1);
+      if (isAscii16Range(start, end)) return count;
+      for (let p = start; p + 2 < end; p += 2) {
+        if (
+          (load<u16>(p) & 0xfc00) == 0xd800 &&
+          (load<u16>(p + 2) & 0xfc00) == 0xdc00
+        ) {
+          count--;
+          p += 2;
+        }
+      }
+      return count;
+    }
+    if (idof<T>() == idof<ArrayBuffer>()) {
+      const buffer = changetype<ArrayBuffer>(s);
+      const start = changetype<usize>(buffer);
+      return rangeCodePointCount(start, start + <usize>buffer.byteLength);
+    }
     const v = asView(s);
     return rangeCodePointCount(v.start, v.end);
   }
 
   /** Free-function form of {@link Str8#isAscii}. */
   static isAscii<T>(s: T): bool {
+    if (isString<T>()) {
+      const text = changetype<string>(s);
+      const start = changetype<usize>(text);
+      return isAscii16Range(start, start + ((<usize>text.length) << 1));
+    }
+    if (idof<T>() == idof<ArrayBuffer>()) {
+      const buffer = changetype<ArrayBuffer>(s);
+      const start = changetype<usize>(buffer);
+      return isAsciiRange(start, start + <usize>buffer.byteLength);
+    }
     const v = asView(s);
     return isAsciiRange(v.start, v.end);
   }
@@ -1034,7 +1068,7 @@ import { Str } from "./str";
     if (length <= viewBytes || pad.length == 0) {
       return Str8.fromBuffer(materializeBuffer(v.start, v.end));
     }
-    const padBuf = U8.encode(pad);
+    const padBuf = encodeUtf8(pad);
     const padBytes = <usize>padBuf.byteLength;
     if (padBytes == 0)
       return Str8.fromBuffer(materializeBuffer(v.start, v.end));
@@ -1054,7 +1088,7 @@ import { Str } from "./str";
     if (length <= len || pad.length == 0) {
       return Str8.fromBuffer(materializeBuffer(v.start, v.end));
     }
-    const padBuf = U8.encode(pad);
+    const padBuf = encodeUtf8(pad);
     const padBytes = <usize>padBuf.byteLength;
     if (padBytes == 0)
       return Str8.fromBuffer(materializeBuffer(v.start, v.end));
@@ -1077,7 +1111,7 @@ import { Str } from "./str";
     if (search.length == 0) {
       return Str8.from(v.toString().replace(search, replacement));
     }
-    const searchBuf = U8.encode(search);
+    const searchBuf = encodeUtf8(search);
     const sBytes = <usize>searchBuf.byteLength;
     const idx = indexOfBytes(
       v.start,
@@ -1087,7 +1121,7 @@ import { Str } from "./str";
       0,
     );
     if (idx < 0) return Str8.fromBuffer(materializeBuffer(v.start, v.end));
-    const replBuf = U8.encode(replacement);
+    const replBuf = encodeUtf8(replacement);
     const rBytes = <usize>replBuf.byteLength;
     const viewBytes = v.end - v.start;
     const idxU = <usize>idx;
@@ -1111,7 +1145,7 @@ import { Str } from "./str";
       checkedSize((units + (units + 1) * <u64>replacement.length) << 1);
       return Str8.from(native.replaceAll(search, replacement));
     }
-    const searchBuf = U8.encode(search);
+    const searchBuf = encodeUtf8(search);
     const sBytes = <usize>searchBuf.byteLength;
 
     let count = 0;
@@ -1134,7 +1168,7 @@ import { Str } from "./str";
     }
     if (count == 0) return Str8.fromBuffer(materializeBuffer(v.start, v.end));
 
-    const replBuf = U8.encode(replacement);
+    const replBuf = encodeUtf8(replacement);
     const rBytes = <usize>replBuf.byteLength;
     const viewBytes = v.end - v.start;
     const out = allocBuffer(
@@ -1239,7 +1273,7 @@ import { Str } from "./str";
         }
       }
     }
-    const sepBuf = U8.encode(separator);
+    const sepBuf = encodeUtf8(separator);
     const sepBytes = <usize>sepBuf.byteLength;
     let from: i32 = 0;
     let idx = indexOfBytes(
@@ -1271,7 +1305,11 @@ import { Str } from "./str";
 // Length queries must not allocate an encoded buffer just to measure a needle.
 // @ts-ignore: decorator
 @inline function needleByteLength<T>(needle: T): i32 {
-  if (isString<T>()) return U8.byteLength(changetype<string>(needle));
+  if (isString<T>())
+    return utf8ByteLength(
+      changetype<usize>(needle),
+      changetype<string>(needle).length,
+    );
   if (idof<T>() == idof<ArrayBuffer>())
     return changetype<ArrayBuffer>(needle).byteLength;
   return changetype<Str8>(needle).length;
@@ -1295,7 +1333,7 @@ function nativeAsciiPrefix(start: usize, end: usize, needle: string): i32 {
 function equalsNative(start: usize, end: usize, needle: string): bool {
   const ascii = nativeAsciiPrefix(start, end, needle);
   if (ascii >= 0) return ascii == 1 && end - start == <usize>needle.length;
-  const encoded = U8.encode(needle);
+  const encoded = encodeUtf8(needle);
   const size = <usize>encoded.byteLength;
   return (
     size == end - start && equalsBytes(start, changetype<usize>(encoded), size)
@@ -1305,7 +1343,7 @@ function equalsNative(start: usize, end: usize, needle: string): bool {
 function startsWithNative(start: usize, end: usize, needle: string): bool {
   const ascii = nativeAsciiPrefix(start, end, needle);
   if (ascii >= 0) return ascii == 1;
-  const encoded = U8.encode(needle);
+  const encoded = encodeUtf8(needle);
   const size = <usize>encoded.byteLength;
   return (
     size <= end - start && equalsBytes(start, changetype<usize>(encoded), size)
@@ -1319,7 +1357,7 @@ function endsWithNative(start: usize, end: usize, needle: string): bool {
   for (let i = 1; i <= units; i++) {
     const c = load<u16>(np + ((<usize>(units - i)) << 1));
     if (c >= 0x80) {
-      const encoded = U8.encode(needle);
+      const encoded = encodeUtf8(needle);
       const size = <usize>encoded.byteLength;
       return (
         size <= end - start &&
@@ -1356,7 +1394,7 @@ function indexOfNative(
   ) {
     return indexOfNativeAscii(start, end, needle, from);
   }
-  const encoded = U8.encode(needle);
+  const encoded = encodeUtf8(needle);
   const bp = changetype<usize>(encoded);
   return indexOfBytes(start, end, bp, bp + <usize>encoded.byteLength, from);
 }
@@ -1385,7 +1423,7 @@ function lastIndexOfNative(
   ) {
     return lastIndexOfNativeAscii(start, end, needle, from);
   }
-  const encoded = U8.encode(needle);
+  const encoded = encodeUtf8(needle);
   const bp = changetype<usize>(encoded);
   return lastIndexOfBytes(start, end, bp, bp + <usize>encoded.byteLength, from);
 }
@@ -1446,7 +1484,7 @@ function indexOfNativeAscii(
     // Bound the extra work on repeated prefixes. The byte search can use its
     // wide candidate filter after a few failures, with a single encoding.
     if (++failures == 8 && at <= limit) {
-      const encoded = U8.encode(needle);
+      const encoded = encodeUtf8(needle);
       const bp = changetype<usize>(encoded);
       return indexOfBytes(start, end, bp, bp + <usize>units, at);
     }
@@ -1486,7 +1524,7 @@ function lastIndexOfNativeAscii(
       return at;
     at--;
     if (++failures == 8 && at >= 0) {
-      const encoded = U8.encode(needle);
+      const encoded = encodeUtf8(needle);
       const bp = changetype<usize>(encoded);
       return lastIndexOfBytes(start, end, bp, bp + <usize>units, at);
     }
@@ -1545,7 +1583,7 @@ export namespace Str8 {
     }
     /** Copy the view's bytes into a fresh owned UTF-8 `ArrayBuffer`. */
     export function encode<T>(s: T): ArrayBuffer {
-      if (isString<T>()) return U8.encode(changetype<string>(s));
+      if (isString<T>()) return encodeUtf8(changetype<string>(s));
       const v = asView(s);
       return materializeBuffer(v.start, v.end);
     }

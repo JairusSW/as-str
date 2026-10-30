@@ -67,11 +67,19 @@ export function functionBody(wat, name) {
 }
 
 export async function instantiate(filename) {
-  return WebAssembly.instantiate(readFileSync(filename), {
+  let result;
+  result = await WebAssembly.instantiate(readFileSync(filename), {
     env: {
-      abort() {
-        throw new Error("AssemblyScript abort");
+      abort(pointer, _file, line, column) {
+        const memory = result?.instance.exports.memory?.buffer;
+        if (!memory || !pointer) throw new Error("AssemblyScript abort");
+        const length = new DataView(memory).getUint32(pointer - 4, true) / 2;
+        const units = new Uint16Array(memory, pointer, length);
+        throw new Error(
+          `AssemblyScript abort: ${String.fromCharCode(...units)} (${line}:${column})`,
+        );
       },
     },
   });
+  return result;
 }

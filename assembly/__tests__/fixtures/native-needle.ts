@@ -50,3 +50,11 @@ export function asciiQueries(): bool {
     str8.equals("content-type", key)
   );
 }
+
+export function nativeProperties(): i32 {
+  return (str8.isAscii(message) ? 100 : 0) + str8.codePointCount(message);
+}
+
+export function bufferProperties(): i32 {
+  return (str8.isAscii(key.buffer) ? 100 : 0) + str8.codePointCount(key.buffer);
+}

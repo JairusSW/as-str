@@ -1,5 +1,7 @@
 import {
   allocString,
+  encodeUtf8Range,
+  utf8ByteLength,
   asciiCaseFold,
   checkedSize,
   compare as rangeCompare,
@@ -1326,6 +1328,19 @@ import { Str8 } from "./str8";
     return <u32>index < <u32>len ? 1 : 0;
   }
 
+  /** Native String.at semantics for transformed code, including bounds errors. */
+  static atNative<T>(s: T, index: i32): Str {
+    Str.atNativeLength(s, index);
+    return Str.at(s, index);
+  }
+
+  static atNativeLength<T>(s: T, index: i32): i32 {
+    const len = unitLength(bStart(s), bEnd(s));
+    if (index < 0) index += len;
+    if (<u32>index >= <u32>len) throw new RangeError("Index out of range");
+    return 1;
+  }
+
   // @ts-ignore: decorator
   @inline static trimStartLength<T>(s: T): i32 {
     let start = bStart(s);
@@ -2084,11 +2099,7 @@ export namespace Str {
      */
     export function byteLength<T>(s: T, nullTerminated: bool = false): i32 {
       const start = bStart(s);
-      return U8.byteLengthUnsafe(
-        start,
-        unitLength(start, bEnd(s)),
-        nullTerminated,
-      );
+      return utf8ByteLength(start, unitLength(start, bEnd(s)), nullTerminated);
     }
     /**
      * Encode the view to a new UTF-8 `ArrayBuffer`.
@@ -2105,18 +2116,7 @@ export namespace Str {
     ): ArrayBuffer {
       const start = bStart(s);
       const len = unitLength(start, bEnd(s));
-      const size = U8.byteLengthUnsafe(start, len, nullTerminated);
-      const buf = changetype<ArrayBuffer>(
-        __new(<usize>size, idof<ArrayBuffer>()),
-      );
-      U8.encodeUnsafe(
-        start,
-        len,
-        changetype<usize>(buf),
-        nullTerminated,
-        errorMode,
-      );
-      return buf;
+      return encodeUtf8Range(start, len, nullTerminated, errorMode);
     }
     /**
      * Encode `len` UTF-16 code units from `Str` as UTF-8 into the caller-owned

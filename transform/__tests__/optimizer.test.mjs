@@ -459,7 +459,7 @@ for (const method of [
   "trimLeft",
   "trimRight",
   "charAt",
-  "at",
+  "atNative",
   "before",
   "after",
   "between",

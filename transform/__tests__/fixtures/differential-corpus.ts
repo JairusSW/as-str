@@ -173,3 +173,239 @@ export function splitLimitPipeline(limit: i32): i32 {
   for (let i = 0; i < parts.length; i++) score += parts[i].length;
   return score;
 }
+
+let evaluationCounter: i32 = 0;
+function orderedValue(): string {
+  evaluationCounter++;
+  return evaluationCounter == 1 ? "abcX" : "abc";
+}
+
+function orderedEnd(): i32 {
+  evaluationCounter++;
+  return 3;
+}
+
+export function equalityEvaluationOrder(variant: i32): i32 {
+  evaluationCounter = 0;
+  const source = "abcX";
+  let same = false;
+  if (variant == 0) same = orderedValue() == source.slice(0, orderedEnd());
+  if (variant == 1) same = orderedValue() === source.slice(0, orderedEnd());
+  if (variant == 2) same = orderedValue() != source.slice(0, orderedEnd());
+  if (variant == 3) same = orderedValue() !== source.slice(0, orderedEnd());
+  if (variant == 4) same = source.slice(0, orderedEnd()) == orderedValue();
+  if (variant == 5) same = source.slice(0, orderedEnd()) === orderedValue();
+  if (variant == 6) same = source.slice(0, orderedEnd()) != orderedValue();
+  if (variant == 7) same = source.slice(0, orderedEnd()) !== orderedValue();
+  return (same ? 100 : 0) + evaluationCounter;
+}
+
+class GetterSource {
+  reads: i32 = 0;
+  get text(): string {
+    this.reads++;
+    return this.reads == 1 ? "abcX" : "xyz";
+  }
+}
+
+export function getterEqualityEvaluation(variant: i32): i32 {
+  const source = new GetterSource();
+  let same = false;
+  if (variant == 0) same = source.text.slice(0, 3) == "abc";
+  if (variant == 1) same = source.text.slice(0, 3) !== "abc";
+  if (variant == 2) same = "abc" === source.text.slice(0, 3);
+  if (variant == 3) same = "abc" != source.text.slice(0, 3);
+  return (same ? 100 : 0) + source.reads;
+}
+
+function packedGetterMatch(value: string): bool {
+  return value == "abc";
+}
+
+export function getterPackedArgument(): i32 {
+  const source = new GetterSource();
+  const same = packedGetterMatch(source.text.slice(0, 3));
+  return (same ? 100 : 0) + source.reads;
+}
+
+export function callPackedArgument(): i32 {
+  evaluationCounter = 0;
+  const same = packedGetterMatch(orderedValue().slice(0, 3));
+  return (same ? 100 : 0) + evaluationCounter;
+}
+
+function packedInitMatch(value: string): bool {
+  return value == "abc";
+}
+const initializedPacked = packedInitMatch("abcX".slice(0, 3));
+export function initializedPackedArgument(): bool {
+  return initializedPacked;
+}
+
+function packedNestedMatch(value: string): bool {
+  return packedGetterMatch(value.slice(0, 3));
+}
+export function nestedPackedArgument(): bool {
+  const sliced = " abcX ".trim();
+  return packedNestedMatch(sliced.slice(0, 4));
+}
+
+let mutablePackedSource: string = "";
+function mutatePackedSource(): i32 {
+  mutablePackedSource = "changed";
+  __collect();
+  const replacements = new Array<string>();
+  for (let i = 0; i < 64; i++) {
+    replacements.push(String.fromCharCodes([120, 121, 122, i + 32]));
+  }
+  return replacements.length == 64 ? 3 : 0;
+}
+export function mutatedPackedArgument(): bool {
+  mutablePackedSource = String.fromCharCodes([97, 98, 99, 88]);
+  return packedGetterMatch(mutablePackedSource.slice(0, mutatePackedSource()));
+}
+
+class CustomSlicer {
+  toLowerCase(): CustomSlicer {
+    return this;
+  }
+  slice(start: i32, end: i32): string {
+    return start == 0 && end == 3 ? "abc" : "other";
+  }
+}
+export function customMethodEquality(): bool {
+  const source = new CustomSlicer();
+  return source.slice(0, 3) == "abc";
+}
+
+function customSliceMatch(value: string): bool {
+  return value == "abc";
+}
+export function customMethodArgument(): bool {
+  const source = new CustomSlicer();
+  return customSliceMatch(source.slice(0, 3));
+}
+export function customMethodLength(): i32 {
+  const source = new CustomSlicer();
+  const value = source.slice(0, 3);
+  return value.length;
+}
+
+export function customMethodChain(): i32 {
+  const source = new CustomSlicer();
+  return source.toLowerCase().slice(0, 3).length;
+}
+
+const globalStringSource: string = "abcX";
+function packedGlobalMatch(value: string): bool {
+  return value == "abc";
+}
+export function globalStringArgument(): bool {
+  return packedGlobalMatch(globalStringSource.slice(0, 3));
+}
+export function shadowedGlobalString(): bool {
+  const globalStringSource = new CustomSlicer();
+  return globalStringSource.slice(0, 3) == "abc";
+}
+
+class StringFieldHolder {
+  payload: string = "abcX";
+}
+class ObjectFieldHolder {
+  payload: CustomSlicer = new CustomSlicer();
+}
+export function collidingFieldTypes(): i32 {
+  const object = new ObjectFieldHolder();
+  const text = new StringFieldHolder();
+  return object.payload.slice(0, 3).length + text.payload.slice(0, 3).length;
+}
+
+class StaticFieldHolder {
+  static payload: string = "abcX";
+}
+export function staticFieldReceiver(): i32 {
+  return StaticFieldHolder.payload.slice(0, 3).length;
+}
+
+export function duplicatePrimitiveNames(): i32 {
+  let score = 0;
+  {
+    const value = new CustomSlicer();
+    if (value.slice(0, 3) == "abc") score += 1;
+  }
+  {
+    const value: string = "abcd";
+    if (value.slice(0, 3) == "abc") score += 2;
+  }
+  return score;
+}
+
+function parameterShadow(value: string): i32 {
+  let score = 0;
+  {
+    const value = new CustomSlicer();
+    if (value.slice(0, 3) == "abc") score += 1;
+  }
+  if (value.slice(0, 3) == "abc") score += 2;
+  return score;
+}
+export function parameterShadowNames(): i32 {
+  return parameterShadow("abcX");
+}
+export function duplicateExplicitViews(): i32 {
+  let score = 0;
+  {
+    const value: str = str.from("abc");
+    score += value.at(99).length;
+  }
+  {
+    const value: string = "abcd";
+    score += value.slice(0, 2).length;
+  }
+  return score;
+}
+
+class LocalLength {
+  length: i32 = 17;
+}
+function shadowPackedLength(value: string): i32 {
+  let score = value.length;
+  {
+    const value = new LocalLength();
+    score += value.length;
+  }
+  return score;
+}
+export function packedParameterShadow(): i32 {
+  return shadowPackedLength("xabc".slice(1));
+}
+
+class LocalSearch {
+  indexOf(search: string): i32 {
+    return search.length == 1 ? 17 : -1;
+  }
+}
+function shadowPackedSearch(value: string): i32 {
+  let score = value.indexOf("a");
+  {
+    const value = new LocalSearch();
+    score += value.indexOf("a");
+  }
+  return score;
+}
+export function packedSearchShadow(): i32 {
+  return shadowPackedSearch("xabc".slice(1));
+}
+function shadowFoldedValue(value: string): i32 {
+  value = value.toLowerCase();
+  let score = value == "abc" ? 1 : 0;
+  {
+    let value: string = "XYZ";
+    value = value.toLowerCase();
+    if (value == "xyz") score += 2;
+  }
+  return score;
+}
+export function packedLowercaseShadow(): i32 {
+  return shadowFoldedValue("xABC".slice(1));
+}

@@ -34,3 +34,10 @@ export function checkedUtf8Valid(): bool {
   const bytes = String.UTF8.encode("ok 世界");
   return str8.fromBufferChecked(bytes).toString() == "ok 世界";
 }
+
+export function nativeAtEmpty(): void {
+  str.atNative("", 0);
+}
+export function nativeAtLengthOverflow(): void {
+  str.atNativeLength("abc", i32.MIN_VALUE);
+}

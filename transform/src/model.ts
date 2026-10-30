@@ -1,8 +1,11 @@
 import {
   FunctionDeclaration,
+  Expression,
   Source,
   VariableDeclaration,
+  VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
+import type { SourceClassTypes } from "./class-types.js";
 import { Representation } from "./ast.js";
 
 export type SpanOwner =
@@ -46,13 +49,18 @@ export interface Binding {
 
 export interface FunctionContext {
   declaration: FunctionDeclaration | null;
+  temporaryOwners?: VariableStatement[];
   bindings: Map<string, Binding>;
   parameters: Map<string, Representation>;
   parameterSpans: Map<string, PackedSpanLink>;
   lowercaseSpans: Set<string>;
   repeatedLowercaseReceivers: Set<string>;
   profitableLowercaseCalls: Set<number>;
-  fields: Map<string, Representation>;
+  classes: SourceClassTypes;
+  globals?: Map<string, Representation>;
+  className?: string;
+  originalViewReceivers?: Set<string>;
+  resolvingTypeInitializers?: Set<Expression>;
   duplicateNames: Set<string>;
 }
 

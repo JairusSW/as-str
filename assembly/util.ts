@@ -1,5 +1,6 @@
 // Low-level UTF-16 helpers for `str`. Scans use SIMD, SWAR, then scalar tails.
 import { OBJECT_MAXSIZE } from "rt/common";
+import { UTF8 as U8 } from "utf-as";
 
 // Per-16-bit-lane constants for the SWAR zero/diff detection (Mycroft's trick).
 const LANE_ONES: u64 = 0x0001000100010001;
@@ -628,4 +629,103 @@ export function asciiCaseFold(
     default:
       return false;
   }
+}
+
+// Count a vector's bytes and carry its final high-surrogate bit. Every
+// surrogate starts at three bytes; each adjacent high/low pair subtracts two.
+// This is also exact for WTF-8: lone surrogates retain their three-byte count.
+// @ts-ignore: decorator
+@inline function utf8VectorSize(word: v128, previousHigh: u32): u64 {
+  let size =
+    8 +
+    popcnt(i16x8.bitmask(i16x8.ge_u(word, i16x8.splat(0x80)))) +
+    popcnt(i16x8.bitmask(i16x8.ge_u(word, i16x8.splat(0x800))));
+  const tags = v128.and(word, i16x8.splat(<i16>0xf800));
+  let lastHigh: u32 = 0;
+  if (v128.any_true(i16x8.eq(tags, i16x8.splat(<i16>0xd800)))) {
+    const kinds = v128.and(word, i16x8.splat(<i16>0xfc00));
+    const highs = i16x8.bitmask(i16x8.eq(kinds, i16x8.splat(<i16>0xd800)));
+    const lows = i16x8.bitmask(i16x8.eq(kinds, i16x8.splat(<i16>0xdc00)));
+    size -= (popcnt(highs & (lows >> 1)) + <i32>(previousHigh & lows & 1)) << 1;
+    lastHigh = (<u32>highs) >> 7;
+  }
+  return (<u64>(<u32>size)) | ((<u64>lastHigh) << 32);
+}
+
+/** Exact UTF-8/WTF-8 byte length, including malformed UTF-16 input. */
+export function utf8ByteLength(
+  start: usize,
+  length: i32,
+  nullTerminated: bool = false,
+): i32 {
+  if (!ASC_FEATURE_SIMD || nullTerminated)
+    return U8.byteLengthUnsafe(start, length, nullTerminated);
+  const end = start + ((<usize>length) << 1);
+  let p = start;
+  let size = 0;
+  let previousHigh: u32 = 0;
+  while (end - p >= 64) {
+    const a = v128.load(p);
+    const b = v128.load(p + 16);
+    const c = v128.load(p + 32);
+    const d = v128.load(p + 48);
+    const any = v128.or(v128.or(a, b), v128.or(c, d));
+    if (!v128.any_true(v128.and(any, i16x8.splat(<i16>0xff80)))) {
+      size += 32;
+      previousHigh = 0;
+    } else {
+      let packed = utf8VectorSize(a, previousHigh);
+      size += <i32>packed;
+      previousHigh = <u32>(packed >> 32);
+      packed = utf8VectorSize(b, previousHigh);
+      size += <i32>packed;
+      previousHigh = <u32>(packed >> 32);
+      packed = utf8VectorSize(c, previousHigh);
+      size += <i32>packed;
+      previousHigh = <u32>(packed >> 32);
+      packed = utf8VectorSize(d, previousHigh);
+      size += <i32>packed;
+      previousHigh = <u32>(packed >> 32);
+    }
+    p += 64;
+  }
+  while (end - p >= 16) {
+    const packed = utf8VectorSize(v128.load(p), previousHigh);
+    size += <i32>packed;
+    previousHigh = <u32>(packed >> 32);
+    p += 16;
+  }
+  while (p < end) {
+    const c = load<u16>(p);
+    size += c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
+    if (previousHigh && (c & 0xfc00) == 0xdc00) size -= 2;
+    previousHigh = <u32>((c & 0xfc00) == 0xd800);
+    p += 2;
+  }
+  return size;
+}
+
+/** Allocate an exactly sized UTF-8 buffer before invoking the raw encoder. */
+export function encodeUtf8Range(
+  start: usize,
+  length: i32,
+  nullTerminated: bool = false,
+  errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+): ArrayBuffer {
+  const size = utf8ByteLength(start, length, nullTerminated);
+  const buffer = changetype<ArrayBuffer>(
+    __new(checkedSize(<u64>size), idof<ArrayBuffer>()),
+  );
+  U8.encodeUnsafe(
+    start,
+    length,
+    changetype<usize>(buffer),
+    nullTerminated,
+    errorMode,
+  );
+  return buffer;
+}
+
+export function encodeUtf8(text: string): ArrayBuffer {
+  return encodeUtf8Range(changetype<usize>(text), text.length);
 }

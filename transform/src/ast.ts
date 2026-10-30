@@ -67,6 +67,12 @@ export function u64Type(range: Source["range"]): NamedTypeNode {
   );
 }
 
+/** Stable identity for an original expression, including nested expressions. */
+export function expressionRangeKey(expression: Expression): string {
+  const range = expression.range;
+  return `${range.source.normalizedPath}:${range.start}:${range.end}`;
+}
+
 export function identifier(
   name: string,
   range: Source["range"],

@@ -1,11 +1,12 @@
+import { SourceClassTypes } from "./class-types.js";
 import {
   AssertionExpression,
   BinaryExpression,
+  BlockStatement,
   CallExpression,
   ClassDeclaration,
   CommaExpression,
   ElementAccessExpression,
-  FieldDeclaration,
   FunctionDeclaration,
   IdentifierExpression,
   NewExpression,
@@ -16,6 +17,7 @@ import {
   ThrowStatement,
   StringLiteralExpression,
   VariableDeclaration,
+  VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
@@ -33,7 +35,12 @@ import {
   propertyCall,
   walk,
 } from "./visitor.js";
-import { rewriteDeclarationBoundaries, rewriteStatement } from "./rewrite.js";
+import {
+  expressionRepresentation,
+  recordOriginalViewReceivers,
+  rewriteDeclarationBoundaries,
+  rewriteStatement,
+} from "./rewrite.js";
 import {
   expressionCanProduceView,
   expressionIsExplicitView,
@@ -384,7 +391,7 @@ function initializerElementRepresentation(expression) {
   if (name !== "Array" && name !== "StaticArray") return "unknown";
   return representationOfType(expression.typeArguments?.[0] ?? null);
 }
-function collectLocalBindings(declaration, semanticFacts, fields) {
+function collectLocalBindings(declaration, semanticFacts, classes, globals) {
   const bindings = new Map();
   const parameters = new Map();
   const duplicateNames = new Set();
@@ -401,7 +408,7 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
         return false;
       if (!(node instanceof VariableDeclaration)) return;
       const name = node.name.text;
-      if (bindings.has(name)) duplicateNames.add(name);
+      if (bindings.has(name) || parameters.has(name)) duplicateNames.add(name);
       const declared = representationOfType(node.type);
       const semantic =
         semanticFacts.get(`local:${node.range.start}`)?.representation ??
@@ -526,6 +533,7 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
     declaration,
     bindings,
     parameters,
+    globals,
     parameterSpans: new Map(),
     lowercaseSpans: new Set(),
     repeatedLowercaseReceivers: new Set(
@@ -534,23 +542,36 @@ function collectLocalBindings(declaration, semanticFacts, fields) {
         .map(([name]) => name),
     ),
     profitableLowercaseCalls,
-    fields,
+    classes,
     duplicateNames,
   };
 }
-function collectFieldRepresentations(source) {
-  const fields = new Map();
-  const ambiguous = new Set();
-  walk(source, (node) => {
-    if (!(node instanceof FieldDeclaration)) return;
-    const representation = representationOfType(node.type);
-    if (representation === "unknown") return;
-    const name = node.name.text;
-    if (fields.has(name)) ambiguous.add(name);
-    else fields.set(name, representation);
-  });
-  for (const name of ambiguous) fields.delete(name);
-  return fields;
+function collectGlobalRepresentations(source, facts) {
+  const globals = new Map();
+  for (const fact of facts.values()) {
+    if (fact.kind !== "global") continue;
+    globals.set(
+      fact.name,
+      globals.has(fact.name) ? "unknown" : fact.representation,
+    );
+  }
+  for (const statement of source.statements) {
+    if (!(statement instanceof VariableStatement)) continue;
+    for (const declaration of statement.declarations) {
+      const name = declaration.name.text;
+      const declared = representationOfType(declaration.type);
+      if (!globals.has(name))
+        globals.set(
+          name,
+          declared !== "unknown"
+            ? declared
+            : declaration.initializer instanceof StringLiteralExpression
+              ? "native"
+              : "unknown",
+        );
+    }
+  }
+  return globals;
 }
 function expectedCallArgument(call, index, signatures, context) {
   if (isStrStaticCall(call)) return "view";
@@ -747,6 +768,19 @@ function analyzeCandidates(context, signatures) {
   if (!declaration) return;
   const body = declaration.body;
   if (!body) return;
+  for (const binding of context.bindings.values()) {
+    const init = binding.declaration.initializer;
+    if (!binding.candidate || !(init instanceof CallExpression)) continue;
+    const property = propertyCall(init);
+    if (!property || isStrStaticCall(init)) continue;
+    if (
+      expressionRepresentation(property.expression, context, signatures) ===
+      "unknown"
+    ) {
+      binding.candidate = false;
+      binding.decision = binding.semantic;
+    }
+  }
   walk(body, (node, ref) => {
     if (node instanceof FunctionDeclaration && node !== declaration) {
       walk(node.body, (nested) => {
@@ -1038,31 +1072,36 @@ export function optimizeSource(
       }
     }
   }
-  const fields = collectFieldRepresentations(source);
+  const classes = new SourceClassTypes(source);
+  const globals = collectGlobalRepresentations(source, semanticFacts);
   const canPromoteBoundaries = manifest?.complete === true;
   const functions = collectFunctions(source);
   const contexts = new Map();
   for (const declaration of functions) {
     contexts.set(
       declaration,
-      collectLocalBindings(declaration, semanticFacts, fields),
+      collectLocalBindings(declaration, semanticFacts, classes, globals),
     );
   }
-  rewriteDeclarationBoundaries(
-    source.statements,
-    {
-      declaration: null,
-      bindings: new Map(),
-      parameters: new Map(),
-      parameterSpans: new Map(),
-      lowercaseSpans: new Set(),
-      repeatedLowercaseReceivers: new Set(),
-      profitableLowercaseCalls: new Set(),
-      fields,
-      duplicateNames: new Set(),
-    },
-    signatures,
-  );
+  const sourceContext = {
+    declaration: null,
+    globals: collectGlobalRepresentations(source, semanticFacts),
+    bindings: new Map(),
+    parameters: new Map(),
+    parameterSpans: new Map(),
+    lowercaseSpans: new Set(),
+    repeatedLowercaseReceivers: new Set(),
+    profitableLowercaseCalls: new Set(),
+    classes,
+    duplicateNames: new Set(),
+  };
+  rewriteDeclarationBoundaries(source.statements, sourceContext, signatures);
+  if (sourceContext.temporaryOwners?.length) {
+    source.statements.unshift(...sourceContext.temporaryOwners);
+  }
+  for (const context of contexts.values()) {
+    recordOriginalViewReceivers(context.declaration.body, context, signatures);
+  }
   for (const declaration of functions) {
     const context = contexts.get(declaration);
     const signature = signatures.get(declaration.name.text);
@@ -1119,6 +1158,12 @@ export function optimizeSource(
     const context = contexts.get(declaration);
     analyzeCandidates(context, signatures);
     rewriteStatement(declaration.body, context, signatures);
+    if (
+      context.temporaryOwners?.length &&
+      declaration.body instanceof BlockStatement
+    ) {
+      declaration.body.statements.unshift(...context.temporaryOwners);
+    }
     for (const binding of context.bindings.values()) {
       if (binding.candidate) {
         diagnostics.push(diagnosticFor(binding));
@@ -1169,6 +1214,36 @@ export function optimizeSources(sources, manifest = null) {
   }
   for (const name of ambiguous) sharedSignatures.delete(name);
   for (const source of sources) {
+    const scopes = [];
+    const sourceFacts = factsForSource(manifest, source);
+    const globals = collectGlobalRepresentations(source, sourceFacts);
+    const classes = new SourceClassTypes(source);
+    if (userSources.includes(source)) {
+      walk(source, (node) => {
+        if (node instanceof FunctionDeclaration)
+          scopes.push(
+            collectLocalBindings(node, sourceFacts, classes, globals),
+          );
+      });
+    }
+    scopes.sort(
+      (a, b) =>
+        a.declaration.range.end -
+        a.declaration.range.start -
+        (b.declaration.range.end - b.declaration.range.start),
+    );
+    const topContext = {
+      declaration: null,
+      globals,
+      bindings: new Map(),
+      parameters: new Map(),
+      parameterSpans: new Map(),
+      lowercaseSpans: new Set(),
+      repeatedLowercaseReceivers: new Set(),
+      profitableLowercaseCalls: new Set(),
+      classes,
+      duplicateNames: new Set(),
+    };
     walk(source, (node, ref) => {
       if (!(node instanceof IdentifierExpression)) return;
       const signature = sharedSignatures.get(node.text);
@@ -1193,7 +1268,18 @@ export function optimizeSources(sources, manifest = null) {
           if (
             argument instanceof CallExpression &&
             operationSemantics(propertyCall(argument)?.property.text ?? "")
-              .spanProducing
+              .spanProducing &&
+            expressionRepresentation(
+              isStrStaticCall(argument)
+                ? argument.args[0]
+                : propertyCall(argument).expression,
+              scopes.find(
+                (scope) =>
+                  scope.declaration.range.start <= argument.range.start &&
+                  scope.declaration.range.end >= argument.range.end,
+              ) ?? topContext,
+              sharedSignatures,
+            ) !== "unknown"
           ) {
             signature.spanArgumentCounts.set(
               index,
