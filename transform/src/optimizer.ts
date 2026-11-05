@@ -1,4 +1,8 @@
-import { callArgumentType, typeIsNullable } from "./type-resolution.js";
+import {
+  callArgumentType,
+  classDeclarationOfType,
+  typeIsNullable,
+} from "./type-resolution.js";
 import {
   FunctionSignatures,
   declaredCallSignature,
@@ -19,10 +23,13 @@ import {
   ElementAccessExpression,
   Expression,
   ExpressionStatement,
+  FieldDeclaration,
   FunctionDeclaration,
   FunctionExpression,
+  FunctionTypeNode,
   IdentifierExpression,
   NewExpression,
+  Node,
   NamespaceDeclaration,
   ParenthesizedExpression,
   ParameterKind,
@@ -1307,10 +1314,204 @@ function sourceUsesViewName(source: Source): boolean {
   return usesView;
 }
 
+function representationEffects(
+  node: Node,
+  context: FunctionContext,
+): {
+  targets: Node[];
+  opaque: boolean;
+} {
+  if (node instanceof PropertyAccessExpression) {
+    const targets = context.classes.accessorsOf(node, context);
+    return {
+      targets,
+      opaque: targets.some(
+        (target) =>
+          !target.body && admitSource(target.range.source).semanticFacts,
+      ),
+    };
+  }
+  if (node instanceof NewExpression) {
+    const declaration = classDeclarationOfType(
+      context.classes.typeOf(node, context),
+    );
+    return { targets: declaration ? [declaration] : [], opaque: false };
+  }
+  if (!(node instanceof CallExpression)) return { targets: [], opaque: false };
+  const target = context.classes.callableOf(node.expression, context);
+  return {
+    targets: target ? [target] : [],
+    opaque:
+      isUnsafeIntrinsic(node) ||
+      (target
+        ? !target.body && admitSource(target.range.source).semanticFacts
+        : (node.expression instanceof IdentifierExpression &&
+            (context.parameters.has(node.expression.text) ||
+              !!context.classes.declarationOf(node.expression, context))) ||
+          context.classes.typeOf(node.expression, context) instanceof
+            FunctionTypeNode),
+  };
+}
+
+/** Propagate raw-memory observations through calls, accessors and construction. */
+function representationSensitiveDeclarations(sources: Source[]): Set<Node> {
+  const contexts = new Map<
+    FunctionDeclaration | ClassDeclaration,
+    FunctionContext
+  >();
+  for (const source of sources) {
+    const classes = new SourceClassTypes(source);
+    walk(source, (node) => {
+      if (
+        !(
+          node instanceof ClassDeclaration ||
+          (node instanceof FunctionDeclaration && node.body)
+        )
+      )
+        return;
+      contexts.set(node, {
+        declaration: node instanceof FunctionDeclaration ? node : null,
+        className: classes.ownerOf(node),
+        classes,
+        bindings: new Map(),
+        globals: new Map(),
+        parameters: new Map(
+          node instanceof FunctionDeclaration
+            ? node.signature.parameters.map((parameter) => [
+                parameter.name.text,
+                representationOfType(parameter.type),
+              ])
+            : [],
+        ),
+        parameterSpans: new Map(),
+        lowercaseSpans: new Set(),
+        repeatedLowercaseReceivers: new Set(),
+        profitableLowercaseCalls: new Set(),
+        duplicateNames: new Set(),
+      });
+    });
+  }
+  const sensitive = new Set<Node>();
+  const callers = new Map<Node, Set<Node>>();
+  const link = (caller: Node, callee: Node): void => {
+    const incoming = callers.get(callee) ?? new Set();
+    incoming.add(caller);
+    callers.set(callee, incoming);
+  };
+  for (const [declaration, context] of contexts) {
+    const roots: Node[] = [];
+    if (declaration instanceof FunctionDeclaration) {
+      roots.push(declaration.body!);
+      for (const parameter of declaration.signature.parameters)
+        if (parameter.initializer) roots.push(parameter.initializer);
+    } else {
+      const parent = classDeclarationOfType(declaration.extendsType);
+      if (parent) link(declaration, parent);
+      for (const member of declaration.members) {
+        if (member instanceof FieldDeclaration && member.initializer)
+          roots.push(member.initializer);
+        if (
+          member instanceof FunctionDeclaration &&
+          member.name.text === "constructor"
+        ) {
+          if (member.body) link(declaration, member);
+          else sensitive.add(declaration);
+        }
+      }
+    }
+    for (const root of roots)
+      walk(root, (node): boolean | void => {
+        if (node instanceof FunctionDeclaration) return false;
+        if (
+          !(
+            node instanceof CallExpression ||
+            node instanceof PropertyAccessExpression ||
+            node instanceof NewExpression
+          )
+        )
+          return;
+        const effects = representationEffects(node, context);
+        if (effects.opaque) sensitive.add(declaration);
+        for (const callee of effects.targets) link(declaration, callee);
+      });
+  }
+  // A call through a base type may dispatch to any known overriding method.
+  // Link the base declaration to overrides before propagating effects, including
+  // virtual calls made by base constructors and accessors.
+  for (const declaration of contexts.keys()) {
+    if (!(declaration instanceof ClassDeclaration)) continue;
+    const seen = new Set<ClassDeclaration>();
+    let parent = classDeclarationOfType(declaration.extendsType);
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      for (const method of declaration.members) {
+        if (
+          !(method instanceof FunctionDeclaration) ||
+          method.is(CommonFlags.Static) ||
+          method.name.text === "constructor"
+        )
+          continue;
+        for (const base of parent.members) {
+          if (
+            !(base instanceof FunctionDeclaration) ||
+            base.is(CommonFlags.Static) ||
+            base.name.text !== method.name.text
+          )
+            continue;
+          if (
+            base.is(CommonFlags.Get) === method.is(CommonFlags.Get) &&
+            base.is(CommonFlags.Set) === method.is(CommonFlags.Set)
+          )
+            link(base, method);
+        }
+      }
+      parent = classDeclarationOfType(parent.extendsType);
+    }
+  }
+  const pending = [...sensitive];
+  for (let i = 0; i < pending.length; i++) {
+    for (const caller of callers.get(pending[i]) ?? []) {
+      if (sensitive.has(caller)) continue;
+      sensitive.add(caller);
+      pending.push(caller);
+    }
+  }
+  return sensitive;
+}
+
+function hasSensitiveCalls(
+  node: Node,
+  context: FunctionContext,
+  sensitive: ReadonlySet<Node>,
+): boolean {
+  let found = false;
+  walk(node, (child): boolean | void => {
+    if (child instanceof FunctionDeclaration) return false;
+    if (
+      !(
+        child instanceof CallExpression ||
+        child instanceof PropertyAccessExpression ||
+        child instanceof NewExpression
+      )
+    )
+      return;
+    const effects = representationEffects(child, context);
+    if (
+      effects.opaque ||
+      effects.targets.some((callee) => sensitive.has(callee))
+    )
+      found = true;
+  });
+  return found;
+}
+
 export function optimizeSource(
   source: Source,
   manifest: SemanticManifest | null = null,
   sharedSignatures: FunctionSignatures | null = null,
+  sensitiveDeclarations: ReadonlySet<Node> = representationSensitiveDeclarations(
+    [source],
+  ),
 ): OptimizationResult {
   const changedSources = new Set<Source>();
   const diagnostics: OptimizationDiagnostic[] = [];
@@ -1353,6 +1554,7 @@ export function optimizeSource(
       classes,
       globals,
     );
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     contexts.set(declaration, context);
     if (context.representationSensitive) {
       const signature = signatureForDeclaration(declaration, signatures);
@@ -1372,6 +1574,9 @@ export function optimizeSource(
     classes,
     duplicateNames: new Set(),
   };
+  sourceContext.representationSensitive =
+    functions.some((declaration) => sensitiveDeclarations.has(declaration)) ||
+    hasSensitiveCalls(source, sourceContext, sensitiveDeclarations);
   rewriteDeclarationBoundaries(source.statements, sourceContext, signatures);
   if (sourceContext.temporaryOwners?.length) {
     source.statements.unshift(...sourceContext.temporaryOwners);
@@ -1608,11 +1813,24 @@ export function optimizeSources(
     });
   }
 
+  const sensitiveDeclarations =
+    representationSensitiveDeclarations(userSources);
+  for (const declaration of sensitiveDeclarations) {
+    if (!(declaration instanceof FunctionDeclaration)) continue;
+    const signature = sharedSignatures.forDeclaration(declaration);
+    if (signature) signature.promotable = false;
+  }
+
   // Two rounds let parameter decisions made in imported modules flow back to
   // callers that were parsed earlier. Rewrites are deliberately idempotent.
   for (let round = 0; round < 2; round++) {
     for (const source of userSources) {
-      const result = optimizeSource(source, manifest, sharedSignatures);
+      const result = optimizeSource(
+        source,
+        manifest,
+        sharedSignatures,
+        sensitiveDeclarations,
+      );
       for (const changed of result.changedSources) changedSources.add(changed);
       if (round === 0) diagnostics.push(...result.diagnostics);
     }

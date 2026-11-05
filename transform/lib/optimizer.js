@@ -1,4 +1,8 @@
-import { callArgumentType, typeIsNullable } from "./type-resolution.js";
+import {
+  callArgumentType,
+  classDeclarationOfType,
+  typeIsNullable,
+} from "./type-resolution.js";
 import {
   FunctionSignatures,
   declaredCallSignature,
@@ -16,8 +20,10 @@ import {
   CommaExpression,
   ElementAccessExpression,
   ExpressionStatement,
+  FieldDeclaration,
   FunctionDeclaration,
   FunctionExpression,
+  FunctionTypeNode,
   IdentifierExpression,
   NewExpression,
   NamespaceDeclaration,
@@ -1122,10 +1128,182 @@ function sourceUsesViewName(source) {
   });
   return usesView;
 }
+function representationEffects(node, context) {
+  if (node instanceof PropertyAccessExpression) {
+    const targets = context.classes.accessorsOf(node, context);
+    return {
+      targets,
+      opaque: targets.some(
+        (target) =>
+          !target.body && admitSource(target.range.source).semanticFacts,
+      ),
+    };
+  }
+  if (node instanceof NewExpression) {
+    const declaration = classDeclarationOfType(
+      context.classes.typeOf(node, context),
+    );
+    return { targets: declaration ? [declaration] : [], opaque: false };
+  }
+  if (!(node instanceof CallExpression)) return { targets: [], opaque: false };
+  const target = context.classes.callableOf(node.expression, context);
+  return {
+    targets: target ? [target] : [],
+    opaque:
+      isUnsafeIntrinsic(node) ||
+      (target
+        ? !target.body && admitSource(target.range.source).semanticFacts
+        : (node.expression instanceof IdentifierExpression &&
+            (context.parameters.has(node.expression.text) ||
+              !!context.classes.declarationOf(node.expression, context))) ||
+          context.classes.typeOf(node.expression, context) instanceof
+            FunctionTypeNode),
+  };
+}
+function representationSensitiveDeclarations(sources) {
+  const contexts = new Map();
+  for (const source of sources) {
+    const classes = new SourceClassTypes(source);
+    walk(source, (node) => {
+      if (
+        !(
+          node instanceof ClassDeclaration ||
+          (node instanceof FunctionDeclaration && node.body)
+        )
+      )
+        return;
+      contexts.set(node, {
+        declaration: node instanceof FunctionDeclaration ? node : null,
+        className: classes.ownerOf(node),
+        classes,
+        bindings: new Map(),
+        globals: new Map(),
+        parameters: new Map(
+          node instanceof FunctionDeclaration
+            ? node.signature.parameters.map((parameter) => [
+                parameter.name.text,
+                representationOfType(parameter.type),
+              ])
+            : [],
+        ),
+        parameterSpans: new Map(),
+        lowercaseSpans: new Set(),
+        repeatedLowercaseReceivers: new Set(),
+        profitableLowercaseCalls: new Set(),
+        duplicateNames: new Set(),
+      });
+    });
+  }
+  const sensitive = new Set();
+  const callers = new Map();
+  const link = (caller, callee) => {
+    const incoming = callers.get(callee) ?? new Set();
+    incoming.add(caller);
+    callers.set(callee, incoming);
+  };
+  for (const [declaration, context] of contexts) {
+    const roots = [];
+    if (declaration instanceof FunctionDeclaration) {
+      roots.push(declaration.body);
+      for (const parameter of declaration.signature.parameters)
+        if (parameter.initializer) roots.push(parameter.initializer);
+    } else {
+      const parent = classDeclarationOfType(declaration.extendsType);
+      if (parent) link(declaration, parent);
+      for (const member of declaration.members) {
+        if (member instanceof FieldDeclaration && member.initializer)
+          roots.push(member.initializer);
+        if (
+          member instanceof FunctionDeclaration &&
+          member.name.text === "constructor"
+        ) {
+          if (member.body) link(declaration, member);
+          else sensitive.add(declaration);
+        }
+      }
+    }
+    for (const root of roots)
+      walk(root, (node) => {
+        if (node instanceof FunctionDeclaration) return false;
+        if (
+          !(
+            node instanceof CallExpression ||
+            node instanceof PropertyAccessExpression ||
+            node instanceof NewExpression
+          )
+        )
+          return;
+        const effects = representationEffects(node, context);
+        if (effects.opaque) sensitive.add(declaration);
+        for (const callee of effects.targets) link(declaration, callee);
+      });
+  }
+  for (const declaration of contexts.keys()) {
+    if (!(declaration instanceof ClassDeclaration)) continue;
+    const seen = new Set();
+    let parent = classDeclarationOfType(declaration.extendsType);
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      for (const method of declaration.members) {
+        if (
+          !(method instanceof FunctionDeclaration) ||
+          method.is(32) ||
+          method.name.text === "constructor"
+        )
+          continue;
+        for (const base of parent.members) {
+          if (
+            !(base instanceof FunctionDeclaration) ||
+            base.is(32) ||
+            base.name.text !== method.name.text
+          )
+            continue;
+          if (
+            base.is(2048) === method.is(2048) &&
+            base.is(4096) === method.is(4096)
+          )
+            link(base, method);
+        }
+      }
+      parent = classDeclarationOfType(parent.extendsType);
+    }
+  }
+  const pending = [...sensitive];
+  for (let i = 0; i < pending.length; i++) {
+    for (const caller of callers.get(pending[i]) ?? []) {
+      if (sensitive.has(caller)) continue;
+      sensitive.add(caller);
+      pending.push(caller);
+    }
+  }
+  return sensitive;
+}
+function hasSensitiveCalls(node, context, sensitive) {
+  let found = false;
+  walk(node, (child) => {
+    if (child instanceof FunctionDeclaration) return false;
+    if (
+      !(
+        child instanceof CallExpression ||
+        child instanceof PropertyAccessExpression ||
+        child instanceof NewExpression
+      )
+    )
+      return;
+    const effects = representationEffects(child, context);
+    if (
+      effects.opaque ||
+      effects.targets.some((callee) => sensitive.has(callee))
+    )
+      found = true;
+  });
+  return found;
+}
 export function optimizeSource(
   source,
   manifest = null,
   sharedSignatures = null,
+  sensitiveDeclarations = representationSensitiveDeclarations([source]),
 ) {
   const changedSources = new Set();
   const diagnostics = [];
@@ -1167,6 +1345,7 @@ export function optimizeSource(
       classes,
       globals,
     );
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     contexts.set(declaration, context);
     if (context.representationSensitive) {
       const signature = signatureForDeclaration(declaration, signatures);
@@ -1185,6 +1364,9 @@ export function optimizeSource(
     classes,
     duplicateNames: new Set(),
   };
+  sourceContext.representationSensitive =
+    functions.some((declaration) => sensitiveDeclarations.has(declaration)) ||
+    hasSensitiveCalls(source, sourceContext, sensitiveDeclarations);
   rewriteDeclarationBoundaries(source.statements, sourceContext, signatures);
   if (sourceContext.temporaryOwners?.length) {
     source.statements.unshift(...sourceContext.temporaryOwners);
@@ -1395,9 +1577,21 @@ export function optimizeSources(sources, manifest = null) {
       }
     });
   }
+  const sensitiveDeclarations =
+    representationSensitiveDeclarations(userSources);
+  for (const declaration of sensitiveDeclarations) {
+    if (!(declaration instanceof FunctionDeclaration)) continue;
+    const signature = sharedSignatures.forDeclaration(declaration);
+    if (signature) signature.promotable = false;
+  }
   for (let round = 0; round < 2; round++) {
     for (const source of userSources) {
-      const result = optimizeSource(source, manifest, sharedSignatures);
+      const result = optimizeSource(
+        source,
+        manifest,
+        sharedSignatures,
+        sensitiveDeclarations,
+      );
       for (const changed of result.changedSources) changedSources.add(changed);
       if (round === 0) diagnostics.push(...result.diagnostics);
     }

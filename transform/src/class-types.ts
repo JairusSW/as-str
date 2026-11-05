@@ -167,6 +167,7 @@ export class SourceClassTypes {
       } else if (member instanceof FunctionDeclaration) {
         if (member.isAny(CommonFlags.Get | CommonFlags.Set)) {
           const getter = member.is(CommonFlags.Get);
+          methods.set(`${getter ? "get" : "set"}:${key}`, member);
           const type = getter
             ? member.signature.returnType
             : (member.signature.parameters[0]?.type ?? null);
@@ -245,6 +246,24 @@ export class SourceClassTypes {
     context: FunctionContext,
   ): Representation {
     return this.propertyInfo(expression, context)?.representation ?? "unknown";
+  }
+
+  /** Accessors may execute user code even without an explicit call node. */
+  accessorsOf(
+    expression: PropertyAccessExpression,
+    context: FunctionContext,
+  ): FunctionDeclaration[] {
+    const owner = this.classOf(expression.expression, context, new Set());
+    if (!owner || this.ambiguous.has(owner)) return [];
+    const key = this.memberKey(
+      expression.property.text,
+      expression.expression,
+      context,
+    );
+    const methods = this.classes.get(owner)?.methods;
+    return [methods?.get(`get:${key}`), methods?.get(`set:${key}`)].filter(
+      (method): method is FunctionDeclaration => !!method,
+    );
   }
 
   typeOf(expression: Expression, context: FunctionContext): TypeNode | null {

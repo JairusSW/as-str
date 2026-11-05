@@ -274,6 +274,7 @@ export function recordOriginalViewReceivers(node, context, signatures) {
 function convertExpression(expression, expected, context, signatures) {
   if (expression instanceof NullExpression) return expression;
   if (
+    !context.representationSensitive &&
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
     expression.expression instanceof CallExpression
@@ -354,6 +355,15 @@ function convertExpression(expression, expected, context, signatures) {
   return expression;
 }
 function rewriteExpression(expression, expected, context, signatures) {
+  if (
+    context.representationSensitive &&
+    expected === "view" &&
+    expressionRepresentation(expression, context, signatures) === "native"
+  ) {
+    return wrapAsView(
+      rewriteExpression(expression, "native", context, signatures),
+    );
+  }
   if (
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
@@ -470,7 +480,7 @@ function rewriteExpression(expression, expected, context, signatures) {
               ).spanProducing
             ? expression.right
             : null;
-      if (directView) {
+      if (directView && !context.representationSensitive) {
         const parts = viewCallParts(directView);
         if (
           parts &&
@@ -860,13 +870,20 @@ function rewriteExpression(expression, expected, context, signatures) {
             const capture = Node.createBinaryExpression(
               101,
               owner(),
-              rewriteExpression(parts.receiver, "native", context, signatures),
+              rewriteExpression(
+                context.representationSensitive ? argument : parts.receiver,
+                "native",
+                context,
+                signatures,
+              ),
               range,
             );
             const span = staticViewCall(
-              `${operationSemantics(parts.method).normalizedSpanName}Span`,
+              context.representationSensitive
+                ? "sliceSpan"
+                : `${operationSemantics(parts.method).normalizedSpanName}Span`,
               owner(),
-              parts.args,
+              context.representationSensitive ? [] : parts.args,
             );
             rewrittenArgs.push(
               Node.createCommaExpression(

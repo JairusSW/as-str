@@ -319,6 +319,7 @@ function convertExpression(
   if (expression instanceof NullExpression) return expression;
 
   if (
+    !context.representationSensitive &&
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
     expression.expression instanceof CallExpression
@@ -408,6 +409,18 @@ function rewriteExpression(
   context: FunctionContext,
   signatures: FunctionSignatures,
 ): Expression {
+  // Native substrings are snapshots. A caller that can observe or mutate raw
+  // memory must evaluate the native operation before wrapping its result.
+  if (
+    context.representationSensitive &&
+    expected === "view" &&
+    expressionRepresentation(expression, context, signatures) === "native"
+  ) {
+    return wrapAsView(
+      rewriteExpression(expression, "native", context, signatures),
+    );
+  }
+
   if (
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
@@ -531,7 +544,7 @@ function rewriteExpression(
               ).spanProducing
             ? expression.right
             : null;
-      if (directView) {
+      if (directView && !context.representationSensitive) {
         const parts = viewCallParts(directView);
         if (
           parts &&
@@ -934,13 +947,20 @@ function rewriteExpression(
             const capture = Node.createBinaryExpression(
               Token.Equals,
               owner(),
-              rewriteExpression(parts.receiver, "native", context, signatures),
+              rewriteExpression(
+                context.representationSensitive ? argument : parts.receiver,
+                "native",
+                context,
+                signatures,
+              ),
               range,
             );
             const span = staticViewCall(
-              `${operationSemantics(parts.method).normalizedSpanName}Span`,
+              context.representationSensitive
+                ? "sliceSpan"
+                : `${operationSemantics(parts.method).normalizedSpanName}Span`,
               owner(),
-              parts.args,
+              context.representationSensitive ? [] : parts.args,
             );
             rewrittenArgs.push(
               Node.createCommaExpression(

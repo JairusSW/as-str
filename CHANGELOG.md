@@ -15,6 +15,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Support nullable view equality, positioned `includes`, and omitted or null
   separators in the manual `split` API.
 - Preserve native lowercase allocation identity across function boundaries.
+- Rewrite promoted calls inside computed callees and function-returning calls,
+  preserving callee-before-argument evaluation order.
+- Preserve native substring snapshots across raw-memory callees and accessors,
+  virtual overrides, opaque callbacks, host calls, and constructor initialization. Sensitive packed calls
+  capture a native snapshot before evaluating later arguments.
 - Bound long-needle substring verification with an allocation-free Two-Way
   fallback for both UTF-16 and UTF-8, in both search directions.
 - Index local and packed-parameter uses instead of walking the function for each

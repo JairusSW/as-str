@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import { compileFixture, instantiate } from "./harness.mjs";
 const cases = {
+  "virtual-effects": { run: 1, baseControl: 0, constructorDispatch: 1 },
+  "mutating-call": {
+    direct: 1,
+    local: 1,
+    laterArgument: 1,
+    scalarArgument: 98,
+    afterStatement: 1,
+    callbackArray: 1,
+    callbackArgument: 1,
+    genericArgument: 1,
+    getter: 1,
+    setter: 1,
+    imported: 1,
+    constructed: 1,
+    returnedCallback: 1,
+    manualView: 1,
+    fieldInitializer: 1,
+    defaultEffect: 1,
+    inheritedConstructor: 1,
+  },
   "callee-containers": {
     callResult: 3,
     indexedCallee: 3,

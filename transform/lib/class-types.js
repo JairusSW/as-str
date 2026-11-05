@@ -136,6 +136,7 @@ export class SourceClassTypes {
       } else if (member instanceof FunctionDeclaration) {
         if (member.isAny(2048 | 4096)) {
           const getter = member.is(2048);
+          methods.set(`${getter ? "get" : "set"}:${key}`, member);
           const type = getter
             ? member.signature.returnType
             : (member.signature.parameters[0]?.type ?? null);
@@ -195,6 +196,19 @@ export class SourceClassTypes {
   }
   propertyOf(expression, context) {
     return this.propertyInfo(expression, context)?.representation ?? "unknown";
+  }
+  accessorsOf(expression, context) {
+    const owner = this.classOf(expression.expression, context, new Set());
+    if (!owner || this.ambiguous.has(owner)) return [];
+    const key = this.memberKey(
+      expression.property.text,
+      expression.expression,
+      context,
+    );
+    const methods = this.classes.get(owner)?.methods;
+    return [methods?.get(`get:${key}`), methods?.get(`set:${key}`)].filter(
+      (method) => !!method,
+    );
   }
   typeOf(expression, context) {
     return expandedType(this.declaredType(expression, context, new Set()));
