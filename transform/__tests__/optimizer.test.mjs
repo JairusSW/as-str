@@ -129,33 +129,28 @@ const repeatedNativeLowercase = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/repeatedNativeLowercase",
 );
-assert.equal(
-  (
-    repeatedNativeLowercase.match(
-      /call \$assembly\/str\/Str\.toLowerCaseIfNeeded/g,
-    ) ?? []
-  ).length,
-  2,
+assert.match(
+  repeatedNativeLowercase,
+  /call \$~lib\/string\/String#toLowerCase/,
 );
+assert.doesNotMatch(repeatedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
 
 const reusedLowercaseResult = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/reusedLowercaseResult",
 );
-assert.equal(
-  (
-    reusedLowercaseResult.match(
-      /call \$assembly\/str\/Str\.toLowerCaseIfNeeded/g,
-    ) ?? []
-  ).length,
-  1,
-);
+assert.match(reusedLowercaseResult, /call \$~lib\/string\/String#toLowerCase/);
+assert.doesNotMatch(reusedLowercaseResult, /Str\.toLowerCaseIfNeeded/);
 
 const returnedNativeLowercase = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/returnedNativeLowercase",
 );
-assert.match(returnedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
+assert.match(
+  returnedNativeLowercase,
+  /call \$~lib\/string\/String#toLowerCase/,
+);
+assert.doesNotMatch(returnedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
 
 const slicedNativeLowercase = functionBody(
   local.wat,

@@ -3,7 +3,7 @@
 ╩ ╩╚═╝  ╚═╝ ╩ ╩╚═</pre></h1>
 
 <p align="center">
-  Virtual, drop-in, zero-copy strings for AssemblyScript: slice, search, and trim without allocating. Analogous to Rust's <a href="https://doc.rust-lang.org/std/primitive.str.html">string slice</a>.
+  Virtual, drop-in, zero-copy strings for AssemblyScript: slice, search, and trim without copying character data. Analogous to Rust's <a href="https://doc.rust-lang.org/std/primitive.str.html">string slice</a>.
 </p>
 
 <details>
@@ -157,9 +157,9 @@ substring nor a `Str` wrapper.
 The optimizer leaves values native around raw loads, pointer casts, explicit
 assertions, native-string call parameters, unknown calls, containers, fields,
 nullable boundaries, and other operations it cannot prove safe.
-It also avoids repeated native allocations for profitable `toLowerCase()`
-receivers that are already lowercase ASCII, while retaining the normal
-Unicode-aware result for uppercase or non-ASCII input.
+Native `toLowerCase()` calls retain native allocation behavior, including when
+the result escapes to another function. Explicit views can use the lowercase
+helper, which reuses already lowercase ASCII input.
 
 Local overrides use comments because AssemblyScript does not allow decorators
 on local variables:
@@ -240,7 +240,7 @@ import { str } from "as-str";
 
 const real: string = "GET /index.html 200 1043";
 
-// Wrap once (zero-copy); every op below is a pointer move, not an allocation.
+// Wrap once (zero-copy); creating each view allocates a small wrapper.
 const req: str = str.from(real);
 
 const method = req.slice(0, req.indexOf(" ")); // "GET" - a view
@@ -255,15 +255,18 @@ req.includes("200"); // true
 whole API: the instance methods **and** the static free functions
 (`str.slice(s, …)`) live on it. It carries the **full native `String`
 surface** (`slice`, `indexOf`, `trim`, `split`, `replace`, `toUpperCase`, …) plus
-operators, so it reads like `string` but allocates only at the boundary where you
-ask for an owned string back.
+operators. Manual view creation allocates a small wrapper; `toString()` also
+allocates and copies character data when materialization is needed.
 
 ## Examples
 
 ### Slicing and Trimming Without Copying
 
-View-producing methods return another `str` - no allocation, no copy. The
-backing string is shared, and chains of views always anchor to the original.
+View-producing methods return another `str`, allocating a wrapper without copying
+characters. The backing string is shared, and chains of views always anchor to
+the original. Allocation-free views require transform lowering to scalar values
+or packed spans. For example, `str.slice(s, 1, 3)` allocates one wrapper and
+`str.from(s).slice(1, 3)` allocates two.
 
 ```typescript
 const v = str.from("  the quick brown fox  ").trim(); // view, no copy

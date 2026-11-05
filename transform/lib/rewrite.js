@@ -10,6 +10,7 @@ import {
   NullExpression,
   DoStatement,
   ElementAccessExpression,
+  Expression,
   ExpressionStatement,
   FieldDeclaration,
   ForOfStatement,
@@ -86,17 +87,6 @@ function viewCallParts(expression) {
     args: expression.args,
   };
 }
-function nativeLowercaseBenefitsFromViewHelper(call, receiver, context) {
-  if (context.profitableLowercaseCalls.has(call.range.start)) return true;
-  if (receiver instanceof IdentifierExpression) {
-    return context.repeatedLowercaseReceivers.has(receiver.text);
-  }
-  if (!(receiver instanceof CallExpression)) return false;
-  const property = propertyCall(receiver);
-  return (
-    !property || operationSemantics(property.property.text).result !== "view"
-  );
-}
 function bindingRepresentation(expression, context, signatures) {
   const name = expression.text;
   if (context.duplicateNames.has(name)) {
@@ -118,10 +108,7 @@ function bindingRepresentation(expression, context, signatures) {
     }
   }
   const binding = context.bindings.get(name);
-  if (!binding)
-    return (
-      context.parameters.get(name) ?? context.globals?.get(name) ?? "unknown"
-    );
+  if (!binding) return context.parameters.get(name) ?? "unknown";
   if (binding.decision !== "unknown") return binding.decision;
   return binding.declared === "unknown" ? binding.semantic : binding.declared;
 }
@@ -767,13 +754,7 @@ function rewriteExpression(expression, expected, context, signatures) {
       if (
         method === "toLowerCase" &&
         !context.representationSensitive &&
-        (originalReceiverRepresentation === "view" ||
-          (originalReceiverRepresentation === "native" &&
-            nativeLowercaseBenefitsFromViewHelper(
-              expression,
-              property.expression,
-              context,
-            )))
+        originalReceiverRepresentation === "view"
       ) {
         return convertExpression(
           staticViewCall(
@@ -953,6 +934,16 @@ function rewriteExpression(expression, expected, context, signatures) {
     );
     return convertExpression(expression, expected, context, signatures);
   }
+  walk(expression, (node, ref) => {
+    if (node === expression) return;
+    if (!(node instanceof Expression) || ref.key === "names") return false;
+    const rewritten = rewriteExpression(node, "unknown", context, signatures);
+    const parent = ref.parent;
+    const value = parent[ref.key];
+    if (Array.isArray(value)) value[value.indexOf(node)] = rewritten;
+    else parent[ref.key] = rewritten;
+    return false;
+  });
   return convertExpression(expression, expected, context, signatures);
 }
 export function rewriteStatement(statement, context, signatures) {

@@ -29,6 +29,8 @@ import {
   ParenthesizedExpression,
   PropertyAccessExpression,
   StringLiteralExpression,
+  SwitchCase,
+  SwitchStatement,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { representationOfType, viewType } from "./ast.js";
@@ -59,13 +61,19 @@ export class SourceClassTypes {
         end: node.range.end,
       });
     });
+    const switchScopes = new Map();
+    walk(source, (node, ref) => {
+      if (node instanceof SwitchCase && ref.parent instanceof SwitchStatement)
+        switchScopes.set(node, ref.parent);
+    });
     walk(source, (node, ref) => {
       if (node instanceof VariableDeclaration) {
-        const scope = ref.grandparent;
+        const scope = switchScopes.get(ref.grandparent) ?? ref.grandparent;
         if (
           scope instanceof BlockStatement ||
           scope instanceof ForStatement ||
-          scope instanceof ForOfStatement
+          scope instanceof ForOfStatement ||
+          scope instanceof SwitchStatement
         ) {
           const list = this.variables.get(node.name.text) ?? [];
           list.push({ declaration: node, scope });

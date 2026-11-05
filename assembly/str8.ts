@@ -552,8 +552,8 @@ import { Str } from "./str";
   }
 
   /** Whether the view contains `search`. */
-  includes<U>(search: U): bool {
-    return this.indexOf(search) != -1;
+  includes<U>(search: U, position: i32 = 0): bool {
+    return this.indexOf(search, position) != -1;
   }
 
   /** View before the first `search`, or empty if absent. */
@@ -636,7 +636,7 @@ import { Str } from "./str";
 
   /** `a == b` - content equality against another view. */
   // @ts-ignore: decorator
-  @operator("==") equals(other: Str8): bool {
+  equals(other: Str8): bool {
     return rangeEquals(this.start, this.end, other.start, other.end);
   }
 
@@ -705,7 +705,7 @@ import { Str } from "./str";
    *                    single codepoints.
    * @param limit     - maximum pieces; negative values mean unlimited, as in String.
    */
-  split(separator: string, limit: i32 = i32.MAX_VALUE): Str8[] {
+  split(separator: string | null = null, limit: i32 = i32.MAX_VALUE): Str8[] {
     return Str8.split<Str8>(this, separator, limit);
   }
 
@@ -721,8 +721,25 @@ import { Str } from "./str";
 
   /** `a != b` - content inequality of two views. */
   // @ts-ignore: decorator
-  @operator("!=") notEquals(other: Str8): bool {
+  notEquals(other: Str8): bool {
     return !this.equals(other);
+  }
+
+  // Operators accept nullable views so ordinary guards and nullable content
+  // comparisons have the same null behavior as native strings.
+  // @ts-ignore: decorator
+  @operator("==") static operatorEquals(a: Str8 | null, b: Str8 | null): bool {
+    if (changetype<usize>(a) == changetype<usize>(b)) return true;
+    if (!changetype<usize>(a) || !changetype<usize>(b)) return false;
+    return a!.equals(b!);
+  }
+
+  // @ts-ignore: decorator
+  @operator("!=") static operatorNotEquals(
+    a: Str8 | null,
+    b: Str8 | null,
+  ): bool {
+    return !Str8.operatorEquals(a, b);
   }
 
   /** `a < b` - `true` if this view sorts before `other` by byte (codepoint) order. */
@@ -945,8 +962,8 @@ import { Str } from "./str";
   }
 
   /** Free-function form of {@link Str8#includes}. */
-  static includes<T, U>(s: T, search: U): bool {
-    return Str8.indexOf(s, search) != -1;
+  static includes<T, U>(s: T, search: U, position: i32 = 0): bool {
+    return Str8.indexOf(s, search, position) != -1;
   }
 
   /** Free-function form of {@link Str8#before}. */
@@ -1238,7 +1255,11 @@ import { Str } from "./str";
   }
 
   /** Free-function form of {@link Str8#split}. */
-  static split<T>(s: T, separator: string, limit: i32 = i32.MAX_VALUE): Str8[] {
+  static split<T>(
+    s: T,
+    separator: string | null = null,
+    limit: i32 = i32.MAX_VALUE,
+  ): Str8[] {
     const v = asView(s);
     const buffer = v.buffer;
     const start = v.start;
@@ -1247,6 +1268,10 @@ import { Str } from "./str";
     if (limit == 0) return out;
     if (limit < 0) limit = i32.MAX_VALUE;
 
+    if (separator === null) {
+      out.push(new Str8(buffer, start, end));
+      return out;
+    }
     if (separator.length == 0) {
       let p = start;
       while (p < end && out.length < limit) {
@@ -1818,7 +1843,7 @@ export namespace str8 {
   }
   export function split<T>(
     s: T,
-    separator: string,
+    separator: string | null = null,
     limit: i32 = i32.MAX_VALUE,
   ): Str8[] {
     return Str8.split<T>(s, separator, limit);
@@ -1860,8 +1885,8 @@ export namespace str8 {
   ): i32 {
     return Str8.lastIndexOf<T, U>(s, search, start);
   }
-  export function includes<T, U>(s: T, search: U): bool {
-    return Str8.includes<T, U>(s, search);
+  export function includes<T, U>(s: T, search: U, position: i32 = 0): bool {
+    return Str8.includes<T, U>(s, search, position);
   }
   export function before<T, U>(s: T, search: U): Str8 {
     return Str8.before<T, U>(s, search);

@@ -108,22 +108,6 @@ function viewCallParts(expression: CallExpression): {
   };
 }
 
-function nativeLowercaseBenefitsFromViewHelper(
-  call: CallExpression,
-  receiver: Expression,
-  context: FunctionContext,
-): boolean {
-  if (context.profitableLowercaseCalls.has(call.range.start)) return true;
-  if (receiver instanceof IdentifierExpression) {
-    return context.repeatedLowercaseReceivers.has(receiver.text);
-  }
-  if (!(receiver instanceof CallExpression)) return false;
-  const property = propertyCall(receiver);
-  return (
-    !property || operationSemantics(property.property.text).result !== "view"
-  );
-}
-
 function bindingRepresentation(
   expression: IdentifierExpression,
   context: FunctionContext,
@@ -149,10 +133,7 @@ function bindingRepresentation(
     }
   }
   const binding = context.bindings.get(name);
-  if (!binding)
-    return (
-      context.parameters.get(name) ?? context.globals?.get(name) ?? "unknown"
-    );
+  if (!binding) return context.parameters.get(name) ?? "unknown";
   if (binding.decision !== "unknown") return binding.decision;
   return binding.declared === "unknown" ? binding.semantic : binding.declared;
 }
@@ -843,13 +824,7 @@ function rewriteExpression(
       if (
         method === "toLowerCase" &&
         !context.representationSensitive &&
-        (originalReceiverRepresentation === "view" ||
-          (originalReceiverRepresentation === "native" &&
-            nativeLowercaseBenefitsFromViewHelper(
-              expression,
-              property.expression,
-              context,
-            )))
+        originalReceiverRepresentation === "view"
       ) {
         return convertExpression(
           staticViewCall(
@@ -1036,6 +1011,19 @@ function rewriteExpression(
     return convertExpression(expression, expected, context, signatures);
   }
 
+  // Keep traversal aligned with planning, including constructor arguments,
+  // array/object literals, and template substitutions. Each child expression
+  // owns its recursive rewrite; declarations and types are separate scopes.
+  walk(expression, (node, ref): boolean | void => {
+    if (node === expression) return;
+    if (!(node instanceof Expression) || ref.key === "names") return false;
+    const rewritten = rewriteExpression(node, "unknown", context, signatures);
+    const parent = ref.parent as unknown as Record<string, unknown>;
+    const value = parent[ref.key!];
+    if (Array.isArray(value)) value[value.indexOf(node)] = rewritten;
+    else parent[ref.key!] = rewritten;
+    return false;
+  });
   return convertExpression(expression, expected, context, signatures);
 }
 

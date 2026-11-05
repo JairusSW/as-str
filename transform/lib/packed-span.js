@@ -120,6 +120,18 @@ export function planPackedSpanParameters(context, signature) {
     declaration.signature.parameters.forEach((parameter, index) => {
       if (signature.spanParameters.has(index)) return;
       if (representationOfType(parameter.type) !== "native") return;
+      let usedInDefault = false;
+      for (const other of declaration.signature.parameters) {
+        walk(other.initializer, (node, ref) => {
+          if (
+            node instanceof IdentifierExpression &&
+            node.text === parameter.name.text &&
+            !isDeclarationIdentifier(node, ref)
+          )
+            usedInDefault = true;
+        });
+      }
+      if (usedInDefault) return;
       const packed = parameterCanUsePackedSpan(
         body,
         parameter.name.text,
