@@ -29,6 +29,7 @@ import {
   UnaryPostfixExpression,
   UnaryPrefixExpression,
   VariableStatement,
+  VoidStatement,
   WhileStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
@@ -1011,7 +1012,10 @@ export function rewriteStatement(statement, context, signatures) {
     }
     return;
   }
-  if (statement instanceof ExpressionStatement) {
+  if (
+    statement instanceof ExpressionStatement ||
+    statement instanceof VoidStatement
+  ) {
     statement.expression = rewriteExpression(
       statement.expression,
       "unknown",
@@ -1175,6 +1179,8 @@ export function rewriteDeclarationBoundaries(statements, context, signatures) {
     }
     if (statement instanceof NamespaceDeclaration) {
       rewriteDeclarationBoundaries(statement.members, context, signatures);
+      continue;
     }
+    rewriteStatement(statement, context, signatures);
   }
 }

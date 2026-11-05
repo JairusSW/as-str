@@ -16,6 +16,8 @@ const cases = {
   scope: { switchShadow: 3, namespaceShadow: 73 },
   containers: {
     constructed: 3,
+    topLevel: 3,
+    voidStatement: 3,
     objectLiteral: 3,
     template: 1,
     callDefault: 3,

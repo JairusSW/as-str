@@ -34,6 +34,7 @@ import {
   UnaryPostfixExpression,
   UnaryPrefixExpression,
   VariableStatement,
+  VoidStatement,
   WhileStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
@@ -1096,7 +1097,10 @@ export function rewriteStatement(
     }
     return;
   }
-  if (statement instanceof ExpressionStatement) {
+  if (
+    statement instanceof ExpressionStatement ||
+    statement instanceof VoidStatement
+  ) {
     statement.expression = rewriteExpression(
       statement.expression,
       "unknown",
@@ -1265,6 +1269,10 @@ export function rewriteDeclarationBoundaries(
     }
     if (statement instanceof NamespaceDeclaration) {
       rewriteDeclarationBoundaries(statement.members, context, signatures);
+      continue;
     }
+    // Module initialization can contain calls and control flow as well as
+    // declarations. These call sites must follow promoted helper signatures.
+    rewriteStatement(statement, context, signatures);
   }
 }

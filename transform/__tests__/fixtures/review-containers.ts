@@ -36,3 +36,15 @@ function withDefault(value: i32 = measureInDefault("abcdef".slice(1, 4))): i32 {
 export function callDefault(): i32 {
   return withDefault();
 }
+export function voidStatement(): i32 {
+  void measure("abcdef".slice(1, 4));
+  return 3;
+}
+let topValue: i32 = 0;
+function record(value: string): void {
+  topValue = value.length;
+}
+record("abcdef".slice(1, 4));
+export function topLevel(): i32 {
+  return topValue;
+}
