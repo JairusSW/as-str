@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { compileFixture, instantiate } from "./harness.mjs";
 const cases = {
+  "callee-containers": {
+    callResult: 3,
+    indexedCallee: 3,
+    commaCallee: 3,
+    calleeOrder: 12343,
+    indexOrder: 1243,
+  },
   "switch-cases": {
     localCase: 2,
     defaultCase: 3,

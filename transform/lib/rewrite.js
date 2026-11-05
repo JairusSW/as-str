@@ -811,6 +811,12 @@ function rewriteExpression(expression, expected, context, signatures) {
         declaredCallSignature(expression, context, signatures) ??
         signatureForCall(expression, context, signatures);
       const callbackType = declaredCallType(expression, context);
+      expression.expression = rewriteExpression(
+        expression.expression,
+        "unknown",
+        context,
+        signatures,
+      );
       const rewrittenArgs = [];
       expression.args.forEach((argument, index) => {
         if (

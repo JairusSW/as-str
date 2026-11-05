@@ -883,6 +883,14 @@ function rewriteExpression(
         declaredCallSignature(expression, context, signatures) ??
         signatureForCall(expression, context, signatures);
       const callbackType = declaredCallType(expression, context);
+      // Resolve the original signature before rewriting the callee. Function
+      // results and indexed callbacks can themselves contain promoted calls.
+      expression.expression = rewriteExpression(
+        expression.expression,
+        "unknown",
+        context,
+        signatures,
+      );
       const rewrittenArgs: Expression[] = [];
       expression.args.forEach((argument, index) => {
         if (
