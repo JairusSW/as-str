@@ -38,7 +38,7 @@ import {
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { Representation, representationOfType, viewType } from "./ast.js";
-import type { FunctionContext } from "./model.js";
+import type { Binding, FunctionContext } from "./model.js";
 import { walk } from "./visitor.js";
 
 interface PropertyInfo {
@@ -215,6 +215,16 @@ export class SourceClassTypes {
     context: FunctionContext,
   ): VariableDeclaration | undefined {
     return this.localVariable(expression.text, expression.range.start, context);
+  }
+
+  bindingOf(
+    expression: IdentifierExpression,
+    context: FunctionContext,
+  ): Binding | undefined {
+    const binding = context.bindings.get(expression.text);
+    return binding?.declaration === this.declarationOf(expression, context)
+      ? binding
+      : undefined;
   }
 
   globalDeclarationOf(

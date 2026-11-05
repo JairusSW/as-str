@@ -216,7 +216,8 @@ export function expressionRepresentation(
     const type = context.classes.typeOf(expression, context);
     if (type) return representationOfType(type);
     return expression.expression instanceof IdentifierExpression
-      ? (context.bindings.get(expression.expression.text)?.element ?? "unknown")
+      ? (context.classes.bindingOf(expression.expression, context)?.element ??
+          "unknown")
       : "unknown";
   }
   if (expression instanceof AssertionExpression) {
@@ -246,7 +247,10 @@ export function expressionRepresentation(
       property.expression instanceof IdentifierExpression &&
       ["pop", "shift", "at"].includes(property.property.text)
     ) {
-      const element = context.bindings.get(property.expression.text)?.element;
+      const element = context.classes.bindingOf(
+        property.expression,
+        context,
+      )?.element;
       if (element && element !== "unknown") return element;
     }
     if (
@@ -408,9 +412,7 @@ function rewriteExpression(
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
     expression.expression instanceof IdentifierExpression &&
-    context.bindings.get(expression.expression.text)?.scalarizedLength &&
-    context.classes.declarationOf(expression.expression, context) ===
-      context.bindings.get(expression.expression.text)?.declaration
+    context.classes.bindingOf(expression.expression, context)?.scalarizedLength
   ) {
     return expression.expression;
   }
@@ -774,7 +776,7 @@ function rewriteExpression(
       const containerElement = containerType
         ? elementRepresentationOfType(containerType)
         : property.expression instanceof IdentifierExpression
-          ? (context.bindings.get(property.expression.text)?.element ??
+          ? (context.classes.bindingOf(property.expression, context)?.element ??
             "unknown")
           : "unknown";
       let receiverExpected: Representation = "unknown";

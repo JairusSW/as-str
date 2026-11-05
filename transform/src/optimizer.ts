@@ -851,7 +851,7 @@ function reasonForUse(
         parent.right === node &&
         parent.left instanceof IdentifierExpression
       ) {
-        const target = context.bindings.get(parent.left.text);
+        const target = context.classes.bindingOf(parent.left, context);
         if (target?.candidate || target?.declared === "view") return null;
         return target?.declared === "native"
           ? "assignment to native string"
@@ -944,7 +944,7 @@ function derivedViewUseReason(
       parent.right === call &&
       parent.left instanceof IdentifierExpression
     ) {
-      const target = context.bindings.get(parent.left.text);
+      const target = context.classes.bindingOf(parent.left, context);
       if (target?.candidate || target?.declared === "view") return null;
       return target?.declared === "native" || target?.semantic === "native"
         ? "derived view assigned to native string"
@@ -966,7 +966,7 @@ function candidateReceiver(
 ): Binding | null {
   const root = viewReceiverRoot(expression);
   if (!root) return null;
-  const binding = context.bindings.get(root.text);
+  const binding = context.classes.bindingOf(root, context);
   return binding?.candidate ? binding : null;
 }
 
@@ -993,7 +993,7 @@ function analyzeCandidates(
       isDeclarationIdentifier(node, ref)
     )
       return;
-    const binding = context.bindings.get(node.text);
+    const binding = context.classes.bindingOf(node, context);
     if (
       !binding ||
       context.classes.declarationOf(node, context) !== binding.declaration
@@ -1054,7 +1054,7 @@ function analyzeCandidates(
     ) {
       return;
     }
-    const binding = context.bindings.get(node.text);
+    const binding = context.classes.bindingOf(node, context);
     if (!binding?.candidate || node === binding.declaration.name) return;
     binding.uses++;
     const reason = reasonForUse(node, ref, context, signatures);
@@ -1150,7 +1150,7 @@ function analyzeCandidates(
         continue;
       const receiverBinding =
         receiver instanceof IdentifierExpression
-          ? context.bindings.get(receiver.text)
+          ? context.classes.bindingOf(receiver, context)
           : null;
       const owner =
         receiverBinding?.scalarizedSpan && receiverBinding.packedSpan
@@ -1224,7 +1224,7 @@ function analyzeCandidates(
         ? binding.declaration.initializer.args[0]
         : parts.expression;
       if (!(receiver instanceof IdentifierExpression)) continue;
-      const receiverBinding = context.bindings.get(receiver.text);
+      const receiverBinding = context.classes.bindingOf(receiver, context);
       if (
         receiverBinding?.scalarizedSpan &&
         receiverBinding.packedSpan &&

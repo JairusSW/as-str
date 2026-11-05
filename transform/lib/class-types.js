@@ -178,6 +178,12 @@ export class SourceClassTypes {
   declarationOf(expression, context) {
     return this.localVariable(expression.text, expression.range.start, context);
   }
+  bindingOf(expression, context) {
+    const binding = context.bindings.get(expression.text);
+    return binding?.declaration === this.declarationOf(expression, context)
+      ? binding
+      : undefined;
+  }
   globalDeclarationOf(expression, context) {
     if (
       this.declarationOf(expression, context) ||

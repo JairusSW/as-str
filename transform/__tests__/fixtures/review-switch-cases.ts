@@ -75,3 +75,18 @@ export function caseLabel(): i32 {
       return 9;
   }
 }
+const token: string = "hello";
+function spans(flag: bool): i32 {
+  if (flag) {
+    const token = "abc".slice(1);
+    return token.charCodeAt(0);
+  }
+  const second = token.slice(1);
+  return second.charCodeAt(0);
+}
+export function insideSpan(): i32 {
+  return spans(true);
+}
+export function outsideSpan(): i32 {
+  return spans(false);
+}

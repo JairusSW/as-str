@@ -10,6 +10,8 @@ const cases = {
     insideBlock: 2,
     outsideBlock: 8,
     caseLabel: 3,
+    insideSpan: 98,
+    outsideSpan: 101,
   },
   manual: { run: 1 },
   nullable: { run: 1 },

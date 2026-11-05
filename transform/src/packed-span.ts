@@ -277,7 +277,7 @@ export function lowerPackedSpanInitializer(
   const method = operationSemantics(parts.method).normalizedSpanName;
   if (
     parts.receiver instanceof IdentifierExpression &&
-    context.bindings.get(parts.receiver.text)?.scalarizedSpan
+    context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan
   ) {
     return staticViewCall(`${method}SpanOf`, parts.receiver, parts.args);
   }
@@ -294,9 +294,9 @@ export function lowerPackedLengthInitializer(
   }
   if (
     parts.receiver instanceof IdentifierExpression &&
-    context.bindings.get(parts.receiver.text)?.scalarizedSpan
+    context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan
   ) {
-    const receiver = context.bindings.get(parts.receiver.text)!;
+    const receiver = context.classes.bindingOf(parts.receiver, context)!;
     const span = staticViewCall(
       `${operationSemantics(parts.method).normalizedSpanName}SpanOf`,
       parts.receiver,
