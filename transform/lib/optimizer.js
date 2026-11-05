@@ -20,6 +20,7 @@ import {
   FunctionExpression,
   IdentifierExpression,
   NewExpression,
+  NamespaceDeclaration,
   ParenthesizedExpression,
   PropertyAccessExpression,
   ReturnStatement,
@@ -27,7 +28,6 @@ import {
   ThrowStatement,
   StringLiteralExpression,
   VariableDeclaration,
-  VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
@@ -595,31 +595,27 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
 }
 function collectGlobalRepresentations(source, facts) {
   const globals = new Map();
-  for (const fact of facts.values()) {
-    if (fact.kind !== "global") continue;
+  walk(source, (node, ref) => {
+    if (
+      !(node instanceof VariableDeclaration) ||
+      (ref.grandparent !== source &&
+        !(ref.grandparent instanceof NamespaceDeclaration))
+    )
+      return;
+    const fact = facts.get(`global:${node.range.start}`);
+    const declared = representationOfType(node.type);
     globals.set(
-      fact.name,
-      globals.has(fact.name) ? "unknown" : fact.representation,
-    );
-  }
-  for (const statement of source.statements) {
-    if (!(statement instanceof VariableStatement)) continue;
-    for (const declaration of statement.declarations) {
-      const name = declaration.name.text;
-      const declared = representationOfType(declaration.type);
-      if (!globals.has(name))
-        globals.set(
-          name,
-          typeIsNullable(declaration.type)
-            ? "unknown"
-            : declared !== "unknown"
+      node,
+      typeIsNullable(node.type) || fact?.nullable
+        ? "unknown"
+        : (fact?.representation ??
+            (declared !== "unknown"
               ? declared
-              : declaration.initializer instanceof StringLiteralExpression
+              : node.initializer instanceof StringLiteralExpression
                 ? "native"
-                : "unknown",
-        );
-    }
-  }
+                : "unknown")),
+    );
+  });
   return globals;
 }
 function expectedCallArgument(call, index, signatures, context) {

@@ -23,6 +23,7 @@ import {
   FunctionExpression,
   IdentifierExpression,
   NewExpression,
+  NamespaceDeclaration,
   ParenthesizedExpression,
   ParameterKind,
   PropertyAccessExpression,
@@ -34,7 +35,6 @@ import {
   Token,
   StringLiteralExpression,
   VariableDeclaration,
-  VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
@@ -524,7 +524,7 @@ function collectLocalBindings(
   declaration: FunctionDeclaration,
   semanticFacts: Map<string, SemanticFact>,
   classes: SourceClassTypes,
-  globals: Map<string, Representation>,
+  globals: Map<VariableDeclaration, Representation>,
 ): FunctionContext {
   const bindings = new Map<string, Binding>();
   const parameters = new Map<string, Representation>();
@@ -710,33 +710,29 @@ function collectLocalBindings(
 function collectGlobalRepresentations(
   source: Source,
   facts: Map<string, SemanticFact>,
-): Map<string, Representation> {
-  const globals = new Map<string, Representation>();
-  for (const fact of facts.values()) {
-    if (fact.kind !== "global") continue;
+): Map<VariableDeclaration, Representation> {
+  const globals = new Map<VariableDeclaration, Representation>();
+  walk(source, (node, ref) => {
+    if (
+      !(node instanceof VariableDeclaration) ||
+      (ref.grandparent !== source &&
+        !(ref.grandparent instanceof NamespaceDeclaration))
+    )
+      return;
+    const fact = facts.get(`global:${node.range.start}`);
+    const declared = representationOfType(node.type);
     globals.set(
-      fact.name,
-      globals.has(fact.name) ? "unknown" : fact.representation,
-    );
-  }
-  for (const statement of source.statements) {
-    if (!(statement instanceof VariableStatement)) continue;
-    for (const declaration of statement.declarations) {
-      const name = declaration.name.text;
-      const declared = representationOfType(declaration.type);
-      if (!globals.has(name))
-        globals.set(
-          name,
-          typeIsNullable(declaration.type)
-            ? "unknown"
-            : declared !== "unknown"
+      node,
+      typeIsNullable(node.type) || fact?.nullable
+        ? "unknown"
+        : (fact?.representation ??
+            (declared !== "unknown"
               ? declared
-              : declaration.initializer instanceof StringLiteralExpression
+              : node.initializer instanceof StringLiteralExpression
                 ? "native"
-                : "unknown",
-        );
-    }
-  }
+                : "unknown")),
+    );
+  });
   return globals;
 }
 

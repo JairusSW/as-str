@@ -34,7 +34,6 @@ import {
   Source,
   StringLiteralExpression,
   SwitchCase,
-  SwitchStatement,
   TypeNode,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
@@ -72,7 +71,7 @@ export class SourceClassTypes {
   >();
   private readonly lexicalFunctions: {
     declaration: FunctionDeclaration;
-    scope: BlockStatement;
+    scope: BlockStatement | SwitchCase;
   }[] = [];
 
   private readonly resolvingClasses = new Set<Expression>();
@@ -90,19 +89,14 @@ export class SourceClassTypes {
         end: node.range.end,
       });
     });
-    const switchScopes = new Map<Node, SwitchStatement>();
-    walk(source, (node, ref) => {
-      if (node instanceof SwitchCase && ref.parent instanceof SwitchStatement)
-        switchScopes.set(node, ref.parent);
-    });
     walk(source, (node, ref) => {
       if (node instanceof VariableDeclaration) {
-        const scope = switchScopes.get(ref.grandparent!) ?? ref.grandparent;
+        const scope = ref.grandparent;
         if (
           scope instanceof BlockStatement ||
           scope instanceof ForStatement ||
           scope instanceof ForOfStatement ||
-          scope instanceof SwitchStatement
+          scope instanceof SwitchCase
         ) {
           const list = this.variables.get(node.name.text) ?? [];
           list.push({ declaration: node, scope });
@@ -126,7 +120,8 @@ export class SourceClassTypes {
       if (
         node instanceof FunctionExpression &&
         ref.parent instanceof ExpressionStatement &&
-        ref.grandparent instanceof BlockStatement
+        (ref.grandparent instanceof BlockStatement ||
+          ref.grandparent instanceof SwitchCase)
       )
         this.lexicalFunctions.push({
           declaration: node.declaration,
@@ -220,6 +215,19 @@ export class SourceClassTypes {
     context: FunctionContext,
   ): VariableDeclaration | undefined {
     return this.localVariable(expression.text, expression.range.start, context);
+  }
+
+  globalDeclarationOf(
+    expression: IdentifierExpression,
+    context: FunctionContext,
+  ): VariableDeclaration | undefined {
+    if (
+      this.declarationOf(expression, context) ||
+      context.parameters.has(expression.text)
+    )
+      return undefined;
+    const key = this.runtimeKey(expression.text, expression.range.start);
+    return key ? this.globals.get(key) : undefined;
   }
 
   propertyOf(
@@ -730,6 +738,13 @@ export class SourceClassTypes {
     const body = context.declaration?.body?.range;
     for (const candidate of this.variables.get(name) ?? []) {
       const scope = candidate.scope.range;
+      // AssemblyScript resolves case labels in the enclosing scope, before
+      // entering the case's local declaration scope.
+      if (
+        candidate.scope instanceof SwitchCase &&
+        position < (candidate.scope.statements[0]?.range.start ?? scope.end)
+      )
+        continue;
       if (scope.start >= position || scope.end <= position) continue;
       if (
         parameter &&
@@ -754,6 +769,11 @@ export class SourceClassTypes {
     let width = Number.MAX_SAFE_INTEGER;
     for (const candidate of this.lexicalFunctions) {
       const scope = candidate.scope.range;
+      if (
+        candidate.scope instanceof SwitchCase &&
+        position < (candidate.scope.statements[0]?.range.start ?? scope.end)
+      )
+        continue;
       if (
         candidate.declaration.name.text !== name ||
         scope.start >= position ||

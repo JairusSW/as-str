@@ -57,7 +57,7 @@ export interface FunctionContext {
   repeatedLowercaseReceivers: Set<string>;
   profitableLowercaseCalls: Set<number>;
   classes: SourceClassTypes;
-  globals?: Map<string, Representation>;
+  globals?: Map<VariableDeclaration, Representation>;
   className?: string;
   originalViewReceivers?: Set<string>;
   representationSensitive?: boolean;

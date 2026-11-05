@@ -114,9 +114,12 @@ function bindingRepresentation(
   signatures: FunctionSignatures,
 ): Representation {
   const name = expression.text;
-  if (context.duplicateNames.has(name)) {
-    const declaration = context.classes.declarationOf(expression, context);
-    if (!declaration) return context.parameters.get(name) ?? "unknown";
+  const declaration = context.classes.declarationOf(expression, context);
+  const binding = context.bindings.get(name);
+  if (
+    declaration &&
+    (context.duplicateNames.has(name) || binding?.declaration !== declaration)
+  ) {
     if (typeIsNullable(context.classes.typeOf(expression, context)))
       return "unknown";
     const declared = representationOfType(declaration.type);
@@ -132,8 +135,12 @@ function bindingRepresentation(
       resolving.delete(initializer);
     }
   }
-  const binding = context.bindings.get(name);
-  if (!binding) return context.parameters.get(name) ?? "unknown";
+  if (!declaration) {
+    if (context.parameters.has(name)) return context.parameters.get(name)!;
+    const global = context.classes.globalDeclarationOf(expression, context);
+    return global ? (context.globals?.get(global) ?? "unknown") : "unknown";
+  }
+  if (!binding) return "unknown";
   if (binding.decision !== "unknown") return binding.decision;
   return binding.declared === "unknown" ? binding.semantic : binding.declared;
 }
@@ -175,6 +182,8 @@ export function expressionRepresentation(
       representation === "unknown" &&
       !context.duplicateNames.has(expression.text) &&
       binding?.candidate &&
+      context.classes.declarationOf(expression, context) ===
+        binding.declaration &&
       binding.declaration.initializer instanceof CallExpression
     ) {
       const property = propertyCall(binding.declaration.initializer);
@@ -398,7 +407,9 @@ function rewriteExpression(
     expression instanceof PropertyAccessExpression &&
     expression.property.text === "length" &&
     expression.expression instanceof IdentifierExpression &&
-    context.bindings.get(expression.expression.text)?.scalarizedLength
+    context.bindings.get(expression.expression.text)?.scalarizedLength &&
+    context.classes.declarationOf(expression.expression, context) ===
+      context.bindings.get(expression.expression.text)?.declaration
   ) {
     return expression.expression;
   }

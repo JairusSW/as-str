@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Resolve switch-case locals and namespace globals by their actual declarations,
+  including globals outside a local's scope and expressions in case labels.
+- Rewrite nested packed-span calls in expression containers, and retain native
+  signatures for parameters used by defaults and helpers called from defaults.
+- Support nullable view equality, positioned `includes`, and omitted or null
+  separators in the manual `split` API.
+- Preserve native lowercase allocation identity across function boundaries.
+- Bound long-needle substring verification with an allocation-free Two-Way
+  fallback for both UTF-16 and UTF-8, in both search directions.
+- Index local and packed-parameter uses instead of walking the function for each
+  candidate; clarify that manual view creation allocates wrapper objects.
+
 ## [0.7.0] - 2026-10-30
 
 ### Changed

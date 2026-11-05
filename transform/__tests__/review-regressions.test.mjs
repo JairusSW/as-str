@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { compileFixture, instantiate } from "./harness.mjs";
 const cases = {
+  "switch-cases": {
+    localCase: 2,
+    defaultCase: 3,
+    unresolvedShadow: 3,
+    directLocal: 2,
+    directDefault: 3,
+    insideBlock: 2,
+    outsideBlock: 8,
+    caseLabel: 3,
+  },
   manual: { run: 1 },
   nullable: { run: 1 },
   scope: { switchShadow: 3, namespaceShadow: 73 },
