@@ -250,6 +250,18 @@ function analyzeParameterPromotions(context, signature, signatures) {
     if (representationOfType(parameter.type) !== "native") return;
     const name = parameter.name.text;
     if (context.bindings.has(name)) return;
+    let usedInDefault = false;
+    for (const other of declaration.signature.parameters) {
+      walk(other.initializer, (node, ref) => {
+        if (
+          node instanceof IdentifierExpression &&
+          node.text === name &&
+          !isDeclarationIdentifier(node, ref)
+        )
+          usedInDefault = true;
+      });
+    }
+    if (usedInDefault) return;
     let reason = null;
     let uses = 0;
     walk(body, (node, ref) => {
@@ -808,14 +820,30 @@ function candidateReceiver(expression, context) {
   const binding = context.bindings.get(root.text);
   return binding?.candidate ? binding : null;
 }
-function bindingViewBoundaryUses(body, name, context, signatures) {
-  return countViewBoundaryUses(body, name, context, signatures);
-}
 function analyzeCandidates(context, signatures) {
   const declaration = context.declaration;
   if (!declaration) return;
   const body = declaration.body;
   if (!body) return;
+  const bindingUses = new Map();
+  walk(body, (node, ref) => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    if (
+      !(node instanceof IdentifierExpression) ||
+      isDeclarationIdentifier(node, ref)
+    )
+      return;
+    const binding = context.bindings.get(node.text);
+    if (
+      !binding ||
+      context.classes.declarationOf(node, context) !== binding.declaration
+    )
+      return;
+    const uses = bindingUses.get(binding) ?? [];
+    uses.push({ node, ref });
+    bindingUses.set(binding, uses);
+  });
   for (const binding of context.bindings.values()) {
     if (
       binding.forcedReason === "@as-str no-view" &&
@@ -906,27 +934,12 @@ function analyzeCandidates(context, signatures) {
       expressionRepresentation(receiver, context, signatures) === "unknown"
     )
       continue;
-    let onlyLengthReads = true;
-    walk(body, (node, ref) => {
-      if (node instanceof FunctionDeclaration && node !== declaration)
-        return false;
-      if (
-        !(node instanceof IdentifierExpression) ||
-        node.text !== binding.name ||
-        isDeclarationIdentifier(node, ref)
-      ) {
-        return;
-      }
-      if (
-        !(
-          ref.parent instanceof PropertyAccessExpression &&
-          ref.key === "expression" &&
-          ref.parent.property.text === "length"
-        )
-      ) {
-        onlyLengthReads = false;
-      }
-    });
+    const onlyLengthReads = (bindingUses.get(binding) ?? []).every(
+      ({ ref }) =>
+        ref.parent instanceof PropertyAccessExpression &&
+        ref.key === "expression" &&
+        ref.parent.property.text === "length",
+    );
     binding.scalarizedLength = onlyLengthReads;
   }
   const consumers = new Map();
@@ -975,16 +988,7 @@ function analyzeCandidates(context, signatures) {
               : null;
       if (owner === null) continue;
       let scalarUsesOnly = true;
-      walk(body, (node, ref) => {
-        if (node instanceof FunctionDeclaration && node !== declaration)
-          return false;
-        if (
-          !(node instanceof IdentifierExpression) ||
-          node.text !== binding.name ||
-          isDeclarationIdentifier(node, ref)
-        ) {
-          return;
-        }
+      for (const { ref } of bindingUses.get(binding) ?? []) {
         if (
           ref.parent instanceof PropertyAccessExpression &&
           ref.key === "expression"
@@ -993,14 +997,14 @@ function analyzeCandidates(context, signatures) {
             ref.parent.property.text === "length" ||
             ref.parent.property.text === "isEmpty"
           ) {
-            return;
+            continue;
           }
           if (
             ref.grandparent instanceof CallExpression &&
             ref.grandparent.expression === ref.parent &&
             operationSemantics(ref.parent.property.text).spanScalar
           ) {
-            return;
+            continue;
           }
           if (
             ref.grandparent instanceof CallExpression &&
@@ -1008,7 +1012,7 @@ function analyzeCandidates(context, signatures) {
             operationSemantics(ref.parent.property.text).spanProducing
           ) {
             const target = consumers.get(ref.grandparent);
-            if (target?.scalarizedLength || target?.scalarizedSpan) return;
+            if (target?.scalarizedLength || target?.scalarizedSpan) continue;
           }
         }
         if (
@@ -1018,10 +1022,10 @@ function analyzeCandidates(context, signatures) {
             ref.parent.operator === 77 ||
             ref.parent.operator === 79)
         ) {
-          return;
+          continue;
         }
         scalarUsesOnly = false;
-      });
+      }
       if (!scalarUsesOnly) continue;
       binding.scalarizedSpan = true;
       binding.packedSpan = { owner };
@@ -1062,8 +1066,17 @@ function analyzeCandidates(context, signatures) {
       !binding.preferred &&
       !binding.scalarizedLength &&
       !binding.scalarizedSpan &&
-      bindingViewBoundaryUses(body, binding.name, context, signatures) <
-        MIN_LOCAL_VIEW_BOUNDARIES &&
+      (bindingUses.get(binding) ?? []).filter(
+        ({ node, ref }) =>
+          ref.parent instanceof CallExpression &&
+          ref.parent.args.includes(node) &&
+          expectedCallArgument(
+            ref.parent,
+            ref.parent.args.indexOf(node),
+            signatures,
+            context,
+          ) === "view",
+      ).length < MIN_LOCAL_VIEW_BOUNDARIES &&
       binding.uses < MIN_REUSED_LOCAL_USES
     ) {
       binding.decision = "native";
@@ -1356,7 +1369,11 @@ export function optimizeSources(sources, manifest = null) {
         )
       )
         return;
-      if (!call || !userSources.includes(source)) {
+      const body = context.declaration?.body?.range;
+      const outsideBody =
+        context.declaration &&
+        (!body || node.range.start < body.start || node.range.end > body.end);
+      if (!call || !userSources.includes(source) || outsideBody) {
         signature.promotable = false;
       } else {
         signature.directCallCount++;

@@ -32,6 +32,7 @@ import {
   isStrStaticCall,
   propertyCall,
   walk,
+  WalkRef,
 } from "./visitor.js";
 
 interface ViewCallParts {
@@ -60,7 +61,7 @@ function viewCallParts(expression: CallExpression): ViewCallParts | null {
 function parameterCanUsePackedSpan(
   body: Statement,
   name: string,
-  context: FunctionContext,
+  references: { node: IdentifierExpression; ref: WalkRef }[],
 ): { safe: boolean; lowercase: boolean } {
   let safe = true;
   let uses = 0;
@@ -86,16 +87,14 @@ function parameterCanUsePackedSpan(
     lowerProperty?.property.text === "toLowerCase" &&
     lowerProperty.expression instanceof IdentifierExpression &&
     lowerProperty.expression.text === name;
-  walk(body, (node, ref): boolean | void => {
-    if (deferredLowercase && node === assignment) return false;
+  for (const { node, ref } of references) {
     if (
-      !(node instanceof IdentifierExpression) ||
-      node.text !== name ||
-      isDeclarationIdentifier(node, ref) ||
-      context.classes.declarationOf(node, context)
-    ) {
-      return;
-    }
+      deferredLowercase &&
+      assignment &&
+      node.range.start >= assignment.range.start &&
+      node.range.end <= assignment.range.end
+    )
+      continue;
     uses++;
     if (
       !deferredLowercase &&
@@ -103,13 +102,13 @@ function parameterCanUsePackedSpan(
       ref.key === "expression"
     ) {
       const member = ref.parent.property.text;
-      if (member === "length" || member === "isEmpty") return;
+      if (member === "length" || member === "isEmpty") continue;
       if (
         operationSemantics(member).spanScalar &&
         ref.grandparent instanceof CallExpression &&
         ref.grandparent.expression === ref.parent
       ) {
-        return;
+        continue;
       }
     }
     if (
@@ -124,10 +123,10 @@ function parameterCanUsePackedSpan(
       if (deferredLowercase && !(other instanceof StringLiteralExpression)) {
         safe = false;
       }
-      return;
+      continue;
     }
     safe = false;
-  });
+  }
   return {
     safe: safe && uses > 0,
     lowercase: deferredLowercase,
@@ -157,28 +156,48 @@ export function planPackedSpanParameters(
     return NO_PACKED_SPAN_PLAN;
   }
 
+  const parameterUses = new Map<
+    string,
+    { node: IdentifierExpression; ref: WalkRef }[]
+  >();
+  const names = new Set(
+    declaration.signature.parameters.map((parameter) => parameter.name.text),
+  );
+  const usedInDefaults = new Set<string>();
+  for (const parameter of declaration.signature.parameters) {
+    walk(parameter.initializer, (node, ref) => {
+      if (
+        node instanceof IdentifierExpression &&
+        names.has(node.text) &&
+        !isDeclarationIdentifier(node, ref)
+      )
+        usedInDefaults.add(node.text);
+    });
+  }
+  walk(body, (node, ref) => {
+    if (
+      !(node instanceof IdentifierExpression) ||
+      !names.has(node.text) ||
+      isDeclarationIdentifier(node, ref) ||
+      context.classes.declarationOf(node, context)
+    )
+      return;
+    const references = parameterUses.get(node.text) ?? [];
+    references.push({ node, ref });
+    parameterUses.set(node.text, references);
+  });
+
   if (signature.directCallCount > 0) {
     declaration.signature.parameters.forEach((parameter, index) => {
       if (signature.spanParameters.has(index)) return;
       if (representationOfType(parameter.type) !== "native") return;
       // Defaults execute outside the body rewriter and can refer to earlier
       // parameters. Retain their native ABI until defaults support spans.
-      let usedInDefault = false;
-      for (const other of declaration.signature.parameters) {
-        walk(other.initializer, (node, ref) => {
-          if (
-            node instanceof IdentifierExpression &&
-            node.text === parameter.name.text &&
-            !isDeclarationIdentifier(node, ref)
-          )
-            usedInDefault = true;
-        });
-      }
-      if (usedInDefault) return;
+      if (usedInDefaults.has(parameter.name.text)) return;
       const packed = parameterCanUsePackedSpan(
         body,
         parameter.name.text,
-        context,
+        parameterUses.get(parameter.name.text) ?? [],
       );
       if (
         signature.spanArgumentCounts.get(index) !== signature.directCallCount ||

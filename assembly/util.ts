@@ -273,6 +273,14 @@ function indexOfRemainder(
     // Sparse matches benefit from the single-unit scan above. Switch to a
     // two-anchor filter only after several nearby candidates failed.
     if (++failures == 4) {
+      if (nLen >= 256)
+        return twoWayIndexOf<u16>(
+          hStart,
+          <i32>((scanEnd - hStart) >> 1) + nLen - 1,
+          nStart,
+          nLen,
+          i,
+        );
       if (i - windowStart <= 32 && last - i >= 16) {
         return indexOfWide(hStart, nStart, nLen, i, scanEnd);
       }
@@ -378,6 +386,7 @@ export function lastIndexOf(
 
 // Keep vector setup out of the short-search helper so runtimes can inline it.
 function lastIndexOfWide(hStart: usize, nStart: usize, nLen: i32, i: i32): i32 {
+  let verifications = 0;
   const first = load<u16>(nStart);
   const tailBytes = (<usize>(nLen - 1)) << 1;
   const nEnd = nStart + ((<usize>nLen) << 1);
@@ -408,6 +417,13 @@ function lastIndexOfWide(hStart: usize, nStart: usize, nLen: i32, i: i32): i32 {
         if (nLen == 2 || equalsBytes(at + 2, nStart + 2, tailBytes)) {
           return <i32>((at - hStart) >> 1);
         }
+        if (nLen >= 256 && ++verifications == 8)
+          return twoWayLastIndexOf<u16>(
+            hStart,
+            nStart,
+            nLen,
+            <i32>((at - hStart) >> 1) - 1,
+          );
         mask &= ~(1 << lane);
       }
     }
@@ -425,6 +441,13 @@ function lastIndexOfWide(hStart: usize, nStart: usize, nLen: i32, i: i32): i32 {
         if (nLen == 2 || equalsBytes(at + 2, nStart + 2, tailBytes)) {
           return <i32>((at - hStart) >> 1);
         }
+        if (nLen >= 256 && ++verifications == 8)
+          return twoWayLastIndexOf<u16>(
+            hStart,
+            nStart,
+            nLen,
+            <i32>((at - hStart) >> 1) - 1,
+          );
         mask &= ~((<u64>0x8000) << (lane << 4));
       }
     }
@@ -699,4 +722,111 @@ export function encodeUtf8Range(
 
 export function encodeUtf8(text: string): ArrayBuffer {
   return encodeUtf8Range(changetype<usize>(text), text.length);
+}
+
+// Read either code units or bytes, optionally in reverse for lastIndexOf.
+// @ts-ignore: decorator
+@inline function searchUnit<T>(
+  base: usize,
+  length: i32,
+  index: i32,
+  reverse: bool,
+): T {
+  return load<T>(
+    base + <usize>(reverse ? length - 1 - index : index) * sizeof<T>(),
+  );
+}
+
+/** Allocation-free Two-Way search. Preprocessing and scanning take O(n + m). */
+export function twoWayIndexOf<T>(
+  hay: usize,
+  hLen: i32,
+  needle: usize,
+  nLen: i32,
+  from: i32,
+  reverse: bool = false,
+): i32 {
+  // Critical factorization: compute the maximal suffix in both orderings.
+  let suffix = -1,
+    period = 1;
+  for (let order = 0; order < 2; order++) {
+    let ms = -1,
+      j = 0,
+      k = 1,
+      p = 1;
+    while (j + k < nLen) {
+      const a = searchUnit<T>(needle, nLen, j + k, reverse);
+      const b = searchUnit<T>(needle, nLen, ms + k, reverse);
+      if (a == b) {
+        if (k == p) {
+          j += p;
+          k = 1;
+        } else k++;
+      } else if (order == 0 ? a < b : a > b) {
+        j += k;
+        k = 1;
+        p = j - ms;
+      } else {
+        ms = j;
+        j = ms + 1;
+        k = p = 1;
+      }
+    }
+    if (ms > suffix) {
+      suffix = ms;
+      period = p;
+    }
+  }
+  const split = suffix + 1;
+  let periodic = period + split <= nLen;
+  for (let k = 0; periodic && k < split; k++) {
+    if (
+      searchUnit<T>(needle, nLen, k, reverse) !=
+      searchUnit<T>(needle, nLen, k + period, reverse)
+    )
+      periodic = false;
+  }
+  let remembered = 0;
+  if (periodic) remembered = nLen - period;
+  else period = max(suffix, nLen - suffix - 1) + 1;
+
+  let memory = 0,
+    at = from;
+  while (at <= hLen - nLen) {
+    let k = max(split, memory);
+    while (
+      k < nLen &&
+      searchUnit<T>(needle, nLen, k, reverse) ==
+        searchUnit<T>(hay, hLen, at + k, reverse)
+    )
+      k++;
+    if (k < nLen) {
+      at += k - suffix;
+      memory = 0;
+      continue;
+    }
+    k = split;
+    while (
+      k > memory &&
+      searchUnit<T>(needle, nLen, k - 1, reverse) ==
+        searchUnit<T>(hay, hLen, at + k - 1, reverse)
+    )
+      k--;
+    if (k <= memory) return at;
+    at += period;
+    memory = remembered;
+  }
+  return -1;
+}
+
+/** Search a reversed prefix, mapping its first match to the original index. */
+export function twoWayLastIndexOf<T>(
+  hay: usize,
+  needle: usize,
+  nLen: i32,
+  last: i32,
+): i32 {
+  if (last < 0) return -1;
+  const found = twoWayIndexOf<T>(hay, last + nLen, needle, nLen, 0, true);
+  return found < 0 ? -1 : last - found;
 }

@@ -1,5 +1,11 @@
 // Low-level UTF-8 byte helpers for `str8`. Scans use SIMD, SWAR, then scalar tails.
-import { checkedSize, copyBytes, equalsBytes } from "./util";
+import {
+  checkedSize,
+  copyBytes,
+  equalsBytes,
+  twoWayIndexOf,
+  twoWayLastIndexOf,
+} from "./util";
 
 // Per-byte-lane constants for the SWAR zero/diff detection (Mycroft's trick).
 const LANE_ONES_8: u64 = 0x0101010101010101;
@@ -311,6 +317,14 @@ function indexOfBytesRemainder(
     // Keep the cheaper single-byte scan for sparse matches. Dense failed
     // candidates benefit from filtering both ends of the needle at once.
     if (++failures == 4) {
+      if (nLen >= 256)
+        return twoWayIndexOf<u8>(
+          hStart,
+          <i32>(scanEnd - hStart) + nLen - 1,
+          nStart,
+          nLen,
+          i,
+        );
       if (i - windowStart <= 32 && last - i >= 16) {
         return indexOfBytesWide(hStart, nStart, nLen, i, scanEnd);
       }
@@ -419,6 +433,7 @@ function lastIndexOfBytesWide(
   nLen: i32,
   i: i32,
 ): i32 {
+  let verifications = 0;
   const first = load<u8>(nStart);
   const tailBytes = <usize>(nLen - 1);
   const nEnd = nStart + <usize>nLen;
@@ -448,6 +463,13 @@ function lastIndexOfBytesWide(
         if (nLen == 2 || equalsBytes(at + 1, nStart + 1, tailBytes)) {
           return <i32>(at - hStart);
         }
+        if (nLen >= 256 && ++verifications == 8)
+          return twoWayLastIndexOf<u8>(
+            hStart,
+            nStart,
+            nLen,
+            <i32>(at - hStart) - 1,
+          );
         mask &= ~(1 << lane);
       }
     }
@@ -465,6 +487,13 @@ function lastIndexOfBytesWide(
         if (nLen == 2 || equalsBytes(at + 1, nStart + 1, tailBytes)) {
           return <i32>(at - hStart);
         }
+        if (nLen >= 256 && ++verifications == 8)
+          return twoWayLastIndexOf<u8>(
+            hStart,
+            nStart,
+            nLen,
+            <i32>(at - hStart) - 1,
+          );
         mask &= ~((<u64>0x80) << (lane << 3));
       }
     }

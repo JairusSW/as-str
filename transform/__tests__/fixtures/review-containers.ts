@@ -17,3 +17,22 @@ export function ternary(flag: bool = true): i32 {
 export function comma(): i32 {
   return (0, measure("abcdef".slice(1, 4)));
 }
+class Record {
+  value: i32 = 0;
+}
+export function objectLiteral(): i32 {
+  const value: Record = { value: measure("abcdef".slice(1, 4)) };
+  return value.value;
+}
+export function template(): i32 {
+  return `${measure("abcdef".slice(1, 4))}`.length;
+}
+function measureInDefault(value: string): i32 {
+  return value.length;
+}
+function withDefault(value: i32 = measureInDefault("abcdef".slice(1, 4))): i32 {
+  return value;
+}
+export function callDefault(): i32 {
+  return withDefault();
+}

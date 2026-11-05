@@ -6,3 +6,14 @@ export function check(): bool {
   const lower = original.toLowerCase();
   return lower.length == 3 && sameAddress(original, lower);
 }
+function source(value: string): string {
+  return value;
+}
+export function repeatedCheck(): bool {
+  const original: string = "abc";
+  return sameAddress(original.toLowerCase(), original.toLowerCase());
+}
+export function returnedCheck(): bool {
+  const original: string = "abc";
+  return sameAddress(original, source(original).toLowerCase());
+}

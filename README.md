@@ -289,7 +289,7 @@ f[0].toString(); // "GET"
 <i32>parseInt(f[2].toString()); // 200
 f.length; // 4
 
-// Walk fields without allocating until needed:
+// Walk fields without copying character data:
 const csv = "id,name,email,role";
 for (let i = 0, parts = str.split(csv, ","); i < parts.length; i++) {
   if (parts[i].equalsString("email")) {

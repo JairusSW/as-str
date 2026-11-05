@@ -38,7 +38,7 @@ function viewCallParts(expression) {
     args: expression.args,
   };
 }
-function parameterCanUsePackedSpan(body, name, context) {
+function parameterCanUsePackedSpan(body, name, references) {
   let safe = true;
   let uses = 0;
   const first = body instanceof BlockStatement ? body.statements[0] : null;
@@ -60,16 +60,14 @@ function parameterCanUsePackedSpan(body, name, context) {
     lowerProperty?.property.text === "toLowerCase" &&
     lowerProperty.expression instanceof IdentifierExpression &&
     lowerProperty.expression.text === name;
-  walk(body, (node, ref) => {
-    if (deferredLowercase && node === assignment) return false;
+  for (const { node, ref } of references) {
     if (
-      !(node instanceof IdentifierExpression) ||
-      node.text !== name ||
-      isDeclarationIdentifier(node, ref) ||
-      context.classes.declarationOf(node, context)
-    ) {
-      return;
-    }
+      deferredLowercase &&
+      assignment &&
+      node.range.start >= assignment.range.start &&
+      node.range.end <= assignment.range.end
+    )
+      continue;
     uses++;
     if (
       !deferredLowercase &&
@@ -77,13 +75,13 @@ function parameterCanUsePackedSpan(body, name, context) {
       ref.key === "expression"
     ) {
       const member = ref.parent.property.text;
-      if (member === "length" || member === "isEmpty") return;
+      if (member === "length" || member === "isEmpty") continue;
       if (
         operationSemantics(member).spanScalar &&
         ref.grandparent instanceof CallExpression &&
         ref.grandparent.expression === ref.parent
       ) {
-        return;
+        continue;
       }
     }
     if (
@@ -98,10 +96,10 @@ function parameterCanUsePackedSpan(body, name, context) {
       if (deferredLowercase && !(other instanceof StringLiteralExpression)) {
         safe = false;
       }
-      return;
+      continue;
     }
     safe = false;
-  });
+  }
   return {
     safe: safe && uses > 0,
     lowercase: deferredLowercase,
@@ -116,26 +114,42 @@ export function planPackedSpanParameters(context, signature) {
   if (!declaration || !body || !signature?.promotable) {
     return NO_PACKED_SPAN_PLAN;
   }
+  const parameterUses = new Map();
+  const names = new Set(
+    declaration.signature.parameters.map((parameter) => parameter.name.text),
+  );
+  const usedInDefaults = new Set();
+  for (const parameter of declaration.signature.parameters) {
+    walk(parameter.initializer, (node, ref) => {
+      if (
+        node instanceof IdentifierExpression &&
+        names.has(node.text) &&
+        !isDeclarationIdentifier(node, ref)
+      )
+        usedInDefaults.add(node.text);
+    });
+  }
+  walk(body, (node, ref) => {
+    if (
+      !(node instanceof IdentifierExpression) ||
+      !names.has(node.text) ||
+      isDeclarationIdentifier(node, ref) ||
+      context.classes.declarationOf(node, context)
+    )
+      return;
+    const references = parameterUses.get(node.text) ?? [];
+    references.push({ node, ref });
+    parameterUses.set(node.text, references);
+  });
   if (signature.directCallCount > 0) {
     declaration.signature.parameters.forEach((parameter, index) => {
       if (signature.spanParameters.has(index)) return;
       if (representationOfType(parameter.type) !== "native") return;
-      let usedInDefault = false;
-      for (const other of declaration.signature.parameters) {
-        walk(other.initializer, (node, ref) => {
-          if (
-            node instanceof IdentifierExpression &&
-            node.text === parameter.name.text &&
-            !isDeclarationIdentifier(node, ref)
-          )
-            usedInDefault = true;
-        });
-      }
-      if (usedInDefault) return;
+      if (usedInDefaults.has(parameter.name.text)) return;
       const packed = parameterCanUsePackedSpan(
         body,
         parameter.name.text,
-        context,
+        parameterUses.get(parameter.name.text) ?? [],
       );
       if (
         signature.spanArgumentCounts.get(index) !== signature.directCallCount ||

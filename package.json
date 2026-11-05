@@ -2,7 +2,7 @@
   "name": "as-str",
   "version": "0.7.0",
   "author": "Jairus Tanaka <me@jairus.dev>",
-  "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without allocating",
+  "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without copying character data",
   "types": "assembly/index.ts",
   "repository": {
     "type": "git",
@@ -49,7 +49,7 @@
   "scripts": {
     "test": "ast test",
     "test:ci": "ast test --clean && npm run test:runtime",
-    "test:runtime": "node assembly/__tests__/runtime.test.mjs && node assembly/__tests__/native-needle.test.mjs && node assembly/__tests__/encoding.test.mjs && node assembly/__tests__/validation.test.mjs && node assembly/__tests__/search.test.mjs",
+    "test:runtime": "node assembly/__tests__/runtime.test.mjs && node assembly/__tests__/native-needle.test.mjs && node assembly/__tests__/encoding.test.mjs && node assembly/__tests__/validation.test.mjs && node assembly/__tests__/search.test.mjs && node assembly/__tests__/bounded-search.test.mjs",
     "test:fuzz": "ast fuzz",
     "format": "prettier -w .",
     "lint": "eslint . --no-warn-ignored",
@@ -59,7 +59,7 @@
     "typecheck:transform": "tsc -p ./transform --noEmit",
     "build:transform": "tsc -p ./transform && prettier --write transform/lib",
     "build": "npm run build:transform",
-    "test:transform": "npm run build && node transform/__tests__/review-regressions.test.mjs && node transform/__tests__/imports.test.mjs && node transform/__tests__/visitor.test.mjs && node transform/__tests__/source-admission.test.mjs && node transform/__tests__/type-resolution.test.mjs && node transform/__tests__/enum-types.test.mjs && node transform/__tests__/native-allocation-bounds.test.mjs && node transform/__tests__/raw-string-identity.test.mjs && node transform/__tests__/native-view-search.test.mjs && node transform/__tests__/long-ordering.test.mjs && node transform/__tests__/manifest.test.mjs && node transform/__tests__/optimizer.test.mjs && node transform/__tests__/differential.test.mjs && node transform/__tests__/receiver-effects.test.mjs && node transform/__tests__/allocation-report.mjs",
+    "test:transform": "npm run build && node transform/__tests__/review-regressions.test.mjs && node transform/__tests__/analysis-scaling.test.mjs && node transform/__tests__/imports.test.mjs && node transform/__tests__/visitor.test.mjs && node transform/__tests__/source-admission.test.mjs && node transform/__tests__/type-resolution.test.mjs && node transform/__tests__/enum-types.test.mjs && node transform/__tests__/native-allocation-bounds.test.mjs && node transform/__tests__/raw-string-identity.test.mjs && node transform/__tests__/native-view-search.test.mjs && node transform/__tests__/long-ordering.test.mjs && node transform/__tests__/manifest.test.mjs && node transform/__tests__/optimizer.test.mjs && node transform/__tests__/differential.test.mjs && node transform/__tests__/receiver-effects.test.mjs && node transform/__tests__/allocation-report.mjs",
     "test:consumer": "npm run build && node transform/__tests__/consumer.test.mjs",
     "test:differential": "npm run build && node transform/__tests__/differential.test.mjs",
     "bench:transform": "npm run build && node transform/__tests__/allocation-report.mjs",

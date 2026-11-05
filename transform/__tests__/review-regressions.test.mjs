@@ -4,9 +4,17 @@ const cases = {
   manual: { run: 1 },
   nullable: { run: 1 },
   scope: { switchShadow: 3, namespaceShadow: 73 },
-  containers: { constructed: 3, arrayLiteral: 3, ternary: 3, comma: 3 },
+  containers: {
+    constructed: 3,
+    objectLiteral: 3,
+    template: 1,
+    callDefault: 3,
+    arrayLiteral: 3,
+    ternary: 3,
+    comma: 3,
+  },
   defaults: { run: 6 },
-  identity: { check: 0 },
+  identity: { check: 0, repeatedCheck: 0, returnedCheck: 0 },
 };
 for (const [fixture, expected] of Object.entries(cases)) {
   if (process.argv[2] && process.argv[2] !== fixture) continue;
