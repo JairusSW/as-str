@@ -42,6 +42,7 @@ import {
   Token,
   StringLiteralExpression,
   VariableDeclaration,
+  VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
@@ -62,6 +63,7 @@ import {
   OptimizationSummary,
   ParameterPromotion,
   ReturnPromotion,
+  SpanOwner,
 } from "./model.js";
 import {
   calleeName,
@@ -331,9 +333,13 @@ function analyzeParameterPromotions(
     return [];
   }
   const promotions: ParameterPromotion[] = [];
+  const spanOwners = new Set(signature.spanParameters.values());
 
   declaration.signature.parameters.forEach((parameter, index) => {
     if (signature.spanParameters.has(index)) return;
+    // A packed span's owner only roots its backing string. Promoting it would
+    // make every caller allocate a view wrapper for a value it never reads.
+    if (spanOwners.has(parameter.name.text)) return;
     if (representationOfType(parameter.type) !== "native") return;
     const name = parameter.name.text;
     if (context.bindings.has(name)) return;
@@ -525,6 +531,49 @@ function initializerElementRepresentation(
   const name = expression.typeName.identifier.text;
   if (name !== "Array" && name !== "StaticArray") return "unknown";
   return representationOfType(expression.typeArguments?.[0] ?? null);
+}
+
+/**
+ * A packed span holds raw pointers; its owner argument is what keeps the
+ * backing string reachable. Every later use names the owner again, so that
+ * name must denote the same string object for the whole function.
+ */
+function spanOwnerIsStable(
+  owner: SpanOwner,
+  context: FunctionContext,
+): boolean {
+  if (owner.kind !== "identifier") return true;
+  const name = owner.name;
+  if (context.duplicateNames.has(name)) return false;
+  const local = context.bindings.get(name);
+  const global = [...(context.globals?.keys() ?? [])].find(
+    (declaration) => declaration.name.text === name,
+  );
+  if (local || context.parameters.has(name)) {
+    // A local that hides a global may be declared after the span's receiver.
+    if (global) return false;
+    if (local?.declaration.is(CommonFlags.Const)) return true;
+    const body = context.declaration?.body;
+    return !!body && !assignsName(body, name);
+  }
+  // Any call can reassign a mutable global.
+  return !!global?.is(CommonFlags.Const);
+}
+
+function assignsName(body: Node, name: string): boolean {
+  let assigned = false;
+  walk(body, (node): boolean | void => {
+    // AssemblyScript closures cannot capture locals or parameters.
+    if (node instanceof FunctionDeclaration) return false;
+    if (
+      node instanceof BinaryExpression &&
+      (node.operator === Token.Equals || node.operator === Token.Plus_Equals) &&
+      node.left instanceof IdentifierExpression &&
+      node.left.text === name
+    )
+      assigned = true;
+  });
+  return assigned;
 }
 
 function collectLocalBindings(
@@ -1167,7 +1216,7 @@ function analyzeCandidates(
             : receiver instanceof StringLiteralExpression
               ? { kind: "string-literal" as const, value: receiver.value }
               : null;
-      if (owner === null) continue;
+      if (owner === null || !spanOwnerIsStable(owner, context)) continue;
 
       let scalarUsesOnly = true;
       for (const { ref } of bindingUses.get(binding) ?? []) {
@@ -1577,10 +1626,11 @@ export function optimizeSource(
   sourceContext.representationSensitive =
     functions.some((declaration) => sensitiveDeclarations.has(declaration)) ||
     hasSensitiveCalls(source, sourceContext, sensitiveDeclarations);
+  // Field initializers and expression-bodied functions have no statement list
+  // of their own. Their captures share this module-level list, emitted below.
+  const moduleOwners: VariableStatement[] = [];
+  sourceContext.temporaryOwners = moduleOwners;
   rewriteDeclarationBoundaries(source.statements, sourceContext, signatures);
-  if (sourceContext.temporaryOwners?.length) {
-    source.statements.unshift(...sourceContext.temporaryOwners);
-  }
 
   // Record explicit view receivers before promotion changes native bindings.
   for (const context of contexts.values()) {
@@ -1650,6 +1700,9 @@ export function optimizeSource(
     const context = contexts.get(declaration)!;
     analyzeCandidates(context, signatures);
 
+    if (!(declaration.body instanceof BlockStatement)) {
+      context.temporaryOwners = moduleOwners;
+    }
     rewriteStatement(declaration.body, context, signatures);
     if (
       context.temporaryOwners?.length &&
@@ -1672,6 +1725,10 @@ export function optimizeSource(
     }
   }
 
+  if (moduleOwners.length) {
+    source.statements.unshift(...moduleOwners);
+    changedSources.add(source);
+  }
   if (sourceUsesViewName(source)) changedSources.add(source);
   return { changedSources, diagnostics, summary: summarize(diagnostics) };
 }

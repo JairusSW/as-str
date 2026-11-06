@@ -838,9 +838,21 @@ function rewriteExpression(expression, expected, context, signatures) {
           if (parts && operationSemantics(parts.method).spanProducing) {
             const range = argument.range;
             const temporaries = (context.temporaryOwners ??= []);
-            let name = `__as_str_captured_owner_${temporaries.length}`;
+            const moduleScope = !(
+              context.declaration?.body instanceof BlockStatement
+            );
+            const declared = new Set([
+              ...temporaries.map(
+                (statement) => statement.declarations[0].name.text,
+              ),
+              ...[...(context.globals?.keys() ?? [])].map(
+                (declaration) => declaration.name.text,
+              ),
+            ]);
+            let name = `__as_str_${moduleScope ? "module" : "captured"}_owner_${temporaries.length}`;
             while (
               range.source.text.includes(name) ||
+              declared.has(name) ||
               context.bindings.has(name) ||
               context.parameters.has(name)
             )

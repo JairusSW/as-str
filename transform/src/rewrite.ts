@@ -915,9 +915,25 @@ function rewriteExpression(
           if (parts && operationSemantics(parts.method).spanProducing) {
             const range = argument.range;
             const temporaries = (context.temporaryOwners ??= []);
-            let name = `__as_str_captured_owner_${temporaries.length}`;
+            // Captures outside a block body are module globals. A distinct
+            // prefix keeps them from aliasing an enclosing function's locals.
+            const moduleScope = !(
+              context.declaration?.body instanceof BlockStatement
+            );
+            // Module captures from an earlier optimization round are already
+            // globals, while this round's list starts empty.
+            const declared = new Set([
+              ...temporaries.map(
+                (statement) => statement.declarations[0].name.text,
+              ),
+              ...[...(context.globals?.keys() ?? [])].map(
+                (declaration) => declaration.name.text,
+              ),
+            ]);
+            let name = `__as_str_${moduleScope ? "module" : "captured"}_owner_${temporaries.length}`;
             while (
               range.source.text.includes(name) ||
+              declared.has(name) ||
               context.bindings.has(name) ||
               context.parameters.has(name)
             )

@@ -24,6 +24,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fallback for both UTF-16 and UTF-8, in both search directions.
 - Index local and packed-parameter uses instead of walking the function for each
   candidate; clarify that manual view creation allocates wrapper objects.
+- Declare packed-span owner captures for calls in module and namespace
+  initializers, class field initializers, and expression-bodied arrows, which
+  previously failed to compile under `as-str/auto`. Packed owners stay native
+  parameters, so callers no longer allocate a view wrapper per call.
+- Pack local spans only over owners that cannot change: string literals,
+  constant or never-reassigned locals and parameters, and constant globals.
+  Reassigned, shadowed, or mutable-global owners no longer leave a span's
+  backing string unrooted.
 
 ## [0.7.0] - 2026-10-30
 

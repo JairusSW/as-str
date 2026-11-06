@@ -251,8 +251,10 @@ function analyzeParameterPromotions(context, signature, signatures) {
     return [];
   }
   const promotions = [];
+  const spanOwners = new Set(signature.spanParameters.values());
   declaration.signature.parameters.forEach((parameter, index) => {
     if (signature.spanParameters.has(index)) return;
+    if (spanOwners.has(parameter.name.text)) return;
     if (representationOfType(parameter.type) !== "native") return;
     const name = parameter.name.text;
     if (context.bindings.has(name)) return;
@@ -423,6 +425,36 @@ function initializerElementRepresentation(expression) {
   const name = expression.typeName.identifier.text;
   if (name !== "Array" && name !== "StaticArray") return "unknown";
   return representationOfType(expression.typeArguments?.[0] ?? null);
+}
+function spanOwnerIsStable(owner, context) {
+  if (owner.kind !== "identifier") return true;
+  const name = owner.name;
+  if (context.duplicateNames.has(name)) return false;
+  const local = context.bindings.get(name);
+  const global = [...(context.globals?.keys() ?? [])].find(
+    (declaration) => declaration.name.text === name,
+  );
+  if (local || context.parameters.has(name)) {
+    if (global) return false;
+    if (local?.declaration.is(8)) return true;
+    const body = context.declaration?.body;
+    return !!body && !assignsName(body, name);
+  }
+  return !!global?.is(8);
+}
+function assignsName(body, name) {
+  let assigned = false;
+  walk(body, (node) => {
+    if (node instanceof FunctionDeclaration) return false;
+    if (
+      node instanceof BinaryExpression &&
+      (node.operator === 101 || node.operator === 102) &&
+      node.left instanceof IdentifierExpression &&
+      node.left.text === name
+    )
+      assigned = true;
+  });
+  return assigned;
 }
 function collectLocalBindings(declaration, semanticFacts, classes, globals) {
   const bindings = new Map();
@@ -988,7 +1020,7 @@ function analyzeCandidates(context, signatures) {
             : receiver instanceof StringLiteralExpression
               ? { kind: "string-literal", value: receiver.value }
               : null;
-      if (owner === null) continue;
+      if (owner === null || !spanOwnerIsStable(owner, context)) continue;
       let scalarUsesOnly = true;
       for (const { ref } of bindingUses.get(binding) ?? []) {
         if (
@@ -1367,10 +1399,9 @@ export function optimizeSource(
   sourceContext.representationSensitive =
     functions.some((declaration) => sensitiveDeclarations.has(declaration)) ||
     hasSensitiveCalls(source, sourceContext, sensitiveDeclarations);
+  const moduleOwners = [];
+  sourceContext.temporaryOwners = moduleOwners;
   rewriteDeclarationBoundaries(source.statements, sourceContext, signatures);
-  if (sourceContext.temporaryOwners?.length) {
-    source.statements.unshift(...sourceContext.temporaryOwners);
-  }
   for (const context of contexts.values()) {
     recordOriginalViewReceivers(context.declaration.body, context, signatures);
   }
@@ -1429,6 +1460,9 @@ export function optimizeSource(
     if (!declaration.body) continue;
     const context = contexts.get(declaration);
     analyzeCandidates(context, signatures);
+    if (!(declaration.body instanceof BlockStatement)) {
+      context.temporaryOwners = moduleOwners;
+    }
     rewriteStatement(declaration.body, context, signatures);
     if (
       context.temporaryOwners?.length &&
@@ -1449,6 +1483,10 @@ export function optimizeSource(
         diagnostics.push(tracked);
       }
     }
+  }
+  if (moduleOwners.length) {
+    source.statements.unshift(...moduleOwners);
+    changedSources.add(source);
   }
   if (sourceUsesViewName(source)) changedSources.add(source);
   return { changedSources, diagnostics, summary: summarize(diagnostics) };
