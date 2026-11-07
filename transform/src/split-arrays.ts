@@ -17,7 +17,7 @@ import {
   VariableDeclaration,
   VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
-import { i32Type, identifier, integer } from "./ast.js";
+import { i32Type, identifier, integer, viewType } from "./ast.js";
 import { FunctionContext } from "./model.js";
 import { operationSemantics } from "./operations.js";
 import { expressionRepresentation } from "./rewrite.js";
@@ -252,13 +252,7 @@ export function normalizeSplitArrays(
     )
       continue;
     const split = splitArray(local.initializer, context, signatures);
-    if (
-      split &&
-      isStable(binding.name) &&
-      (split.receiver instanceof StringLiteralExpression ||
-        isStable(split.receiver.text))
-    )
-      candidates.set(local, split);
+    if (split && isStable(binding.name)) candidates.set(local, split);
   }
   if (!candidates.size) return false;
   const loops = new Map<VariableDeclaration, SplitLoop[]>();
@@ -312,9 +306,59 @@ export function normalizeSplitArrays(
   });
   if (!candidates.size) return false;
 
+  // Save the receiver at the original split evaluation point. A native string
+  // binding can be reassigned, and even a const Str binding has a mutable range.
+  // A view slice captures that range and keeps its original backing data rooted.
+  let snapshots = 0;
+  walk(body, (node): boolean | void => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    if (!(node instanceof VariableStatement)) return;
+    const declarations: VariableDeclaration[] = [];
+    for (const local of node.declarations) {
+      const split = candidates.get(local);
+      if (split && split.receiver instanceof IdentifierExpression) {
+        const view =
+          expressionRepresentation(split.receiver, context, signatures) ===
+          "view";
+        if (view || !isStable(split.receiver.text)) {
+          const receiver = split.receiver;
+          let name = `__as_str_split_owner_${snapshots++}`;
+          while (body.range.source.text.includes(name)) name += "_";
+          const snapshot = view
+            ? Node.createCallExpression(
+                Node.createPropertyAccessExpression(
+                  receiver,
+                  identifier("slice", receiver.range),
+                  receiver.range,
+                ),
+                null,
+                [integer(0, receiver)],
+                receiver.range,
+              )
+            : receiver;
+          declarations.push(
+            Node.createVariableDeclaration(
+              identifier(name, local.range),
+              null,
+              CommonFlags.Const,
+              view ? viewType(local.range) : null,
+              snapshot,
+              local.range,
+            ),
+          );
+          split.receiver = identifier(name, receiver.range);
+          local.initializer = splitCall(split, local.initializer!.range);
+        }
+      }
+      declarations.push(local);
+    }
+    node.declarations = declarations;
+  });
+
   // Each loop reads its fields through a cursor declared beside its counter.
   const cursors = new Map<ElementAccessExpression, string>();
-  let declared = false;
+  let declared = snapshots > 0;
   for (const [array, split] of candidates) {
     for (const { loop, accesses } of loops.get(array) ?? []) {
       if (!accesses.size) continue;

@@ -11,6 +11,7 @@ const cases = {
   identityUse: [["abc"]],
   exportedUse: [["abc"]],
   rawCaller: [[]],
+  shadowReturn: [[]],
 };
 const fixture = "transform/__tests__/fixtures/span-returns";
 const PACKED = (name, parameter) =>

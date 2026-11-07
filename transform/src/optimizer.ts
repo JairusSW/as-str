@@ -50,6 +50,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
+  identifier,
   Representation,
   representationOfType,
   viewType,
@@ -620,6 +621,8 @@ function planSpanReturn(
     const name = span ? spanChainRoot(value!) : null;
     if (
       !(name instanceof IdentifierExpression) ||
+      !!context.classes.declarationOf(name, context) ||
+      expressionRepresentation(name, context, signatures) !== "native" ||
       (root !== null && root !== name.text)
     )
       valid = false;
@@ -717,9 +720,12 @@ function spanOwnerIsStable(
   const name = owner.name;
   if (context.duplicateNames.has(name)) return false;
   const local = context.bindings.get(name);
-  const global = [...(context.globals?.keys() ?? [])].find(
-    (declaration) => declaration.name.text === name,
-  );
+  const global = context.declaration
+    ? context.classes.globalDeclarationOf(
+        identifier(name, context.declaration.range),
+        context,
+      )
+    : undefined;
   if (local || context.parameters.has(name)) {
     // A local that hides a global may be declared after the span's receiver.
     if (global) return false;
@@ -2014,6 +2020,7 @@ export function optimizeSource(
       classes,
       globals,
     );
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     const charsChanged = normalizeCharComparisons(
       declaration,
       context,
@@ -2035,6 +2042,7 @@ export function optimizeSource(
         globals,
       );
     }
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     contexts.set(declaration, context);
   }
   // Split loops declare cursors, which the scope index must see.

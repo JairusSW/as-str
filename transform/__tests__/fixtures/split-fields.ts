@@ -1,3 +1,5 @@
+import { str } from "../../../assembly/index";
+
 export function firstKey(input: string): i32 {
   const key = input.split("=")[0].trim();
   return key == "name" ? 1000 : key.length;
@@ -145,4 +147,41 @@ export function irregularLoops(input: string): i32 {
   for (let i = 0; i < paired.length - 1; i++)
     total = total * 3 + paired[i + 1].length;
   return total;
+}
+
+export function viewSplitMutation(): i32 {
+  const view = str.from("a,b");
+  const parts = view.split(",");
+  view.set(str.from("x,y,z"));
+  return parts[0].charCodeAt(0);
+}
+
+function mutateSplit(value: string): void {
+  store<u16>(changetype<usize>(value), 120);
+}
+
+export function nativeSplitMutation(): i32 {
+  const input = String.fromCharCodes([97, 44, 98]);
+  const parts = input.split(",");
+  mutateSplit(input);
+  return parts[0].charCodeAt(0);
+}
+
+const source: string = "a,b";
+// eslint-disable-next-line @typescript-eslint/no-namespace -- regression: namespace-local owner resolution.
+namespace SplitOwner {
+  let source: string = "a,b";
+  function change(): void {
+    source = "x,y,z";
+  }
+  export function read(): i32 {
+    source = "a,b";
+    const parts = source.split(",");
+    change();
+    return parts[0].charCodeAt(0);
+  }
+}
+
+export function namespacedSplitOwner(): i32 {
+  return SplitOwner.read() + source.length;
 }

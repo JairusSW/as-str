@@ -41,6 +41,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   elementRepresentationOfType,
+  identifier,
   representationOfType,
   viewType,
   u64Type,
@@ -502,6 +503,8 @@ function planSpanReturn(
     const name = span ? spanChainRoot(value) : null;
     if (
       !(name instanceof IdentifierExpression) ||
+      !!context.classes.declarationOf(name, context) ||
+      expressionRepresentation(name, context, signatures) !== "native" ||
       (root !== null && root !== name.text)
     )
       valid = false;
@@ -576,9 +579,12 @@ function spanOwnerIsStable(owner, context) {
   const name = owner.name;
   if (context.duplicateNames.has(name)) return false;
   const local = context.bindings.get(name);
-  const global = [...(context.globals?.keys() ?? [])].find(
-    (declaration) => declaration.name.text === name,
-  );
+  const global = context.declaration
+    ? context.classes.globalDeclarationOf(
+        identifier(name, context.declaration.range),
+        context,
+      )
+    : undefined;
   if (local || context.parameters.has(name)) {
     if (global) return false;
     if (local?.declaration.is(8)) return true;
@@ -1730,6 +1736,7 @@ export function optimizeSource(
       classes,
       globals,
     );
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     const charsChanged = normalizeCharComparisons(
       declaration,
       context,
@@ -1751,6 +1758,7 @@ export function optimizeSource(
         globals,
       );
     }
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     contexts.set(declaration, context);
   }
   if (declared) {

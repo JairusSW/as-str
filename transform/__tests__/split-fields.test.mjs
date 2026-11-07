@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { compileFixture, functionBody, instantiate } from "./harness.mjs";
 
 const cases = {
+  viewSplitMutation: [[]],
+  nativeSplitMutation: [[]],
+  namespacedSplitOwner: [[]],
   firstKey: [[" name = x"], ["a"], [""], ["=b"], ["key=v=w"]],
   pathOnly: [["/a/b?x=1"], ["/plain"], ["?"], [""]],
   fieldCount: [["a,b,,c"], [""], [",,"], ["a::b::c"]],
@@ -130,15 +133,15 @@ for (const [build, extra] of [
       2,
       `${mode}: irregular loops stay native`,
     );
-    // Arrays indexed by variables, written, replaced, passed on, or split from
-    // a changing receiver remain native arrays.
+    // Arrays indexed by variables, written, replaced or passed on stay native.
+    // A changing receiver can now be captured once and read in place.
     assert.equal(
       (
         functionBody(compiled.wat, `${fixture}/arrayEscapes `).match(
           /String#split/g,
         ) ?? []
       ).length,
-      6,
+      5,
       `${mode}: escaping split arrays stay native`,
     );
   }

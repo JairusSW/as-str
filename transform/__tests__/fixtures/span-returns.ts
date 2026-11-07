@@ -94,3 +94,22 @@ export function rawCaller(): bool {
   const text = "abc";
   return sameAddress(text, text) && tail(text).length == 2;
 }
+
+class ShadowBox {
+  slice(start: i32): string {
+    return start ? "safe" : "other";
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- regression: a local hides this parameter.
+function shadowed(value: string): string {
+  {
+    const value = new ShadowBox();
+    return value.slice(1);
+  }
+}
+
+export function shadowReturn(): i32 {
+  const input = "abcdef";
+  return shadowed(input).length;
+}
