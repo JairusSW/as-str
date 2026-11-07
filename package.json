@@ -87,7 +87,7 @@
     "@types/node": "^25.9.2",
     "as-bench": "^0.1.0",
     "as-test": "^1.8.0",
-    "assemblyscript": "^0.28.18",
+    "assemblyscript": "^0.28.19",
     "assemblyscript-prettier": "^3.0.4",
     "chart.js": "^4.4.8",
     "chartjs-node-canvas": "^5.0.0",
@@ -103,9 +103,9 @@
     "@JairusSW:registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
-    "utf-as": "^0.3.1"
+    "utf-as": "^0.4.0"
   },
   "peerDependencies": {
-    "assemblyscript": ">=0.28.10"
+    "assemblyscript": ">=0.28.19"
   }
 }

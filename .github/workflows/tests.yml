@@ -50,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        assemblyscript: ["0.28.10", "0.28.18"]
+        assemblyscript: ["0.28.19", "0.28.20"]
         include:
           - os: ubuntu-latest
             assemblyscript: latest

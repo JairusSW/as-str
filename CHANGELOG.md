@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Update `utf-as` to the 0.4 release line and align the minimum supported
+  AssemblyScript version with its `>=0.28.19` peer requirement.
+
 ### Fixed
 
 - Preserve native string snapshots across excluded dependency helpers, including
