@@ -18,6 +18,7 @@ for (const [build, flags] of [
       "atomicWrite",
       "encodeUnsafe",
       "encodeUnsafe16",
+      "parenthesizedFill",
     ])
       assert.equal(instance.exports[name](), 1, `${mode}/${build}/${name}`);
     if (mode !== "global" && build === "debug") {

@@ -1814,8 +1814,12 @@ function isMemoryIntrinsic(
 ): boolean {
   const parts: string[] = [];
   let expression = call.expression;
-  while (expression instanceof PropertyAccessExpression) {
-    parts.unshift(expression.property.text);
+  while (
+    expression instanceof PropertyAccessExpression ||
+    expression instanceof ParenthesizedExpression
+  ) {
+    if (expression instanceof PropertyAccessExpression)
+      parts.unshift(expression.property.text);
     expression = expression.expression;
   }
   if (!(expression instanceof IdentifierExpression) || !parts.length)

@@ -16,6 +16,8 @@ const sourceEncode16: string = String.fromCharCodes([
   97, 98, 99, 100, 101, 102,
 ]);
 const addressEncode16 = changetype<usize>(sourceEncode16);
+const sourceParen: string = String.fromCharCodes([97, 98, 99, 100, 101, 102]);
+const addressParen = changetype<usize>(sourceParen);
 export function fill(): bool {
   const part = sourceFill.slice(1, 4);
   memory.fill(addressFill + 2, 120, 2);
@@ -44,6 +46,12 @@ export function encodeUnsafe(): bool {
 export function encodeUnsafe16(): bool {
   const part = sourceEncode16.slice(1, 4);
   String.UTF16.encodeUnsafe(replacementEncode, 1, addressEncode16 + 2);
+  return part == "bcd";
+}
+export function parenthesizedFill(): bool {
+  const part = sourceParen.slice(1, 4);
+  // prettier-ignore
+  (memory).fill(addressParen + 2, 120, 2);
   return part == "bcd";
 }
 class PureMemory {
