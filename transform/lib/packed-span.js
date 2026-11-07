@@ -397,13 +397,8 @@ export function lowerPackedLengthInitializer(expression, context) {
         lowerPackedSpanInitializer(expression, context),
       ]);
   }
-  if (nativeTrim(expression, context)) {
-    const owner = spanChainOwner(expression, context);
-    if (owner)
-      return staticViewCall("spanLength", owner, [
-        lowerPackedSpanInitializer(expression, context),
-      ]);
-  }
+  if (nativeTrim(expression, context))
+    return staticViewCall("nativeTrimLength", parts.receiver, parts.args);
   const method =
     parts.method === "at" &&
     !isStrStaticCall(expression) &&

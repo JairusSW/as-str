@@ -468,7 +468,9 @@ for (const method of [
 ]) {
   assert.match(
     allViewOperations,
-    new RegExp(`assembly\\/str\\/Str\\.${method}Length<`),
+    new RegExp(
+      `assembly\\/str\\/Str\\.${method === "trim" ? "(?:trim|nativeTrim)" : method}Length<`,
+    ),
     `missing allocation-free ${method} length specialization`,
   );
 }

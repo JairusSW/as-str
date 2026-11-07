@@ -1458,6 +1458,12 @@ import { Str8 } from "./str8";
   }
 
   // @ts-ignore: decorator
+  @inline static nativeTrimLength<T>(s: T): i32 {
+    const value = Str.nativeTrimSpan(s);
+    return unitLength(Str.spanStart(value), Str.spanEnd(value));
+  }
+
+  // @ts-ignore: decorator
   @inline static nativeTrimSpanOf(value: u64): u64 {
     const start = Str.spanStart(value);
     let size = Str.spanEnd(value) - start;
