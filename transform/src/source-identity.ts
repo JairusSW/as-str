@@ -68,3 +68,31 @@ export function isPackageSource(source: Source): boolean {
   packageSources.set(source, owned);
   return owned;
 }
+
+// Library paths also name third-party packages. Trust only the compiler's
+// actual standard sources, not every source under the ~lib prefix.
+const standardRoot = path.resolve(
+  fileURLToPath(import.meta.resolve("assemblyscript/dist/assemblyscript.js")),
+  "..",
+  "..",
+  "std",
+  "assembly",
+);
+const standardSources = new WeakMap<Source, boolean>();
+export function isStandardSource(source: Source): boolean {
+  const known = standardSources.get(source);
+  if (known !== undefined) return known;
+  let trusted = false;
+  const name = source.internalPath;
+  if (name.startsWith("~lib/") && !name.includes("..")) {
+    try {
+      trusted =
+        source.text ===
+        readFileSync(path.join(standardRoot, name.slice(5) + ".ts"), "utf8");
+    } catch {
+      trusted = false;
+    }
+  }
+  standardSources.set(source, trusted);
+  return trusted;
+}

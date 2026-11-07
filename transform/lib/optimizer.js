@@ -64,6 +64,7 @@ import { normalizeCharComparisons } from "./char-compare.js";
 import { normalizeSplitArrays } from "./split-arrays.js";
 import { factsForSource } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
+import { isStandardSource, sourcesFor } from "./source-identity.js";
 import {
   calleeName,
   isDeclarationIdentifier,
@@ -1540,6 +1541,9 @@ function sourceUsesViewName(source) {
   });
   return usesView;
 }
+function trustedRepresentationSource(source) {
+  return admitSource(source).packageSource || isStandardSource(source);
+}
 function representationEffects(node, context) {
   const write = writeTarget(node);
   if (
@@ -1559,7 +1563,7 @@ function representationEffects(node, context) {
       targets,
       opaque: targets.some(
         (target) =>
-          !target.body && admitSource(target.range.source).semanticFacts,
+          !target.body && !trustedRepresentationSource(target.range.source),
       ),
     };
   }
@@ -1583,7 +1587,7 @@ function representationEffects(node, context) {
       ) ||
       (!target && propertyCall(node)?.property.text === "set") ||
       (target
-        ? !target.body && admitSource(target.range.source).semanticFacts
+        ? !target.body && !trustedRepresentationSource(target.range.source)
         : (node.expression instanceof IdentifierExpression &&
             (context.parameters.has(node.expression.text) ||
               !!context.classes.declarationOf(node.expression, context))) ||
@@ -1593,41 +1597,59 @@ function representationEffects(node, context) {
 }
 function representationSensitiveDeclarations(sources) {
   const contexts = new Map();
-  for (const source of sources) {
-    const classes = new SourceClassTypes(source);
+  const classesBySource = new Map();
+  const ensure = (node) => {
+    if (
+      !(
+        node instanceof ClassDeclaration ||
+        (node instanceof FunctionDeclaration && node.body)
+      ) ||
+      contexts.has(node)
+    )
+      return;
+    const source = node.range.source;
+    if (trustedRepresentationSource(source)) return;
+    let classes = classesBySource.get(source);
+    if (!classes)
+      classesBySource.set(source, (classes = new SourceClassTypes(source)));
+    contexts.set(node, {
+      declaration: node instanceof FunctionDeclaration ? node : null,
+      className: classes.ownerOf(node),
+      classes,
+      bindings: new Map(),
+      globals: new Map(),
+      parameters: new Map(
+        node instanceof FunctionDeclaration
+          ? node.signature.parameters.map((parameter) => [
+              parameter.name.text,
+              representationOfType(parameter.type),
+            ])
+          : [],
+      ),
+      parameterSpans: new Map(),
+      lowercaseSpans: new Set(),
+      repeatedLowercaseReceivers: new Set(),
+      profitableLowercaseCalls: new Set(),
+      duplicateNames: new Set(),
+    });
+    if (node instanceof ClassDeclaration)
+      for (const member of node.members) ensure(member);
+  };
+  for (const source of sources) walk(source, ensure);
+  const graph = new Set();
+  for (const group of new Set(sources.map(sourcesFor)))
+    for (const source of group) graph.add(source);
+  const seeded = new Set(sources);
+  for (const source of graph) {
+    if (seeded.has(source) || trustedRepresentationSource(source)) continue;
     walk(source, (node) => {
-      if (
-        !(
-          node instanceof ClassDeclaration ||
-          (node instanceof FunctionDeclaration && node.body)
-        )
-      )
-        return;
-      contexts.set(node, {
-        declaration: node instanceof FunctionDeclaration ? node : null,
-        className: classes.ownerOf(node),
-        classes,
-        bindings: new Map(),
-        globals: new Map(),
-        parameters: new Map(
-          node instanceof FunctionDeclaration
-            ? node.signature.parameters.map((parameter) => [
-                parameter.name.text,
-                representationOfType(parameter.type),
-              ])
-            : [],
-        ),
-        parameterSpans: new Map(),
-        lowercaseSpans: new Set(),
-        repeatedLowercaseReceivers: new Set(),
-        profitableLowercaseCalls: new Set(),
-        duplicateNames: new Set(),
-      });
+      if (node instanceof ClassDeclaration) ensure(node);
     });
   }
   const sensitive = new Set();
   const callers = new Map();
   const link = (caller, callee) => {
+    ensure(callee);
     const incoming = callers.get(callee) ?? new Set();
     incoming.add(caller);
     callers.set(callee, incoming);

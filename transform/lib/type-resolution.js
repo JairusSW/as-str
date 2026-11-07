@@ -137,8 +137,12 @@ export function sourceBindsName(source, name) {
   return names.has(name);
 }
 function importedSource(source, internalPath) {
-  return sourcesFor(source).find(
-    (candidate) => candidate.internalPath === internalPath,
+  const sources = sourcesFor(source);
+  return (
+    sources.find((candidate) => candidate.internalPath === internalPath) ??
+    sources.find(
+      (candidate) => candidate.internalPath === `${internalPath}/index`,
+    )
   );
 }
 function namespaceMember(symbol, name, seen, value = false) {

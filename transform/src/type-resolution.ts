@@ -176,8 +176,12 @@ function importedSource(
   source: Source,
   internalPath: string | null,
 ): Source | undefined {
-  return sourcesFor(source).find(
-    (candidate) => candidate.internalPath === internalPath,
+  const sources = sourcesFor(source);
+  return (
+    sources.find((candidate) => candidate.internalPath === internalPath) ??
+    sources.find(
+      (candidate) => candidate.internalPath === `${internalPath}/index`,
+    )
   );
 }
 

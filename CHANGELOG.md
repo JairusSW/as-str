@@ -8,6 +8,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve native string snapshots across excluded dependency helpers, including
+  package-index imports, hidden virtual overrides, and host declarations.
+
 - Resolve switch-case locals and namespace globals by their actual declarations,
   including globals outside a local's scope and expressions in case labels.
 - Rewrite nested packed-span calls in expression containers, and retain native

@@ -74,6 +74,7 @@ import { normalizeCharComparisons } from "./char-compare.js";
 import { normalizeSplitArrays } from "./split-arrays.js";
 import { factsForSource, SemanticFact, SemanticManifest } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
+import { isStandardSource, sourcesFor } from "./source-identity.js";
 import {
   Binding,
   FunctionContext,
@@ -1801,6 +1802,10 @@ function sourceUsesViewName(source: Source): boolean {
   return usesView;
 }
 
+function trustedRepresentationSource(source: Source): boolean {
+  return admitSource(source).packageSource || isStandardSource(source);
+}
+
 function representationEffects(
   node: Node,
   context: FunctionContext,
@@ -1827,7 +1832,7 @@ function representationEffects(
       targets,
       opaque: targets.some(
         (target) =>
-          !target.body && admitSource(target.range.source).semanticFacts,
+          !target.body && !trustedRepresentationSource(target.range.source),
       ),
     };
   }
@@ -1853,7 +1858,7 @@ function representationEffects(
       ) ||
       (!target && propertyCall(node)?.property.text === "set") ||
       (target
-        ? !target.body && admitSource(target.range.source).semanticFacts
+        ? !target.body && !trustedRepresentationSource(target.range.source)
         : (node.expression instanceof IdentifierExpression &&
             (context.parameters.has(node.expression.text) ||
               !!context.classes.declarationOf(node.expression, context))) ||
@@ -1868,41 +1873,62 @@ function representationSensitiveDeclarations(sources: Source[]): Set<Node> {
     FunctionDeclaration | ClassDeclaration,
     FunctionContext
   >();
-  for (const source of sources) {
-    const classes = new SourceClassTypes(source);
+  const classesBySource = new Map<Source, SourceClassTypes>();
+  const ensure = (node: Node): void => {
+    if (
+      !(
+        node instanceof ClassDeclaration ||
+        (node instanceof FunctionDeclaration && node.body)
+      ) ||
+      contexts.has(node)
+    )
+      return;
+    const source = node.range.source;
+    if (trustedRepresentationSource(source)) return;
+    let classes = classesBySource.get(source);
+    if (!classes)
+      classesBySource.set(source, (classes = new SourceClassTypes(source)));
+    contexts.set(node, {
+      declaration: node instanceof FunctionDeclaration ? node : null,
+      className: classes.ownerOf(node),
+      classes,
+      bindings: new Map(),
+      globals: new Map(),
+      parameters: new Map(
+        node instanceof FunctionDeclaration
+          ? node.signature.parameters.map((parameter) => [
+              parameter.name.text,
+              representationOfType(parameter.type),
+            ])
+          : [],
+      ),
+      parameterSpans: new Map(),
+      lowercaseSpans: new Set(),
+      repeatedLowercaseReceivers: new Set(),
+      profitableLowercaseCalls: new Set(),
+      duplicateNames: new Set(),
+    });
+    if (node instanceof ClassDeclaration)
+      for (const member of node.members) ensure(member);
+  };
+  for (const source of sources) walk(source, ensure);
+  // Hidden subclasses can be initialized by another dependency module rather
+  // than a reachable constructor call. Index their methods before effect scans.
+  const graph = new Set<Source>();
+  for (const group of new Set(sources.map(sourcesFor)))
+    for (const source of group) graph.add(source);
+  const seeded = new Set(sources);
+  for (const source of graph) {
+    if (seeded.has(source) || trustedRepresentationSource(source)) continue;
     walk(source, (node) => {
-      if (
-        !(
-          node instanceof ClassDeclaration ||
-          (node instanceof FunctionDeclaration && node.body)
-        )
-      )
-        return;
-      contexts.set(node, {
-        declaration: node instanceof FunctionDeclaration ? node : null,
-        className: classes.ownerOf(node),
-        classes,
-        bindings: new Map(),
-        globals: new Map(),
-        parameters: new Map(
-          node instanceof FunctionDeclaration
-            ? node.signature.parameters.map((parameter) => [
-                parameter.name.text,
-                representationOfType(parameter.type),
-              ])
-            : [],
-        ),
-        parameterSpans: new Map(),
-        lowercaseSpans: new Set(),
-        repeatedLowercaseReceivers: new Set(),
-        profitableLowercaseCalls: new Set(),
-        duplicateNames: new Set(),
-      });
+      if (node instanceof ClassDeclaration) ensure(node);
     });
   }
   const sensitive = new Set<Node>();
   const callers = new Map<Node, Set<Node>>();
   const link = (caller: Node, callee: Node): void => {
+    // Follow excluded dependencies for effects without admitting them for rewriting.
+    ensure(callee);
     const incoming = callers.get(callee) ?? new Set();
     incoming.add(caller);
     callers.set(callee, incoming);
