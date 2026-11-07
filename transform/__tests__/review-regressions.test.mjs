@@ -25,8 +25,6 @@ const cases = {
     callResult: 3,
     indexedCallee: 3,
     commaCallee: 3,
-    calleeOrder: 12343,
-    indexOrder: 1243,
   },
   "switch-cases": {
     localCase: 2,
@@ -63,6 +61,12 @@ for (const [fixture, expected] of Object.entries(cases)) {
     ["debug", []],
     ["release", ["-O3", "--noAssert", "--enable", "simd"]],
   ]) {
+    // Computed-call evaluation order differs between supported compiler
+    // versions. Both optimized modes must preserve that compiler's native
+    // order, including the side effects in its callee and argument.
+    const nativeOrder = new Map();
+    const orderCases =
+      fixture === "callee-containers" ? ["calleeOrder", "indexOrder"] : [];
     for (const mode of ["global", "single", "auto"]) {
       const module = await instantiate(
         compileFixture(`review-${fixture}`, {
@@ -77,6 +81,16 @@ for (const [fixture, expected] of Object.entries(cases)) {
           value,
           `${fixture}/${mode}/${build}/${name}`,
         );
+      for (const name of orderCases) {
+        const actual = module.instance.exports[name]();
+        if (mode === "global") nativeOrder.set(name, actual);
+        else
+          assert.equal(
+            actual,
+            nativeOrder.get(name),
+            `${fixture}/${mode}/${build}/${name}: native evaluation order`,
+          );
+      }
     }
   }
 }
