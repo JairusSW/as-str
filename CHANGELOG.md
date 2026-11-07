@@ -92,7 +92,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fields. A missing field still throws. A split array read only through its
   length and constant indexes is lowered the same way, and a forward loop
   `for (let i = 0; i < parts.length; i++)` reads `parts[i]` through a packed
-  cursor over the receiver.
+  cursor over the receiver. Nested split loops name each outer field once and
+  lower the inner loop through its own packed cursor.
 
 ### Performance
 
