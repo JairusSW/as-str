@@ -63,7 +63,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Locals reassigned only to spans of the same owner, such as parser cursors
   `rest = rest.substring(i).trimStart()`, stay packed spans in loops.
 - A conditional whose branches are spans of one root, such as
-  `eq < 0 ? pair : pair.substring(0, eq)`, initializes a packed span. A cursor
+  `eq < 0 ? pair : pair.substring(0, eq)`, initializes a packed span. An empty
+  literal branch, as in `slash < 0 ? "" : path.slice(0, slash)`, is an empty
+  span of that root. A cursor
   and a conditional row over it, as in a line-by-line loop, pack together:
   packing is first assumed for mutually dependent locals, then kept only where
   it holds without that assumption.

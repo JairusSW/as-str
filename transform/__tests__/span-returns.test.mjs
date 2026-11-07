@@ -13,6 +13,7 @@ const cases = {
   exportedUse: [["abc"]],
   rawCaller: [[]],
   shadowReturn: [[]],
+  directories: [[]],
 };
 const fixture = "transform/__tests__/fixtures/span-returns";
 const PACKED = (name, parameter) =>
@@ -68,6 +69,8 @@ for (const [build, extra] of [
     for (const [name, parameter] of [
       ["firstLine", "text"],
       ["extension", "name"],
+      // An empty literal branch is an empty span of the same parameter.
+      ["directory", "path"],
     ]) {
       assert.ok(compiled.output.includes(PACKED(name, parameter)), name);
       assert.match(

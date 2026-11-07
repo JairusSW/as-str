@@ -14,6 +14,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   identifier,
+  integer,
   legacyNativeTrimSources,
   expressionRangeKey,
   loweredSpanCalls,
@@ -274,6 +275,11 @@ export function spanLinkReceiver(expression) {
     ? parts.receiver
     : null;
 }
+function isEmptyLiteral(expression) {
+  return (
+    expression instanceof StringLiteralExpression && !expression.value.length
+  );
+}
 export function spanTernary(expression) {
   if (!(expression instanceof TernaryExpression)) return null;
   const branches = [expression.ifThen, expression.ifElse];
@@ -287,6 +293,7 @@ export function spanTernary(expression) {
     )
   )
     return null;
+  if (branches.some(isEmptyLiteral)) return expression;
   const [left, right] = branches.map((branch) => spanChainRoot(branch));
   return (left instanceof IdentifierExpression &&
     right instanceof IdentifierExpression &&
@@ -299,7 +306,10 @@ export function spanTernary(expression) {
 }
 export function spanChainRoot(expression) {
   const ternary = spanTernary(expression);
-  if (ternary) return spanChainRoot(ternary.ifThen);
+  if (ternary)
+    return spanChainRoot(
+      isEmptyLiteral(ternary.ifThen) ? ternary.ifElse : ternary.ifThen,
+    );
   let current = expression;
   for (
     let receiver = spanLinkReceiver(current);
@@ -336,13 +346,28 @@ function nativeTrim(expression, context) {
 export function lowerPackedSpanInitializer(expression, context) {
   const ternary = spanTernary(expression);
   if (ternary) {
+    const root = spanChainRoot(ternary);
+    const packed = (value) =>
+      value instanceof IdentifierExpression &&
+      !!context.classes.bindingOf(value, context)?.scalarizedSpan;
+    const empty = (range) => {
+      const copy =
+        root instanceof IdentifierExpression
+          ? identifier(root.text, range)
+          : Node.createStringLiteralExpression(root.value, range);
+      const zero = () => integer(0, copy);
+      return packed(root)
+        ? staticViewCall("sliceSpanOf", copy, [zero(), zero()])
+        : staticViewCall("sliceSpan", copy, [zero(), zero()]);
+    };
     const branch = (value) =>
       isSpanLink(value)
         ? lowerPackedSpanInitializer(value, context)
-        : value instanceof IdentifierExpression &&
-            context.classes.bindingOf(value, context)?.scalarizedSpan
-          ? value
-          : staticViewCall("wholeSpan", value, []);
+        : isEmptyLiteral(value)
+          ? empty(value.range)
+          : packed(value)
+            ? value
+            : staticViewCall("wholeSpan", value, []);
     return Node.createTernaryExpression(
       ternary.condition,
       branch(ternary.ifThen),

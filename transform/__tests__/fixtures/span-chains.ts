@@ -360,3 +360,16 @@ export function emptyConversionIdentity(): i32 {
     result |= 8;
   return result;
 }
+
+export function emptyBranches(cut: i32): i32 {
+  const text = "  head/tail  ";
+  const part = cut < 0 ? "" : text.slice(cut).trim();
+  const rest = text.trim();
+  const tail = cut > 3 ? rest.slice(5) : "";
+  return (
+    part.length * 100 +
+    tail.length * 10 +
+    (part == "" ? 1 : 0) +
+    (tail == "tail" ? 1000 : 0)
+  );
+}

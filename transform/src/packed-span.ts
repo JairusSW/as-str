@@ -19,6 +19,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   identifier,
+  integer,
   legacyNativeTrimSources,
   expressionRangeKey,
   loweredSpanCalls,
@@ -348,6 +349,12 @@ export function spanLinkReceiver(expression: Expression): Expression | null {
  * `condition ? a : b` whose branches are each a span link or a bare root, all
  * over the same root: either branch is one span of that root.
  */
+function isEmptyLiteral(expression: Expression): boolean {
+  return (
+    expression instanceof StringLiteralExpression && !expression.value.length
+  );
+}
+
 export function spanTernary(expression: Expression): TernaryExpression | null {
   if (!(expression instanceof TernaryExpression)) return null;
   const branches = [expression.ifThen, expression.ifElse];
@@ -361,6 +368,8 @@ export function spanTernary(expression: Expression): TernaryExpression | null {
     )
   )
     return null;
+  // An empty literal is an empty span of whichever root the other branch has.
+  if (branches.some(isEmptyLiteral)) return expression;
   const [left, right] = branches.map((branch) => spanChainRoot(branch));
   return (left instanceof IdentifierExpression &&
     right instanceof IdentifierExpression &&
@@ -375,7 +384,10 @@ export function spanTernary(expression: Expression): TernaryExpression | null {
 /** The receiver at the root of a chain of span links. */
 export function spanChainRoot(expression: Expression): Expression {
   const ternary = spanTernary(expression);
-  if (ternary) return spanChainRoot(ternary.ifThen);
+  if (ternary)
+    return spanChainRoot(
+      isEmptyLiteral(ternary.ifThen) ? ternary.ifElse : ternary.ifThen,
+    );
   let current = expression;
   for (
     let receiver = spanLinkReceiver(current);
@@ -431,13 +443,32 @@ export function lowerPackedSpanInitializer(
 ): Expression {
   const ternary = spanTernary(expression);
   if (ternary) {
+    const root = spanChainRoot(ternary);
+    const packed = (value: Expression): boolean =>
+      value instanceof IdentifierExpression &&
+      !!context.classes.bindingOf(value, context)?.scalarizedSpan;
+    // An empty literal branch is the empty span at the start of the root.
+    const empty = (range: Expression["range"]): Expression => {
+      const copy =
+        root instanceof IdentifierExpression
+          ? identifier(root.text, range)
+          : Node.createStringLiteralExpression(
+              (root as StringLiteralExpression).value,
+              range,
+            );
+      const zero = (): Expression => integer(0, copy);
+      return packed(root)
+        ? staticViewCall("sliceSpanOf", copy, [zero(), zero()])
+        : staticViewCall("sliceSpan", copy, [zero(), zero()]);
+    };
     const branch = (value: Expression): Expression =>
       isSpanLink(value)
         ? lowerPackedSpanInitializer(value, context)
-        : value instanceof IdentifierExpression &&
-            context.classes.bindingOf(value, context)?.scalarizedSpan
-          ? value
-          : staticViewCall("wholeSpan", value, []);
+        : isEmptyLiteral(value)
+          ? empty(value.range)
+          : packed(value)
+            ? value
+            : staticViewCall("wholeSpan", value, []);
     return Node.createTernaryExpression(
       ternary.condition,
       branch(ternary.ifThen),

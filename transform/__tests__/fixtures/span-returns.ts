@@ -122,3 +122,19 @@ function earlyFirstLine(text: string): string {
 export function earlyLine(text: string): i32 {
   return earlyFirstLine(text).length;
 }
+
+function directory(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+export function directories(): i32 {
+  const nested = "a/b/c.ts";
+  const flat = "c.ts";
+  return (
+    directory(nested).length * 10 +
+    directory(flat).length +
+    (directory(nested) == "a/b" ? 100 : 0) +
+    (directory(flat) == "" ? 1000 : 0)
+  );
+}
