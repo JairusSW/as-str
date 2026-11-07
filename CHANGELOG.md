@@ -53,6 +53,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   labels held in a static constant.
 - Equality between two chains, such as `a.trim() == b.trim()`, compares two
   spans.
+- Concatenation with span operands, such as `key.trim() + "=" + value.trim()`,
+  copies each operand's bytes once into the result instead of copying each
+  operand first.
 - Chains of span operations, such as `s.substring(i).trim()`, narrow one packed
   span of their root. A chain whose result must be native is copied once, and
   `toLowerCase`/`toUpperCase` on a chain lowercase the span directly.

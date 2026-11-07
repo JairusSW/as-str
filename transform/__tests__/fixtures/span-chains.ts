@@ -225,3 +225,31 @@ export function spanSwitch(at: i32): i32 {
   }
   return out + pairEffects * 100;
 }
+
+function stamp(value: i32): string {
+  pairEffects = pairEffects * 10 + value;
+  return value.toString();
+}
+
+export function concatenations(cut: i32): i32 {
+  pairEffects = 0;
+  const key = "  name ";
+  const value = " é value  ";
+  const pair = key.trim() + "=" + value.trim();
+  const framed = "[" + value.slice(cut).trimEnd() + "]";
+  const both = key.trim() + value.substring(0, cut);
+  const ordered = key.slice(step(1)) + stamp(2) + value.slice(step(3));
+  const empty = key.slice(100) + "" + value.slice(100);
+  const packed = key.trim();
+  const fromPacked = packed.slice(1) + "!";
+  return (
+    hash(pair) +
+    hash(framed) * 3 +
+    hash(both) * 5 +
+    hash(ordered) * 7 +
+    hash(empty) * 11 +
+    hash(fromPacked) * 13 +
+    pairEffects * 17 +
+    (key.trim() + "!").length * 19
+  );
+}

@@ -22,6 +22,7 @@ const cases = {
   packedParameterCallers: [[]],
   chainPairs: [[0], [5], [7], [100]],
   spanSwitch: [[-1], [0], [1], [3], [6], [11], [100]],
+  concatenations: [[-3], [0], [2], [5], [100]],
 };
 const SCALARIZED = "scalarized non-escaping view into a packed pointer span";
 // A trailing space selects the definition rather than its export entry.
@@ -88,6 +89,12 @@ for (const [build, extra] of [
         `${mode}: chain ${line} must not pack`,
       );
     // Intermediate links neither copy nor allocate a view object.
+    // Concatenation reads span operands in place: only the results copy.
+    assert.doesNotMatch(
+      functionBody(compiled.wat, `${fixture}/concatenations `),
+      /String#(?:slice|substring|trim\w*)/,
+      `${mode}: concatenation must not copy its operands`,
+    );
     // A span switch selects its case by index; only the user class copies.
     const spanSwitch = functionBody(compiled.wat, `${fixture}/spanSwitch `);
     assert.match(spanSwitch, /Str\.caseIndexSpan/);

@@ -471,6 +471,49 @@ function caseLabels(labels, range, context) {
   );
   return identifier(name, range);
 }
+function concatOperand(expression, context, signatures) {
+  if (
+    isSpanLink(expression) &&
+    !(spanReturnCall(expression) && loweredSpanCalls.has(expression))
+  ) {
+    const root = spanChainRoot(expression);
+    const native =
+      packedRoot(root, context) ||
+      ((root instanceof IdentifierExpression ||
+        root instanceof StringLiteralExpression) &&
+        expressionRepresentation(root, context, signatures) === "native");
+    const owner = native ? spanChainOwner(expression, context) : null;
+    return owner
+      ? { owner, value: lowerPackedSpanInitializer(expression, context) }
+      : null;
+  }
+  const nested =
+    expression instanceof BinaryExpression &&
+    expression.operator === 81 &&
+    !!concatOperand(expression.left, context, signatures) &&
+    !!concatOperand(expression.right, context, signatures);
+  return nested ||
+    expressionRepresentation(expression, context, signatures) === "native"
+    ? { owner: null, value: expression }
+    : null;
+}
+function fuseConcat(expression, context, signatures) {
+  const left = concatOperand(expression.left, context, signatures);
+  const right = left && concatOperand(expression.right, context, signatures);
+  if (!left || !right || (!left.owner && !right.owner)) return null;
+  if (left.owner && right.owner)
+    return staticViewCall("concatSpans", left.owner, [
+      left.value,
+      right.owner,
+      right.value,
+    ]);
+  return left.owner
+    ? staticViewCall("concatSpanString", left.owner, [left.value, right.value])
+    : staticViewCall("concatStringSpan", left.value, [
+        right.owner,
+        right.value,
+      ]);
+}
 const SPAN_CASE_CONVERSIONS = new Set(["toLowerCase", "toUpperCase"]);
 function fuseNativeChain(expression, context, signatures) {
   let chain;
@@ -618,6 +661,14 @@ function rewriteExpression(expression, expected, context, signatures) {
     return expression;
   }
   if (expression instanceof BinaryExpression) {
+    if (
+      expression.operator === 81 &&
+      expected !== "view" &&
+      !context.representationSensitive
+    ) {
+      const fused = fuseConcat(expression, context, signatures);
+      if (fused) return rewriteExpression(fused, expected, context, signatures);
+    }
     if (
       expression.operator === 101 &&
       expression.left instanceof IdentifierExpression &&

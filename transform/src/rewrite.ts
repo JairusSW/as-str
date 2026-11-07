@@ -553,6 +553,70 @@ function caseLabels(
   return identifier(name, range);
 }
 
+interface ConcatOperand {
+  owner: Expression | null;
+  value: Expression;
+}
+
+/** A concatenation operand: a span of a native string, or a native string. */
+function concatOperand(
+  expression: Expression,
+  context: FunctionContext,
+  signatures: FunctionSignatures,
+): ConcatOperand | null {
+  if (
+    isSpanLink(expression) &&
+    !(spanReturnCall(expression) && loweredSpanCalls.has(expression))
+  ) {
+    const root = spanChainRoot(expression);
+    const native =
+      packedRoot(root, context) ||
+      ((root instanceof IdentifierExpression ||
+        root instanceof StringLiteralExpression) &&
+        expressionRepresentation(root, context, signatures) === "native");
+    const owner = native ? spanChainOwner(expression, context) : null;
+    return owner
+      ? { owner, value: lowerPackedSpanInitializer(expression, context) }
+      : null;
+  }
+  // A concatenation of strings and spans is itself a native string.
+  const nested =
+    expression instanceof BinaryExpression &&
+    expression.operator === Token.Plus &&
+    !!concatOperand(expression.left, context, signatures) &&
+    !!concatOperand(expression.right, context, signatures);
+  return nested ||
+    expressionRepresentation(expression, context, signatures) === "native"
+    ? { owner: null, value: expression }
+    : null;
+}
+
+/**
+ * `a.trim() + "="` copies the trimmed string and then both operands. Reading
+ * a span operand in place copies each byte once.
+ */
+function fuseConcat(
+  expression: BinaryExpression,
+  context: FunctionContext,
+  signatures: FunctionSignatures,
+): Expression | null {
+  const left = concatOperand(expression.left, context, signatures);
+  const right = left && concatOperand(expression.right, context, signatures);
+  if (!left || !right || (!left.owner && !right.owner)) return null;
+  if (left.owner && right.owner)
+    return staticViewCall("concatSpans", left.owner, [
+      left.value,
+      right.owner,
+      right.value,
+    ]);
+  return left.owner
+    ? staticViewCall("concatSpanString", left.owner, [left.value, right.value])
+    : staticViewCall("concatStringSpan", left.value, [
+        right.owner!,
+        right.value,
+      ]);
+}
+
 const SPAN_CASE_CONVERSIONS = new Set(["toLowerCase", "toUpperCase"]);
 
 /**
@@ -728,6 +792,14 @@ function rewriteExpression(
   }
 
   if (expression instanceof BinaryExpression) {
+    if (
+      expression.operator === Token.Plus &&
+      expected !== "view" &&
+      !context.representationSensitive
+    ) {
+      const fused = fuseConcat(expression, context, signatures);
+      if (fused) return rewriteExpression(fused, expected, context, signatures);
+    }
     if (
       expression.operator === Token.Equals &&
       expression.left instanceof IdentifierExpression &&

@@ -1004,6 +1004,51 @@ import { Str8 } from "./str8";
     return found;
   }
 
+  /**
+   * `left + right` where either side may be a span: each side is a span
+   * `[start, end)` of its owner, so concatenation copies each byte once.
+   */
+  static concatSpans<T, U>(
+    leftOwner: T,
+    left: u64,
+    rightOwner: U,
+    right: u64,
+  ): string {
+    const leftStart = Str.spanStart(left);
+    const leftBytes = Str.spanEnd(left) - leftStart;
+    const rightStart = Str.spanStart(right);
+    const rightBytes = Str.spanEnd(right) - rightStart;
+    const bytes = leftBytes + rightBytes;
+    if (!bytes) return "";
+    const out = allocString(<u64>bytes);
+    copyBytes(changetype<usize>(out), leftStart, leftBytes);
+    copyBytes(changetype<usize>(out) + leftBytes, rightStart, rightBytes);
+    // Reading the owners after the copy keeps both rooted across allocation.
+    bData(leftOwner);
+    bData(rightOwner);
+    return out;
+  }
+
+  /** `left + right` for a native string and a span. */
+  // @ts-ignore: decorator
+  @inline static concatStringSpan<U>(
+    left: string,
+    rightOwner: U,
+    right: u64,
+  ): string {
+    return Str.concatSpans(left, Str.wholeSpan(left), rightOwner, right);
+  }
+
+  /** `left + right` for a span and a native string. */
+  // @ts-ignore: decorator
+  @inline static concatSpanString<T>(
+    leftOwner: T,
+    left: u64,
+    right: string,
+  ): string {
+    return Str.concatSpans(leftOwner, left, right, Str.wholeSpan(right));
+  }
+
   /** The span of all of `s`, for a branch that keeps its whole receiver. */
   // @ts-ignore: decorator
   @inline static wholeSpan<T>(s: T): u64 {
