@@ -109,6 +109,13 @@ export function identifier(
  */
 export const generatedCalls = new WeakSet<Expression>();
 
+/**
+ * Calls to functions that return a packed span of one argument, by that
+ * argument's index, and the calls already lowered into a span position.
+ */
+export const spanReturnCalls = new WeakMap<Expression, number>();
+export const loweredSpanCalls = new WeakSet<Expression>();
+
 export function staticViewCall(
   method: string,
   receiver: Expression,

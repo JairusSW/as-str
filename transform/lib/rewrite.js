@@ -40,6 +40,7 @@ import {
   parseExpression,
   i32Type,
   integer,
+  loweredSpanCalls,
   representationOfType,
   staticViewCall,
   u64Type,
@@ -63,6 +64,7 @@ import {
   spanChainRoot,
   spanLinkReceiver,
   spanOwnerExpression,
+  spanReturnCall,
   spanTernary,
   splitField,
 } from "./packed-span.js";
@@ -341,6 +343,7 @@ function convertExpression(expression, expected, context, signatures) {
   }
   return expression;
 }
+const loweredReturns = new WeakSet();
 function packedRoot(expression, context) {
   return (
     expression instanceof IdentifierExpression &&
@@ -380,7 +383,10 @@ function fusedLength(expression, context, signatures) {
   return lowerPackedLengthInitializer(call, context);
 }
 function fuseScalarLength(value, context, signatures) {
-  if (splitField(value)) {
+  if (
+    splitField(value) ||
+    (spanReturnCall(value) && !loweredSpanCalls.has(value))
+  ) {
     const owner = scalarChainOwner(value, context, signatures);
     return owner
       ? staticViewCall("spanLength", owner, [
@@ -469,7 +475,11 @@ const SPAN_CASE_CONVERSIONS = new Set(["toLowerCase", "toUpperCase"]);
 function fuseNativeChain(expression, context, signatures) {
   let chain;
   let conversion = null;
-  if (splitField(expression)) {
+  const returned = spanReturnCall(expression);
+  if (returned) {
+    if (loweredSpanCalls.has(returned)) return null;
+    chain = returned;
+  } else if (splitField(expression)) {
     chain = expression;
   } else if (
     expression instanceof CallExpression &&
@@ -529,6 +539,7 @@ function rewriteExpression(expression, expected, context, signatures) {
     expected === "view" &&
     !context.representationSensitive &&
     (splitField(expression) ||
+      (spanReturnCall(expression) && !loweredSpanCalls.has(expression)) ||
       (isSpanCall(expression) &&
         (isSpanLink(spanLinkReceiver(expression)) ||
           packedRoot(spanLinkReceiver(expression), context))))
@@ -1292,6 +1303,17 @@ export function rewriteStatement(statement, context, signatures) {
     return;
   }
   if (statement instanceof ReturnStatement) {
+    if (statement.value && context.spanReturn !== undefined) {
+      if (loweredReturns.has(statement)) return;
+      loweredReturns.add(statement);
+      statement.value = rewriteExpression(
+        lowerPackedSpanInitializer(statement.value, context),
+        "unknown",
+        context,
+        signatures,
+      );
+      return;
+    }
     if (statement.value) {
       statement.value = rewriteExpression(
         statement.value,

@@ -74,6 +74,8 @@ export function identifier(name, range) {
   return Node.createIdentifierExpression(name, range, false);
 }
 export const generatedCalls = new WeakSet();
+export const spanReturnCalls = new WeakMap();
+export const loweredSpanCalls = new WeakSet();
 export function staticViewCall(method, receiver, args) {
   const range = receiver.range;
   const staticMethod =

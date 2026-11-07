@@ -7,6 +7,7 @@ import {
   StringLiteralExpression,
   TernaryExpression,
 } from "assemblyscript/dist/assemblyscript.js";
+import { spanReturnCalls } from "./ast.js";
 import { operationSemantics } from "./operations.js";
 import { calleeName, propertyCall } from "./visitor.js";
 
@@ -35,6 +36,7 @@ export function expressionCanProduceView(
     );
   }
   if (!(expression instanceof CallExpression)) return false;
+  if (spanReturnCalls.has(expression)) return true;
   if (calleeName(expression.expression) === "str") return true;
   const property = propertyCall(expression);
   if (!property) return false;

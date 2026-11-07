@@ -45,6 +45,7 @@ import {
   parseExpression,
   i32Type,
   integer,
+  loweredSpanCalls,
   Representation,
   representationOfType,
   staticViewCall,
@@ -70,6 +71,7 @@ import {
   spanChainRoot,
   spanLinkReceiver,
   spanOwnerExpression,
+  spanReturnCall,
   spanTernary,
   splitField,
 } from "./packed-span.js";
@@ -390,6 +392,8 @@ function convertExpression(
   return expression;
 }
 
+const loweredReturns = new WeakSet<ReturnStatement>();
+
 /** A local already lowered to a packed span. */
 function packedRoot(expression: Expression, context: FunctionContext): boolean {
   return (
@@ -451,7 +455,10 @@ function fuseScalarLength(
   context: FunctionContext,
   signatures: FunctionSignatures,
 ): Expression | null {
-  if (splitField(value)) {
+  if (
+    splitField(value) ||
+    (spanReturnCall(value) && !loweredSpanCalls.has(value))
+  ) {
     const owner = scalarChainOwner(value, context, signatures);
     return owner
       ? staticViewCall("spanLength", owner, [
@@ -559,7 +566,12 @@ function fuseNativeChain(
 ): Expression | null {
   let chain: Expression;
   let conversion: string | null = null;
-  if (splitField(expression)) {
+  const returned = spanReturnCall(expression);
+  if (returned) {
+    // Lowered calls already sit in a span position.
+    if (loweredSpanCalls.has(returned)) return null;
+    chain = returned;
+  } else if (splitField(expression)) {
     // Native split allocates an array and every field to read one of them.
     chain = expression;
   } else if (
@@ -631,6 +643,7 @@ function rewriteExpression(
     expected === "view" &&
     !context.representationSensitive &&
     (splitField(expression) ||
+      (spanReturnCall(expression) && !loweredSpanCalls.has(expression)) ||
       (isSpanCall(expression) &&
         (isSpanLink(spanLinkReceiver(expression)!) ||
           packedRoot(spanLinkReceiver(expression)!, context))))
@@ -1436,6 +1449,19 @@ export function rewriteStatement(
     return;
   }
   if (statement instanceof ReturnStatement) {
+    // A span-returning function returns the packed span of its argument.
+    // Rewriting is repeated per round, so each return is lowered once.
+    if (statement.value && context.spanReturn !== undefined) {
+      if (loweredReturns.has(statement)) return;
+      loweredReturns.add(statement);
+      statement.value = rewriteExpression(
+        lowerPackedSpanInitializer(statement.value, context),
+        "unknown",
+        context,
+        signatures,
+      );
+      return;
+    }
     if (statement.value) {
       statement.value = rewriteExpression(
         statement.value,

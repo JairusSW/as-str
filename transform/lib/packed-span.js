@@ -13,6 +13,8 @@ import {
 import {
   identifier,
   expressionRangeKey,
+  loweredSpanCalls,
+  spanReturnCalls,
   representationOfType,
   staticViewCall,
   u64Type,
@@ -237,12 +239,23 @@ export function splitField(expression) {
     index: expression.elementExpression,
   };
 }
+export function spanReturnCall(expression) {
+  return expression instanceof CallExpression && spanReturnCalls.has(expression)
+    ? expression
+    : null;
+}
 export function isSpanLink(expression) {
-  return isSpanCall(expression) || !!splitField(expression);
+  return (
+    isSpanCall(expression) ||
+    !!splitField(expression) ||
+    !!spanReturnCall(expression)
+  );
 }
 export function spanLinkReceiver(expression) {
   const field = splitField(expression);
   if (field) return field.receiver;
+  const returned = spanReturnCall(expression);
+  if (returned) return returned.args[spanReturnCalls.get(returned)];
   if (!(expression instanceof CallExpression)) return null;
   const parts = viewCallParts(expression);
   return parts && operationSemantics(parts.method).spanProducing
@@ -314,6 +327,11 @@ export function lowerPackedSpanInitializer(expression, context) {
       branch(ternary.ifElse),
       ternary.range,
     );
+  }
+  const returned = spanReturnCall(expression);
+  if (returned) {
+    loweredSpanCalls.add(returned);
+    return returned;
   }
   const field = splitField(expression);
   if (field) {

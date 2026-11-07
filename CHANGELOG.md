@@ -65,6 +65,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it holds without that assumption.
 - Locals split in place, such as `row.split(",").length`, no longer count as
   escaping into a container.
+- Under `as-str/auto`, an internal helper whose every return narrows one
+  never-reassigned string parameter, such as
+  `nl < 0 ? s : s.slice(0, nl)`, returns a packed span when each caller passes
+  a name or literal and reads the result in place. Callers treat the call as a
+  span of that argument.
 - Fields of literal-separated splits, `s.split(",")[i]`, are spans of `s`, and
   `s.split(",").length` counts separators, without allocating the array or its
   fields. A missing field still throws. A split array read only through its

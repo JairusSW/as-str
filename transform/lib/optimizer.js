@@ -31,6 +31,7 @@ import {
   NewExpression,
   NamespaceDeclaration,
   ParenthesizedExpression,
+  MethodDeclaration,
   PropertyAccessExpression,
   ReturnStatement,
   TernaryExpression,
@@ -42,7 +43,10 @@ import {
   elementRepresentationOfType,
   representationOfType,
   viewType,
+  u64Type,
   generatedCalls,
+  generatedTypes,
+  spanReturnCalls,
 } from "./ast.js";
 import { containerArgumentKind, operationSemantics } from "./operations.js";
 import {
@@ -395,6 +399,7 @@ function analyzeReturnPromotion(context, signature, source, signatures) {
     !body ||
     !signature?.promotable ||
     signature.result === "view" ||
+    signature.spanReturn !== undefined ||
     declaration.is(2)
   )
     return null;
@@ -438,6 +443,101 @@ function analyzeReturnPromotion(context, signature, source, signatures) {
     reason: reason ?? "closed-world return with profitable view result",
     uses,
   };
+}
+function consumesSpan(call, parent) {
+  if (parent instanceof VariableDeclaration) return parent.initializer === call;
+  if (parent instanceof PropertyAccessExpression)
+    return (
+      parent.expression === call &&
+      (parent.property.text === "length" ||
+        operationSemantics(parent.property.text).spanScalar ||
+        operationSemantics(parent.property.text).spanProducing)
+    );
+  return (
+    parent instanceof BinaryExpression &&
+    (parent.operator === 76 ||
+      parent.operator === 77 ||
+      parent.operator === 78 ||
+      parent.operator === 79)
+  );
+}
+function planSpanReturn(
+  signature,
+  context,
+  signatures,
+  sensitive,
+  callParents,
+) {
+  const declaration = signature.declaration;
+  const body = declaration.body;
+  const sites = signature.callSites ?? [];
+  if (
+    !context ||
+    !(body instanceof BlockStatement) ||
+    !signature.promotable ||
+    signature.declarations.size !== 1 ||
+    declaration instanceof MethodDeclaration ||
+    declaration.typeParameters?.length ||
+    declaration.is(2) ||
+    context.representationSensitive ||
+    representationOfType(declaration.signature.returnType) !== "native" ||
+    typeIsNullable(declaration.signature.returnType) ||
+    !sites.length ||
+    sites.length !== signature.directCallCount
+  )
+    return;
+  let root = null;
+  let valid = true;
+  let narrows = false;
+  walk(body, (node) => {
+    if (node instanceof FunctionDeclaration) return false;
+    if (!(node instanceof ReturnStatement)) return;
+    const value = node.value;
+    if (value && !(value instanceof IdentifierExpression)) narrows = true;
+    const span =
+      !!value &&
+      (isSpanLink(value) ||
+        !!spanTernary(value) ||
+        value instanceof IdentifierExpression);
+    const name = span ? spanChainRoot(value) : null;
+    if (
+      !(name instanceof IdentifierExpression) ||
+      (root !== null && root !== name.text)
+    )
+      valid = false;
+    else root = name.text;
+  });
+  if (!valid || root === null || !narrows) return;
+  const index = declaration.signature.parameters.findIndex(
+    (parameter) => parameter.name.text === root,
+  );
+  const parameter = declaration.signature.parameters[index];
+  if (
+    !parameter ||
+    parameter.parameterKind !== 0 ||
+    parameter.initializer ||
+    representationOfType(parameter.type) !== "native" ||
+    typeIsNullable(parameter.type) ||
+    assignsName(body, root)
+  )
+    return;
+  for (const { call, context: caller } of sites) {
+    const argument = call.args[index];
+    if (
+      caller.representationSensitive ||
+      (caller.declaration && sensitive.has(caller.declaration)) ||
+      !(
+        argument instanceof StringLiteralExpression ||
+        (argument instanceof IdentifierExpression &&
+          expressionRepresentation(argument, caller, signatures) === "native")
+      ) ||
+      !consumesSpan(call, callParents.get(call) ?? null)
+    )
+      return;
+  }
+  signature.spanReturn = index;
+  signature.result = "unknown";
+  for (const { call } of sites) spanReturnCalls.set(call, index);
 }
 function initializerElementRepresentation(expression) {
   if (!(expression instanceof NewExpression)) return "unknown";
@@ -542,6 +642,7 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
         !nullable &&
         !noView &&
         !explicitView &&
+        !(node.type && generatedTypes.has(node.type)) &&
         (declared === "unknown" || declared === "native") &&
         !!node.initializer &&
         (expressionCanProduceView(node.initializer) ||
@@ -1693,6 +1794,26 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration);
     const signature = signatureForDeclaration(declaration, signatures);
+    if (signature?.spanReturn !== undefined) {
+      context.spanReturn = signature.spanReturn;
+      const range = declaration.signature.returnType.range;
+      if (!generatedTypes.has(declaration.signature.returnType)) {
+        const location = range.source;
+        diagnostics.push({
+          source: source.normalizedPath,
+          line: location.lineAt(range.start),
+          column: location.columnAt(),
+          binding: `${declaration.name.text} return`,
+          decision: "view",
+          reason: `returns a packed span of ${declaration.signature.parameters[signature.spanReturn].name.text}`,
+          uses: signature.directCallCount,
+          conversions: 0,
+        });
+      }
+      declaration.signature.returnType = u64Type(range);
+      changedSources.add(source);
+      continue;
+    }
     const packedSpanPlan = canPromoteBoundaries
       ? planPackedSpanParameters(context, signature)
       : null;
@@ -1813,6 +1934,8 @@ export function optimizeSources(sources, manifest = null) {
     }
   }
   for (const name of ambiguous) sharedSignatures.rejectAmbiguousName(name);
+  const functionContexts = new Map();
+  const callParents = new Map();
   const userPaths = new Set(userSources.map((source) => source.internalPath));
   const userGlobals = userSources.some((source) =>
     /@global\b/.test(source.text),
@@ -1831,10 +1954,16 @@ export function optimizeSources(sources, manifest = null) {
     const classes = new SourceClassTypes(source);
     if (userSource) {
       walk(source, (node) => {
-        if (node instanceof FunctionDeclaration)
-          scopes.push(
-            collectLocalBindings(node, sourceFacts, classes, globals),
+        if (node instanceof FunctionDeclaration) {
+          const scope = collectLocalBindings(
+            node,
+            sourceFacts,
+            classes,
+            globals,
           );
+          scopes.push(scope);
+          functionContexts.set(node, scope);
+        }
       });
     }
     scopes.sort(
@@ -1890,6 +2019,8 @@ export function optimizeSources(sources, manifest = null) {
         signature.promotable = false;
       } else {
         signature.directCallCount++;
+        (signature.callSites ??= []).push({ call, context });
+        callParents.set(call, ref.grandparent);
         call.args.forEach((argument, index) => {
           if (
             argument instanceof CallExpression &&
@@ -1919,6 +2050,15 @@ export function optimizeSources(sources, manifest = null) {
     const signature = sharedSignatures.forDeclaration(declaration);
     if (signature) signature.promotable = false;
   }
+  if (manifest?.complete === true)
+    for (const signature of new Set(sharedSignatures.values()))
+      planSpanReturn(
+        signature,
+        functionContexts.get(signature.declaration),
+        sharedSignatures,
+        sensitiveDeclarations,
+        callParents,
+      );
   for (let round = 0; round < 2; round++) {
     for (const source of userSources) {
       const result = optimizeSource(

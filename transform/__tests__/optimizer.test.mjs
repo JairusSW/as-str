@@ -68,7 +68,7 @@ assert.match(
 );
 assert.match(
   local.output,
-  /internalSliceReturn return -> native: class-backed return only substitutes a wrapper allocation/,
+  /internalSliceReturn return -> view: returns a packed span of input/,
 );
 assert.match(
   local.output,
@@ -234,7 +234,9 @@ const internalReturn = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/internalSliceReturn",
 );
-assert.match(internalReturn, /call \$~lib\/string\/String#slice/);
+// Every caller reads the result in place, so the helper returns a span.
+assert.doesNotMatch(internalReturn, /call \$~lib\/string\/String#slice/);
+assert.match(internalReturn, /\(result i64\)/);
 
 const directTemporary = functionBody(
   local.wat,

@@ -35,6 +35,7 @@ import {
   Node,
   NamespaceDeclaration,
   ParenthesizedExpression,
+  MethodDeclaration,
   ParameterKind,
   PropertyAccessExpression,
   ReturnStatement,
@@ -52,7 +53,10 @@ import {
   Representation,
   representationOfType,
   viewType,
+  u64Type,
   generatedCalls,
+  generatedTypes,
+  spanReturnCalls,
 } from "./ast.js";
 import { containerArgumentKind, operationSemantics } from "./operations.js";
 import {
@@ -499,6 +503,7 @@ function analyzeReturnPromotion(
     !body ||
     !signature?.promotable ||
     signature.result === "view" ||
+    signature.spanReturn !== undefined ||
     declaration.is(CommonFlags.Export)
   )
     return null;
@@ -545,6 +550,113 @@ function analyzeReturnPromotion(
     reason: reason ?? "closed-world return with profitable view result",
     uses,
   };
+}
+
+/**
+ * A call result consumed where a span serves without a copy: a local, its
+ * length, an equality, or a string method. A native position would copy.
+ */
+function consumesSpan(call: CallExpression, parent: Node | null): boolean {
+  if (parent instanceof VariableDeclaration) return parent.initializer === call;
+  if (parent instanceof PropertyAccessExpression)
+    return (
+      parent.expression === call &&
+      (parent.property.text === "length" ||
+        operationSemantics(parent.property.text).spanScalar ||
+        operationSemantics(parent.property.text).spanProducing)
+    );
+  return (
+    parent instanceof BinaryExpression &&
+    (parent.operator === Token.Equals_Equals ||
+      parent.operator === Token.Exclamation_Equals ||
+      parent.operator === Token.Equals_Equals_Equals ||
+      parent.operator === Token.Exclamation_Equals_Equals)
+  );
+}
+
+/**
+ * A function whose every return narrows one never-reassigned native string
+ * parameter can return the packed span. Every call is direct and passes a
+ * name or literal for that parameter, so a caller can name the owner again.
+ */
+function planSpanReturn(
+  signature: FunctionSignature,
+  context: FunctionContext | undefined,
+  signatures: FunctionSignatures,
+  sensitive: ReadonlySet<Node>,
+  callParents: ReadonlyMap<CallExpression, Node | null>,
+): void {
+  const declaration = signature.declaration;
+  const body = declaration.body;
+  const sites = signature.callSites ?? [];
+  if (
+    !context ||
+    !(body instanceof BlockStatement) ||
+    !signature.promotable ||
+    signature.declarations.size !== 1 ||
+    declaration instanceof MethodDeclaration ||
+    declaration.typeParameters?.length ||
+    declaration.is(CommonFlags.Export) ||
+    context.representationSensitive ||
+    representationOfType(declaration.signature.returnType) !== "native" ||
+    typeIsNullable(declaration.signature.returnType) ||
+    !sites.length ||
+    sites.length !== signature.directCallCount
+  )
+    return;
+  let root: string | null = null;
+  let valid = true;
+  let narrows = false;
+  walk(body, (node): boolean | void => {
+    if (node instanceof FunctionDeclaration) return false;
+    if (!(node instanceof ReturnStatement)) return;
+    const value = node.value;
+    if (value && !(value instanceof IdentifierExpression)) narrows = true;
+    const span =
+      !!value &&
+      (isSpanLink(value) ||
+        !!spanTernary(value) ||
+        value instanceof IdentifierExpression);
+    const name = span ? spanChainRoot(value!) : null;
+    if (
+      !(name instanceof IdentifierExpression) ||
+      (root !== null && root !== name.text)
+    )
+      valid = false;
+    else root = name.text;
+  });
+  // Returning the whole parameter is free natively; only narrowing pays.
+  if (!valid || root === null || !narrows) return;
+  const index = declaration.signature.parameters.findIndex(
+    (parameter) => parameter.name.text === root,
+  );
+  const parameter = declaration.signature.parameters[index];
+  if (
+    !parameter ||
+    parameter.parameterKind !== ParameterKind.Default ||
+    parameter.initializer ||
+    representationOfType(parameter.type) !== "native" ||
+    typeIsNullable(parameter.type) ||
+    assignsName(body, root)
+  )
+    return;
+  for (const { call, context: caller } of sites) {
+    const argument = call.args[index];
+    if (
+      caller.representationSensitive ||
+      (caller.declaration && sensitive.has(caller.declaration)) ||
+      !(
+        argument instanceof StringLiteralExpression ||
+        (argument instanceof IdentifierExpression &&
+          expressionRepresentation(argument, caller, signatures) === "native")
+      ) ||
+      !consumesSpan(call, callParents.get(call) ?? null)
+    )
+      return;
+  }
+  signature.spanReturn = index;
+  signature.result = "unknown";
+  for (const { call } of sites) spanReturnCalls.set(call, index);
 }
 
 function initializerElementRepresentation(
@@ -684,6 +796,8 @@ function collectLocalBindings(
         !nullable &&
         !noView &&
         !explicitView &&
+        // An earlier round already lowered this declaration.
+        !(node.type && generatedTypes.has(node.type)) &&
         (declared === "unknown" || declared === "native") &&
         !!node.initializer &&
         (expressionCanProduceView(node.initializer) ||
@@ -1976,6 +2090,30 @@ export function optimizeSource(
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
     const signature = signatureForDeclaration(declaration, signatures);
+    // A span-returning function keeps its parameters, so its calls stay as
+    // written and remain recognizable as spans of their argument.
+    if (signature?.spanReturn !== undefined) {
+      context.spanReturn = signature.spanReturn;
+      const range = declaration.signature.returnType.range;
+      if (!generatedTypes.has(declaration.signature.returnType)) {
+        const location = range.source;
+        diagnostics.push({
+          source: source.normalizedPath,
+          line: location.lineAt(range.start),
+          column: location.columnAt(),
+          binding: `${declaration.name.text} return`,
+          decision: "view",
+          reason: `returns a packed span of ${
+            declaration.signature.parameters[signature.spanReturn].name.text
+          }`,
+          uses: signature.directCallCount,
+          conversions: 0,
+        });
+      }
+      declaration.signature.returnType = u64Type(range);
+      changedSources.add(source);
+      continue;
+    }
     const packedSpanPlan = canPromoteBoundaries
       ? planPackedSpanParameters(context, signature)
       : null;
@@ -2111,6 +2249,9 @@ export function optimizeSources(
   // every reference is a direct call in a source we will rewrite. This keeps
   // exported library helpers optimizable without guessing about callbacks,
   // unselected dependencies, or host-visible entry points.
+  const functionContexts = new Map<FunctionDeclaration, FunctionContext>();
+  // The node that consumes each direct call's result.
+  const callParents = new Map<CallExpression, Node | null>();
   // Another source can name a user function only through an import from a
   // user source, or through a global declaration. Same-named identifiers
   // elsewhere resolve to that source's own bindings.
@@ -2132,10 +2273,16 @@ export function optimizeSources(
     const classes = new SourceClassTypes(source);
     if (userSource) {
       walk(source, (node) => {
-        if (node instanceof FunctionDeclaration)
-          scopes.push(
-            collectLocalBindings(node, sourceFacts, classes, globals),
+        if (node instanceof FunctionDeclaration) {
+          const scope = collectLocalBindings(
+            node,
+            sourceFacts,
+            classes,
+            globals,
           );
+          scopes.push(scope);
+          functionContexts.set(node, scope);
+        }
       });
     }
     scopes.sort(
@@ -2193,6 +2340,8 @@ export function optimizeSources(
         signature.promotable = false;
       } else {
         signature.directCallCount++;
+        (signature.callSites ??= []).push({ call, context });
+        callParents.set(call, ref.grandparent);
         call.args.forEach((argument, index) => {
           if (
             argument instanceof CallExpression &&
@@ -2223,6 +2372,16 @@ export function optimizeSources(
     const signature = sharedSignatures.forDeclaration(declaration);
     if (signature) signature.promotable = false;
   }
+  // Boundary changes need complete semantic facts, as for parameters.
+  if (manifest?.complete === true)
+    for (const signature of new Set(sharedSignatures.values()))
+      planSpanReturn(
+        signature,
+        functionContexts.get(signature.declaration),
+        sharedSignatures,
+        sensitiveDeclarations,
+        callParents,
+      );
 
   // Two rounds let parameter decisions made in imported modules flow back to
   // callers that were parsed earlier. Rewrites are deliberately idempotent.

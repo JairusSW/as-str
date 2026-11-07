@@ -18,6 +18,8 @@ import {
 import {
   identifier,
   expressionRangeKey,
+  loweredSpanCalls,
+  spanReturnCalls,
   representationOfType,
   staticViewCall,
   u64Type,
@@ -300,14 +302,27 @@ export function splitField(expression: Expression): SplitField | null {
   };
 }
 
-/** A span operation or split field, narrowing the span of its receiver. */
+/** A call returning a packed span of its argument at `spanReturnCalls`. */
+export function spanReturnCall(expression: Expression): CallExpression | null {
+  return expression instanceof CallExpression && spanReturnCalls.has(expression)
+    ? expression
+    : null;
+}
+
+/** A span operation, split field or span-returning call over its receiver. */
 export function isSpanLink(expression: Expression): boolean {
-  return isSpanCall(expression) || !!splitField(expression);
+  return (
+    isSpanCall(expression) ||
+    !!splitField(expression) ||
+    !!spanReturnCall(expression)
+  );
 }
 
 export function spanLinkReceiver(expression: Expression): Expression | null {
   const field = splitField(expression);
   if (field) return field.receiver;
+  const returned = spanReturnCall(expression);
+  if (returned) return returned.args[spanReturnCalls.get(returned)!];
   if (!(expression instanceof CallExpression)) return null;
   const parts = viewCallParts(expression);
   return parts && operationSemantics(parts.method).spanProducing
@@ -401,6 +416,12 @@ export function lowerPackedSpanInitializer(
       branch(ternary.ifElse),
       ternary.range,
     );
+  }
+  // A span-returning call already yields the span of its argument.
+  const returned = spanReturnCall(expression);
+  if (returned) {
+    loweredSpanCalls.add(returned);
+    return returned;
   }
   const field = splitField(expression);
   if (field) {
