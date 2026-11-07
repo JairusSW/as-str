@@ -28,6 +28,8 @@ const cases = {
     ["p,q,r", 1],
     ["p,q,r", 7],
   ],
+  nestedLoops: [["a, b;c;;d,e,f"], [""], [";,;"]],
+  nestedEscape: [["a, b;c;;d,e,f"], [""]],
 };
 const fixture = "transform/__tests__/fixtures/split-fields";
 
@@ -102,6 +104,7 @@ for (const [build, extra] of [
       "literalArray",
       "missingField",
       "packedReceiverLoop",
+      "nestedLoops",
     ])
       assert.doesNotMatch(
         functionBody(compiled.wat, `${fixture}/${name} `),

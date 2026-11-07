@@ -201,3 +201,25 @@ export function viewSplitGc(): i32 {
   }
   return parts[0].charCodeAt(0) + total;
 }
+
+export function nestedLoops(text: string): i32 {
+  const rows = text.split(";");
+  let total = 0;
+  for (let r = 0; r < rows.length; r++) {
+    const cells = rows[r].split(",");
+    for (let c = 0; c < cells.length; c++)
+      total = total * 3 + cells[c].trim().length;
+  }
+  return total;
+}
+
+export function nestedEscape(text: string): i32 {
+  const rows = text.split(";");
+  let total = 0;
+  for (let r = 0; r < rows.length; r++) {
+    const cells = rows[r].split(",");
+    for (let c = 0; c < cells.length; c++)
+      total = total * 3 + nativeField(cells[c]);
+  }
+  return total;
+}

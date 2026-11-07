@@ -71,7 +71,11 @@ import {
   splitField,
 } from "./packed-span.js";
 import { normalizeCharComparisons } from "./char-compare.js";
-import { normalizeSplitArrays } from "./split-arrays.js";
+import {
+  normalizeSplitArrays,
+  spanOfNative,
+  SPLIT_CURSOR_PREFIX,
+} from "./split-arrays.js";
 import { factsForSource, SemanticFact, SemanticManifest } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
 import { isStandardSource, sourcesFor } from "./source-identity.js";
@@ -1342,9 +1346,11 @@ function analyzeCandidates(
         ? property.expression
         : null;
     if (!receiver) continue;
+    const root = spanChainRoot(receiver);
     if (
-      expressionRepresentation(spanChainRoot(receiver), context, signatures) ===
-      "unknown"
+      expressionRepresentation(root, context, signatures) === "unknown" &&
+      // A local narrowed from a native string is a string, typed or not.
+      !spanOfNative(root, context, signatures, 0)
     ) {
       binding.candidate = false;
       binding.decision = binding.semantic;
@@ -1704,6 +1710,8 @@ function analyzeCandidates(
       !binding.scalarizedSpan &&
       // One view object replaces the split array and every field.
       !splitField(binding.declaration.initializer!) &&
+      // A native split cursor would copy the rest of its input every step.
+      !binding.name.startsWith(SPLIT_CURSOR_PREFIX) &&
       (bindingUses.get(binding) ?? []).filter(
         ({ node, ref }) =>
           ref.parent instanceof CallExpression &&
@@ -2163,7 +2171,34 @@ export function optimizeSource(
     context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     contexts.set(declaration, context);
   }
-  // Split loops declare cursors, which the scope index must see.
+  // Split loops declare cursors and split receivers, which the scope index
+  // must see. A named receiver can expose another split loop, so repeat.
+  for (let pass = 0; declared && pass < 3; pass++) {
+    declared = false;
+    classes = new SourceClassTypes(source);
+    for (const declaration of functions) {
+      const context = collectLocalBindings(
+        declaration,
+        semanticFacts,
+        classes,
+        globals,
+      );
+      context.representationSensitive ||=
+        sensitiveDeclarations.has(declaration);
+      const splits =
+        pass < 2 &&
+        normalizeSplitArrays(declaration, context, signatures, (name) =>
+          spanOwnerIsStable({ kind: "identifier", name }, context),
+        );
+      declared ||= splits === "declared";
+      contexts.set(
+        declaration,
+        splits
+          ? collectLocalBindings(declaration, semanticFacts, classes, globals)
+          : context,
+      );
+    }
+  }
   if (declared) {
     classes = new SourceClassTypes(source);
     for (const declaration of functions)

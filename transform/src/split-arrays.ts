@@ -24,6 +24,7 @@ import {
   viewType,
   retainedViewSnapshots,
 } from "./ast.js";
+import { isSpanLink, spanChainRoot } from "./packed-span.js";
 import { FunctionContext } from "./model.js";
 import { operationSemantics } from "./operations.js";
 import { expressionRepresentation } from "./rewrite.js";
@@ -69,9 +70,123 @@ function splitArray(
     context,
     signatures,
   );
-  return representation === "native" || representation === "view"
+  return representation === "native" ||
+    representation === "view" ||
+    spanOfNative(receiver, context, signatures, 0)
     ? { receiver, separator }
     : null;
+}
+
+/** A local initialized by a span chain whose root is a native string. */
+export function spanOfNative(
+  expression: Expression,
+  context: FunctionContext,
+  signatures: FunctionSignatures,
+  depth: number,
+): boolean {
+  if (!(expression instanceof IdentifierExpression) || depth > 8) return false;
+  const initializer = context.classes.bindingOf(expression, context)
+    ?.declaration.initializer;
+  if (!initializer || !isSpanLink(initializer)) return false;
+  const root = spanChainRoot(initializer);
+  return (
+    root instanceof StringLiteralExpression ||
+    expressionRepresentation(root, context, signatures) === "native" ||
+    spanOfNative(root, context, signatures, depth + 1)
+  );
+}
+
+/** `rows[r]` where `rows` holds the split of a native string. */
+function nativeSplitElement(
+  expression: Expression,
+  context: FunctionContext,
+  signatures: FunctionSignatures,
+): boolean {
+  if (
+    !(expression instanceof ElementAccessExpression) ||
+    !(expression.expression instanceof IdentifierExpression)
+  )
+    return false;
+  const split = context.classes.bindingOf(expression.expression, context)
+    ?.declaration.initializer;
+  if (!(split instanceof CallExpression) || isStrStaticCall(split))
+    return false;
+  const property = propertyCall(split);
+  return (
+    property?.property.text === "split" &&
+    expressionRepresentation(property.expression, context, signatures) ===
+      "native"
+  );
+}
+
+/**
+ * `const cells = rows[r].split(",")` names its receiver first, as
+ * `const __recv = rows[r], cells = __recv.split(",")`. The receiver is still
+ * evaluated once, in order, and the split array gains a stable root.
+ */
+function nameSplitReceivers(
+  body: Node,
+  declaration: FunctionDeclaration,
+  context: FunctionContext,
+  signatures: FunctionSignatures,
+): boolean {
+  let named = 0;
+  walk(body, (node): boolean | void => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    if (!(node instanceof VariableStatement)) return;
+    for (let i = 0; i < node.declarations.length; i++) {
+      const local = node.declarations[i];
+      const split = local.initializer;
+      if (
+        local.type ||
+        local.decorators?.length ||
+        !local.is(CommonFlags.Const) ||
+        !(split instanceof CallExpression) ||
+        isStrStaticCall(split) ||
+        split.args.length !== 1 ||
+        !(split.args[0] instanceof StringLiteralExpression) ||
+        !split.args[0].value.length
+      )
+        continue;
+      const property = propertyCall(split);
+      const receiver = property?.expression;
+      if (
+        property?.property.text !== "split" ||
+        !receiver ||
+        receiver instanceof IdentifierExpression ||
+        receiver instanceof StringLiteralExpression ||
+        !(
+          expressionRepresentation(receiver, context, signatures) ===
+            "native" || nativeSplitElement(receiver, context, signatures)
+        )
+      )
+        continue;
+      let name = `__as_str_split_receiver_${named}`;
+      while (
+        local.range.source.text.includes(name) ||
+        context.bindings.has(name) ||
+        context.parameters.has(name)
+      )
+        name += "_";
+      node.declarations.splice(
+        i,
+        0,
+        Node.createVariableDeclaration(
+          identifier(name, local.name.range),
+          null,
+          CommonFlags.Const,
+          null,
+          receiver,
+          local.name.range,
+        ),
+      );
+      property.expression = identifier(name, split.range);
+      i++;
+      named++;
+    }
+  });
+  return named > 0;
 }
 
 function copy(
@@ -100,6 +215,9 @@ function splitCall(split: SplitArray, range: Expression["range"]): Expression {
     range,
   );
 }
+
+/** Names of the cursors that split loops read their fields through. */
+export const SPLIT_CURSOR_PREFIX = "__as_str_field_";
 
 interface SplitLoop {
   loop: ForStatement;
@@ -226,6 +344,8 @@ export function normalizeSplitArrays(
 ): "changed" | "declared" | false {
   const body = declaration.body;
   if (!body || context.representationSensitive) return false;
+  if (nameSplitReceivers(body, declaration, context, signatures))
+    return "declared";
   const candidates = new Map<VariableDeclaration, SplitArray>();
   for (const binding of context.bindings.values()) {
     const local = binding.declaration;
@@ -369,7 +489,7 @@ export function normalizeSplitArrays(
       const counter = (loop.initializer as VariableStatement).declarations[0];
       const range = counter.range;
       const stepRange = loop.incrementor!.range;
-      let name = `__as_str_field_${cursors.size}`;
+      let name = `${SPLIT_CURSOR_PREFIX}${cursors.size}`;
       while (
         range.source.text.includes(name) ||
         context.bindings.has(name) ||
