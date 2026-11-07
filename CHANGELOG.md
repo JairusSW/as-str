@@ -32,6 +32,60 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   constant or never-reassigned locals and parameters, and constant globals.
   Reassigned, shadowed, or mutable-global owners no longer leave a span's
   backing string unrooted.
+- `str8` `replaceAll("", replacement)` inserts between code points, matching
+  `split("")`, instead of splitting astral characters into invalid UTF-8.
+- The `as-str/auto` semantic manifest records local variables. Compiled locals
+  carry synthetic declarations, so local facts were previously never emitted
+  and every local fell back to syntax-only analysis. Types the preliminary
+  rewrite assigned are excluded.
+- The second optimization round no longer counts the span helpers the first
+  round emitted as view uses, which promoted packed-span roots to `str`
+  parameters and made every caller allocate a wrapper.
+
+### Added
+
+- One-unit string comparisons, `s.charAt(i) == "x"`, `c >= "0" && c <= "9"`,
+  `s[i] != ""` and `switch (s.charAt(i))` with one-unit cases, read code units
+  instead of allocating a string per character. Locals only compared this way
+  become `i32` code units.
+- A `switch` over a span chain with literal labels, such as
+  `switch (s.substring(i, i + 2))`, selects its case by comparing one span with
+  labels held in a static constant.
+- Equality between two chains, such as `a.trim() == b.trim()`, compares two
+  spans.
+- Concatenation with span operands, such as `key.trim() + "=" + value.trim()`,
+  copies each operand's bytes once into the result instead of copying each
+  operand first. `out += line.slice(a, b)` and same-root conditional operands
+  append the same way.
+- Chains of span operations, such as `s.substring(i).trim()`, narrow one packed
+  span of their root. A chain whose result must be native is copied once, and
+  `toLowerCase`/`toUpperCase` on a chain lowercase the span directly.
+- Locals reassigned only to spans of the same owner, such as parser cursors
+  `rest = rest.substring(i).trimStart()`, stay packed spans in loops.
+- A conditional whose branches are spans of one root, such as
+  `eq < 0 ? pair : pair.substring(0, eq)`, initializes a packed span. A cursor
+  and a conditional row over it, as in a line-by-line loop, pack together:
+  packing is first assumed for mutually dependent locals, then kept only where
+  it holds without that assumption.
+- Locals split in place, such as `row.split(",").length`, no longer count as
+  escaping into a container.
+- Under `as-str/auto`, an internal helper whose every return narrows one
+  never-reassigned string parameter, such as
+  `nl < 0 ? s : s.slice(0, nl)`, returns a packed span when each caller passes
+  a name or literal and reads the result in place. Callers treat the call as a
+  span of that argument.
+- Fields of literal-separated splits, `s.split(",")[i]`, are spans of `s`, and
+  `s.split(",").length` counts separators, without allocating the array or its
+  fields. A missing field still throws. A split array read only through its
+  length and constant indexes is lowered the same way, and a forward loop
+  `for (let i = 0; i < parts.length; i++)` reads `parts[i]` through a packed
+  cursor over the receiver.
+
+### Performance
+
+- The transform skips library sources that cannot reference user functions,
+  caches each AST class's child properties, and indexes class declarations in
+  one pass, cutting AST visits per compile by about two thirds.
 
 ## [0.7.0] - 2026-10-30
 

@@ -1,4 +1,8 @@
-import { callArgumentType, typeIsNullable } from "./type-resolution.js";
+import {
+  callArgumentType,
+  typeIsNullable,
+  sourceBindsName,
+} from "./type-resolution.js";
 import {
   AssertionExpression,
   BinaryExpression,
@@ -39,6 +43,8 @@ import {
   identifier,
   parseExpression,
   i32Type,
+  integer,
+  loweredSpanCalls,
   representationOfType,
   staticViewCall,
   u64Type,
@@ -56,7 +62,15 @@ import {
   lowerPackedLengthInitializer,
   lowerPackedSpanInitializer,
   packedSpanLink,
+  isSpanCall,
+  isSpanLink,
+  spanChainOwner,
+  spanChainRoot,
+  spanLinkReceiver,
   spanOwnerExpression,
+  spanReturnCall,
+  spanTernary,
+  splitField,
 } from "./packed-span.js";
 import { expressionCanProduceView } from "./expressions.js";
 import { calleeName, isStrStaticCall, propertyCall, walk } from "./visitor.js";
@@ -273,30 +287,9 @@ export function recordOriginalViewReceivers(node, context, signatures) {
 }
 function convertExpression(expression, expected, context, signatures) {
   if (expression instanceof NullExpression) return expression;
-  if (
-    !context.representationSensitive &&
-    expression instanceof PropertyAccessExpression &&
-    expression.property.text === "length" &&
-    expression.expression instanceof CallExpression
-  ) {
-    const call = expression.expression;
-    const property = propertyCall(call);
-    if (
-      property &&
-      operationSemantics(property.property.text).lengthFusible &&
-      expressionRepresentation(
-        isStrStaticCall(call) ? call.args[0] : property.expression,
-        context,
-        signatures,
-      ) !== "unknown"
-    ) {
-      return rewriteExpression(
-        lowerPackedLengthInitializer(call, context),
-        expected,
-        context,
-        signatures,
-      );
-    }
+  if (expression instanceof PropertyAccessExpression) {
+    const length = fusedLength(expression, context, signatures);
+    if (length) return rewriteExpression(length, expected, context, signatures);
   }
   if (expression instanceof CallExpression) {
     const property = propertyCall(expression);
@@ -354,6 +347,258 @@ function convertExpression(expression, expected, context, signatures) {
   }
   return expression;
 }
+const loweredReturns = new WeakSet();
+function packedRoot(expression, context) {
+  return (
+    expression instanceof IdentifierExpression &&
+    !!context.classes.bindingOf(expression, context)?.scalarizedSpan
+  );
+}
+function scalarChainOwner(chain, context, signatures) {
+  const root = spanChainRoot(chain);
+  if (
+    !(
+      root instanceof IdentifierExpression ||
+      root instanceof StringLiteralExpression
+    ) ||
+    expressionRepresentation(root, context, signatures) === "unknown"
+  )
+    return null;
+  return spanChainOwner(chain, context);
+}
+function fusedLength(expression, context, signatures) {
+  if (context.representationSensitive || expression.property.text !== "length")
+    return null;
+  const fused = fuseScalarLength(expression.expression, context, signatures);
+  if (fused) return fused;
+  const call = expression.expression;
+  if (!(call instanceof CallExpression)) return null;
+  const property = propertyCall(call);
+  if (
+    !property ||
+    !operationSemantics(property.property.text).lengthFusible ||
+    expressionRepresentation(
+      spanChainRoot(isStrStaticCall(call) ? call.args[0] : property.expression),
+      context,
+      signatures,
+    ) === "unknown"
+  )
+    return null;
+  return lowerPackedLengthInitializer(call, context);
+}
+function fuseScalarLength(value, context, signatures) {
+  if (
+    splitField(value) ||
+    (spanReturnCall(value) && !loweredSpanCalls.has(value))
+  ) {
+    const owner = scalarChainOwner(value, context, signatures);
+    return owner
+      ? staticViewCall("spanLength", owner, [
+          lowerPackedSpanInitializer(value, context),
+        ])
+      : null;
+  }
+  if (!(value instanceof CallExpression) || isStrStaticCall(value)) return null;
+  const property = propertyCall(value);
+  const separator = value.args[0];
+  if (
+    property?.property.text !== "split" ||
+    value.args.length !== 1 ||
+    !(separator instanceof StringLiteralExpression) ||
+    !separator.value.length
+  )
+    return null;
+  const receiver = property.expression;
+  if (
+    isSpanLink(receiver) ||
+    (receiver instanceof IdentifierExpression &&
+      context.classes.bindingOf(receiver, context)?.scalarizedSpan)
+  ) {
+    const owner = scalarChainOwner(receiver, context, signatures);
+    return owner
+      ? staticViewCall("splitCountSpan", owner, [
+          isSpanLink(receiver)
+            ? lowerPackedSpanInitializer(receiver, context)
+            : receiver,
+          separator,
+        ])
+      : null;
+  }
+  const representation = expressionRepresentation(
+    receiver,
+    context,
+    signatures,
+  );
+  return representation === "native" || representation === "view"
+    ? staticViewCall("splitCount", receiver, [separator])
+    : null;
+}
+function caseLabels(labels, range, context) {
+  const array = Node.createArrayLiteralExpression(labels, range);
+  const constants = context.moduleConstants;
+  if (!constants) return array;
+  const declared = new Set([
+    ...constants.map((statement) => statement.declarations[0].name.text),
+    ...[...(context.globals?.keys() ?? [])].map(
+      (declaration) => declaration.name.text,
+    ),
+  ]);
+  let name = `__as_str_case_labels_${constants.length}`;
+  while (range.source.text.includes(name) || declared.has(name)) name += "_";
+  constants.push(
+    Node.createVariableStatement(
+      null,
+      [
+        Node.createVariableDeclaration(
+          identifier(name, range),
+          null,
+          8,
+          Node.createNamedType(
+            Node.createSimpleTypeName("StaticArray", range),
+            [
+              Node.createNamedType(
+                Node.createSimpleTypeName("string", range),
+                null,
+                false,
+                range,
+              ),
+            ],
+            false,
+            range,
+          ),
+          array,
+          range,
+        ),
+      ],
+      range,
+    ),
+  );
+  return identifier(name, range);
+}
+function concatOperand(expression, context, signatures) {
+  if (
+    (isSpanLink(expression) || spanTernary(expression)) &&
+    !(spanReturnCall(expression) && loweredSpanCalls.has(expression))
+  ) {
+    const root = spanChainRoot(expression);
+    const native =
+      packedRoot(root, context) ||
+      ((root instanceof IdentifierExpression ||
+        root instanceof StringLiteralExpression) &&
+        expressionRepresentation(root, context, signatures) === "native");
+    const owner = native ? spanChainOwner(expression, context) : null;
+    return owner
+      ? { owner, value: lowerPackedSpanInitializer(expression, context) }
+      : null;
+  }
+  const nested =
+    expression instanceof BinaryExpression &&
+    expression.operator === 81 &&
+    !!concatOperand(expression.left, context, signatures) &&
+    !!concatOperand(expression.right, context, signatures);
+  return nested ||
+    expressionRepresentation(expression, context, signatures) === "native"
+    ? { owner: null, value: expression }
+    : null;
+}
+function fuseConcat(expression, context, signatures) {
+  const left = concatOperand(expression.left, context, signatures);
+  const right = left && concatOperand(expression.right, context, signatures);
+  if (!left || !right || (!left.owner && !right.owner)) return null;
+  if (left.owner && right.owner)
+    return staticViewCall("concatSpans", left.owner, [
+      left.value,
+      right.owner,
+      right.value,
+    ]);
+  return left.owner
+    ? staticViewCall("concatSpanString", left.owner, [left.value, right.value])
+    : staticViewCall("concatStringSpan", left.value, [
+        right.owner,
+        right.value,
+      ]);
+}
+const SPAN_CASE_CONVERSIONS = new Set(["toLowerCase", "toUpperCase"]);
+function fuseNativeChain(expression, context, signatures) {
+  let chain;
+  let conversion = null;
+  const returned = spanReturnCall(expression);
+  if (returned) {
+    if (loweredSpanCalls.has(returned)) return null;
+    chain = returned;
+  } else if (splitField(expression)) {
+    chain = expression;
+  } else if (
+    expression instanceof CallExpression &&
+    !isStrStaticCall(expression)
+  ) {
+    const parts = viewCallParts(expression);
+    if (
+      !parts ||
+      !(isSpanLink(parts.receiver) || packedRoot(parts.receiver, context))
+    )
+      return null;
+    if (SPAN_CASE_CONVERSIONS.has(parts.method) && !parts.args.length) {
+      conversion = parts.method;
+      chain = parts.receiver;
+    } else if (operationSemantics(parts.method).spanProducing) {
+      chain = expression;
+    } else return null;
+  } else return null;
+  const root = spanChainRoot(chain);
+  if (
+    !packedRoot(root, context) &&
+    (!(
+      root instanceof IdentifierExpression ||
+      root instanceof StringLiteralExpression
+    ) ||
+      expressionRepresentation(root, context, signatures) !== "native")
+  )
+    return null;
+  const owner = spanChainOwner(chain, context);
+  if (!owner) return null;
+  let noCopy = expressionRepresentation(root, context, signatures) === "native";
+  let link = chain;
+  let preserveEmpty = true;
+  while (link !== root && noCopy) {
+    const field = splitField(link);
+    if (field) {
+      preserveEmpty = false;
+      link = field.receiver;
+      continue;
+    }
+    const parts = link instanceof CallExpression ? viewCallParts(link) : null;
+    if (
+      !parts ||
+      ![
+        "substring",
+        "trim",
+        "trimStart",
+        "trimEnd",
+        "trimLeft",
+        "trimRight",
+      ].includes(parts.method)
+    ) {
+      noCopy = false;
+      break;
+    }
+    preserveEmpty &&=
+      parts.method === "trimStart" || parts.method === "trimLeft";
+    link = parts.receiver;
+  }
+  const args = [lowerPackedSpanInitializer(chain, context)];
+  if (noCopy && preserveEmpty)
+    args.push(Node.createTrueExpression(chain.range));
+  return staticViewCall(
+    conversion
+      ? `${conversion}Span`
+      : noCopy
+        ? "spanToStringOrOriginal"
+        : "spanToString",
+    owner,
+    args,
+  );
+}
 function rewriteExpression(expression, expected, context, signatures) {
   if (
     context.representationSensitive &&
@@ -363,6 +608,35 @@ function rewriteExpression(expression, expected, context, signatures) {
     return wrapAsView(
       rewriteExpression(expression, "native", context, signatures),
     );
+  }
+  if (
+    expected !== "view" &&
+    !context.representationSensitive &&
+    (expression instanceof CallExpression ||
+      expression instanceof ElementAccessExpression)
+  ) {
+    const fused = fuseNativeChain(expression, context, signatures);
+    if (fused) return rewriteExpression(fused, expected, context, signatures);
+  }
+  if (
+    expected === "view" &&
+    !context.representationSensitive &&
+    (splitField(expression) ||
+      (spanReturnCall(expression) && !loweredSpanCalls.has(expression)) ||
+      (isSpanCall(expression) &&
+        (isSpanLink(spanLinkReceiver(expression)) ||
+          packedRoot(spanLinkReceiver(expression), context))))
+  ) {
+    const owner = scalarChainOwner(expression, context, signatures);
+    if (owner)
+      return rewriteExpression(
+        staticViewCall("fromSpan", owner, [
+          lowerPackedSpanInitializer(expression, context),
+        ]),
+        "unknown",
+        context,
+        signatures,
+      );
   }
   if (
     expression instanceof PropertyAccessExpression &&
@@ -428,6 +702,39 @@ function rewriteExpression(expression, expected, context, signatures) {
   }
   if (expression instanceof BinaryExpression) {
     if (
+      expression.operator === 81 &&
+      expected !== "view" &&
+      !context.representationSensitive
+    ) {
+      const fused = fuseConcat(expression, context, signatures);
+      if (fused) return rewriteExpression(fused, expected, context, signatures);
+    }
+    if (
+      expression.operator === 102 &&
+      !context.representationSensitive &&
+      expression.left instanceof IdentifierExpression &&
+      expressionRepresentation(expression.left, context, signatures) ===
+        "native"
+    ) {
+      const right = concatOperand(expression.right, context, signatures);
+      if (right?.owner)
+        return rewriteExpression(
+          Node.createBinaryExpression(
+            101,
+            expression.left,
+            staticViewCall(
+              "concatStringSpan",
+              identifier(expression.left.text, expression.left.range),
+              [right.owner, right.value],
+            ),
+            expression.range,
+          ),
+          expected,
+          context,
+          signatures,
+        );
+    }
+    if (
       expression.operator === 101 &&
       expression.left instanceof IdentifierExpression &&
       context.lowercaseSpans.has(expression.left.text) &&
@@ -442,6 +749,20 @@ function rewriteExpression(expression, expected, context, signatures) {
       ) {
         return expression.left;
       }
+    }
+    if (
+      expression.operator === 101 &&
+      expression.left instanceof IdentifierExpression &&
+      expression.right instanceof CallExpression &&
+      context.classes.bindingOf(expression.left, context)?.scalarizedSpan
+    ) {
+      expression.right = rewriteExpression(
+        lowerPackedSpanInitializer(expression.right, context),
+        "unknown",
+        context,
+        signatures,
+      );
+      return expression;
     }
     const equality =
       expression.operator === 76 ||
@@ -469,26 +790,22 @@ function rewriteExpression(expression, expected, context, signatures) {
           ],
         );
       }
-      const directView =
-        expression.left instanceof CallExpression &&
-        operationSemantics(propertyCall(expression.left)?.property.text ?? "")
-          .spanProducing
-          ? expression.left
-          : expression.right instanceof CallExpression &&
-              operationSemantics(
-                propertyCall(expression.right)?.property.text ?? "",
-              ).spanProducing
-            ? expression.right
-            : null;
+      const directView = isSpanLink(expression.left)
+        ? expression.left
+        : isSpanLink(expression.right)
+          ? expression.right
+          : null;
       if (directView && !context.representationSensitive) {
-        const parts = viewCallParts(directView);
+        const root = spanChainRoot(directView);
+        const owner =
+          root instanceof IdentifierExpression
+            ? spanChainOwner(directView, context)
+            : null;
         if (
-          parts &&
-          expressionRepresentation(parts.receiver, context, signatures) !==
-            "unknown" &&
+          owner &&
+          expressionRepresentation(root, context, signatures) !== "unknown" &&
           (directView === expression.left ||
-            expression.left instanceof StringLiteralExpression) &&
-          parts.receiver instanceof IdentifierExpression
+            expression.left instanceof StringLiteralExpression)
         ) {
           const other =
             directView === expression.left ? expression.right : expression.left;
@@ -497,7 +814,7 @@ function rewriteExpression(expression, expected, context, signatures) {
           if (otherLink) {
             return staticViewCall(
               negate ? "notEqualsSpanSpan" : "equalsSpanSpan",
-              parts.receiver,
+              owner,
               [
                 lowerPackedSpanInitializer(directView, context),
                 spanOwnerExpression(otherLink.owner, expression.range),
@@ -505,11 +822,24 @@ function rewriteExpression(expression, expected, context, signatures) {
               ],
             );
           }
+          const otherOwner = isSpanLink(other)
+            ? scalarChainOwner(other, context, signatures)
+            : null;
+          if (otherOwner)
+            return staticViewCall(
+              negate ? "notEqualsSpanSpan" : "equalsSpanSpan",
+              owner,
+              [
+                lowerPackedSpanInitializer(directView, context),
+                otherOwner,
+                lowerPackedSpanInitializer(other, context),
+              ],
+            );
           return staticViewCall(
             expression.operator === 77 || expression.operator === 79
               ? "notEqualsSpan"
               : "equalsSpan",
-            parts.receiver,
+            owner,
             [
               lowerPackedSpanInitializer(directView, context),
               rewriteExpression(other, "unknown", context, signatures),
@@ -662,6 +992,30 @@ function rewriteExpression(expression, expected, context, signatures) {
           [property.expression, ...args],
         );
         return convertExpression(
+          positionedIncludes ? foundIndex(call) : call,
+          expected,
+          context,
+          signatures,
+        );
+      }
+      const chainOwner =
+        operationSemantics(method).spanScalar &&
+        !context.representationSensitive &&
+        isSpanLink(property.expression)
+          ? scalarChainOwner(property.expression, context, signatures)
+          : null;
+      if (chainOwner) {
+        const positionedIncludes =
+          method === "includes" && expression.args.length > 1;
+        const call = staticViewCall(
+          positionedIncludes ? "indexOfSpan" : `${method}Span`,
+          chainOwner,
+          [
+            lowerPackedSpanInitializer(property.expression, context),
+            ...expression.args,
+          ],
+        );
+        return rewriteExpression(
           positionedIncludes ? foundIndex(call) : call,
           expected,
           context,
@@ -926,6 +1280,8 @@ function rewriteExpression(expression, expected, context, signatures) {
     return convertExpression(expression, expected, context, signatures);
   }
   if (expression instanceof PropertyAccessExpression) {
+    const length = fusedLength(expression, context, signatures);
+    if (length) return rewriteExpression(length, expected, context, signatures);
     const receiverExpected =
       operationSemantics(expression.property.text).result === "scalar" &&
       expressionCanProduceView(expression.expression) &&
@@ -1022,7 +1378,8 @@ export function rewriteStatement(statement, context, signatures) {
       }
       if (
         binding?.scalarizedSpan &&
-        declaration.initializer instanceof CallExpression
+        (isSpanLink(declaration.initializer) ||
+          spanTernary(declaration.initializer))
       ) {
         declaration.type = u64Type(declaration.range);
         declaration.initializer = rewriteExpression(
@@ -1062,6 +1419,21 @@ export function rewriteStatement(statement, context, signatures) {
     return;
   }
   if (statement instanceof ReturnStatement) {
+    if (statement.value && context.spanReturn !== undefined) {
+      if (loweredReturns.has(statement)) return;
+      loweredReturns.add(statement);
+      statement.value = rewriteExpression(
+        statement.value instanceof IdentifierExpression &&
+          !context.parameterSpans.has(statement.value.text) &&
+          !context.classes.bindingOf(statement.value, context)?.scalarizedSpan
+          ? staticViewCall("wholeSpan", statement.value, [])
+          : lowerPackedSpanInitializer(statement.value, context),
+        "unknown",
+        context,
+        signatures,
+      );
+      return;
+    }
     if (statement.value) {
       statement.value = rewriteExpression(
         statement.value,
@@ -1130,12 +1502,41 @@ export function rewriteStatement(statement, context, signatures) {
     return;
   }
   if (statement instanceof SwitchStatement) {
-    statement.condition = rewriteExpression(
-      statement.condition,
-      "unknown",
-      context,
-      signatures,
-    );
+    const labels = statement.cases.map((switchCase) => switchCase.label);
+    const owner =
+      !context.representationSensitive &&
+      !sourceBindsName(statement.range.source, "StaticArray") &&
+      !sourceBindsName(statement.range.source, "string") &&
+      isSpanLink(statement.condition) &&
+      labels.every(
+        (label) => label === null || label instanceof StringLiteralExpression,
+      )
+        ? scalarChainOwner(statement.condition, context, signatures)
+        : null;
+    if (owner) {
+      const range = statement.condition.range;
+      const literals = labels.filter((label) => label !== null);
+      statement.condition = rewriteExpression(
+        staticViewCall("caseIndexSpan", owner, [
+          lowerPackedSpanInitializer(statement.condition, context),
+          caseLabels(literals, range, context),
+        ]),
+        "unknown",
+        context,
+        signatures,
+      );
+      let index = 0;
+      for (const switchCase of statement.cases)
+        if (switchCase.label)
+          switchCase.label = integer(index++, switchCase.label);
+    } else {
+      statement.condition = rewriteExpression(
+        statement.condition,
+        "unknown",
+        context,
+        signatures,
+      );
+    }
     for (const switchCase of statement.cases) {
       if (switchCase.label) {
         switchCase.label = rewriteExpression(

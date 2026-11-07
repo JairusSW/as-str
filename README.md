@@ -154,9 +154,17 @@ helper tracks the trimmed range as a packed span. The span stays linked to its
 native owner for GC safety, and its scalar operations allocate neither a native
 substring nor a `Str` wrapper.
 
+The same packing covers chains such as `line.substring(i).trim()`, parser
+cursors that move along one string (`rest = rest.substring(i + 1).trimStart()`),
+fields of literal-separated splits (`url.split("?")[0]`,
+`line.split(",").length`), and one-character comparisons (`s.charAt(i) == " "`
+reads a code unit). A chain whose result must be a native string is copied once
+at the end rather than at every link.
+
 The optimizer leaves values native around raw loads, pointer casts, explicit
-assertions, native-string call parameters, unknown calls, containers, fields,
-nullable boundaries, and other operations it cannot prove safe.
+assertions, native-string call parameters, unknown calls, split arrays and other
+containers, fields, nullable boundaries, and other operations it cannot prove
+safe.
 Native `toLowerCase()` calls retain native allocation behavior, including when
 the result escapes to another function. Explicit views can use the lowercase
 helper, which reuses already lowercase ASCII input.

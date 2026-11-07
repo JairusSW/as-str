@@ -2,7 +2,6 @@ import {
   copyBytes,
   encodeUtf8,
   utf8ByteLength,
-  checkedSize,
   equals as rangeEquals,
   equalsBytes,
   isAsciiRange as isAscii16Range,
@@ -1159,10 +1158,29 @@ import { Str } from "./str";
   static replaceAll<T>(s: T, search: string, replacement: string): Str8 {
     const v = asView(s);
     if (search.length == 0) {
-      const native = v.toString();
-      const units = <u64>native.length;
-      checkedSize((units + (units + 1) * <u64>replacement.length) << 1);
-      return Str8.from(native.replaceAll(search, replacement));
+      // Insert at code point boundaries, as `split("")` does. A UTF-16 round
+      // trip would split astral code points into unpaired surrogates.
+      const replBuf = encodeUtf8(replacement);
+      const rPtr = changetype<usize>(replBuf);
+      const rBytes = <usize>replBuf.byteLength;
+      let slots: u64 = 1;
+      for (let p = v.start; p < v.end; slots++) {
+        p += <usize>utf8SeqLen(load<u8>(p));
+      }
+      const out = allocBuffer(<u64>(v.end - v.start) + slots * <u64>rBytes);
+      let op = changetype<usize>(out);
+      let p = v.start;
+      while (true) {
+        copyBytes(op, rPtr, rBytes);
+        op += rBytes;
+        if (p >= v.end) break;
+        let e = p + <usize>utf8SeqLen(load<u8>(p));
+        if (e > v.end) e = v.end;
+        copyBytes(op, p, e - p);
+        op += e - p;
+        p = e;
+      }
+      return Str8.fromBuffer(out);
     }
     const searchBuf = encodeUtf8(search);
     const sBytes = <usize>searchBuf.byteLength;

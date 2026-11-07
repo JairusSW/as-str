@@ -8,6 +8,6 @@ export function rejectedPromotion(input: string): i32 {
 }
 
 export function nativeViewChain(input: string): i32 {
-  const part = input.substring(1).trim();
+  const part = input.substring(1);
   return nativeLength(part);
 }

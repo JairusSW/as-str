@@ -87,7 +87,7 @@ export function derivedExternalCall(input: string): f64 {
 
 export function derivedOperator(input: string): bool {
   const part = input.slice(1, 4);
-  return part.charAt(0) === "x";
+  return part.charAt(0) < "xy";
 }
 
 function derivedParameter(input: string): f64 {
