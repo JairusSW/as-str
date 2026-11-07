@@ -591,7 +591,9 @@ function spanOwnerIsStable(owner, context) {
     if (global) return false;
     if (local?.declaration.is(8)) return true;
     const body = context.declaration?.body;
-    return !!body && !assignsName(body, name);
+    return (
+      !!body && !(context.assignedNames?.has(name) ?? assignsName(body, name))
+    );
   }
   return !!global?.is(8);
 }
@@ -613,6 +615,7 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
   const bindings = new Map();
   const parameters = new Map();
   const duplicateNames = new Set();
+  const assignedNames = new Set();
   const body = declaration.body;
   const lowercaseReceiverCounts = new Map();
   const localUseCounts = new Map();
@@ -625,6 +628,12 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
     walk(body, (node) => {
       if (node instanceof FunctionDeclaration && node !== declaration)
         return false;
+      if (
+        node instanceof BinaryExpression &&
+        (node.operator === 101 || node.operator === 102) &&
+        node.left instanceof IdentifierExpression
+      )
+        assignedNames.add(node.left.text);
       if (node instanceof CallExpression && isUnsafeIntrinsic(node))
         representationSensitive = true;
       if (!(node instanceof VariableDeclaration)) return;
@@ -785,6 +794,7 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
     representationSensitive,
     classes,
     duplicateNames,
+    assignedNames,
   };
 }
 function collectGlobalRepresentations(source, facts) {

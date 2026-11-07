@@ -733,7 +733,9 @@ function spanOwnerIsStable(
     if (global) return false;
     if (local?.declaration.is(CommonFlags.Const)) return true;
     const body = context.declaration?.body;
-    return !!body && !assignsName(body, name);
+    return (
+      !!body && !(context.assignedNames?.has(name) ?? assignsName(body, name))
+    );
   }
   // Any call can reassign a mutable global.
   return !!global?.is(CommonFlags.Const);
@@ -764,6 +766,7 @@ function collectLocalBindings(
   const bindings = new Map<string, Binding>();
   const parameters = new Map<string, Representation>();
   const duplicateNames = new Set<string>();
+  const assignedNames = new Set<string>();
   const body = declaration.body;
   const lowercaseReceiverCounts = new Map<string, number>();
   const localUseCounts = new Map<string, number>();
@@ -778,6 +781,13 @@ function collectLocalBindings(
     walk(body, (node): boolean | void => {
       if (node instanceof FunctionDeclaration && node !== declaration)
         return false;
+      if (
+        node instanceof BinaryExpression &&
+        (node.operator === Token.Equals ||
+          node.operator === Token.Plus_Equals) &&
+        node.left instanceof IdentifierExpression
+      )
+        assignedNames.add(node.left.text);
       if (node instanceof CallExpression && isUnsafeIntrinsic(node))
         representationSensitive = true;
       if (!(node instanceof VariableDeclaration)) return;
@@ -943,6 +953,7 @@ function collectLocalBindings(
     representationSensitive,
     classes,
     duplicateNames,
+    assignedNames,
   };
 }
 

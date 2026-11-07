@@ -74,6 +74,8 @@ export interface FunctionContext {
   representationSensitive?: boolean;
   resolvingTypeInitializers?: Set<Expression>;
   duplicateNames: Set<string>;
+  /** Names assigned in this function, indexed while collecting its bindings. */
+  assignedNames?: ReadonlySet<string>;
 }
 
 export interface ParameterPromotion {
