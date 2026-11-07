@@ -55,7 +55,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   spans.
 - Concatenation with span operands, such as `key.trim() + "=" + value.trim()`,
   copies each operand's bytes once into the result instead of copying each
-  operand first.
+  operand first. `out += line.slice(a, b)` and same-root conditional operands
+  append the same way.
 - Chains of span operations, such as `s.substring(i).trim()`, narrow one packed
   span of their root. A chain whose result must be native is copied once, and
   `toLowerCase`/`toUpperCase` on a chain lowercase the span directly.

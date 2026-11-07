@@ -473,7 +473,7 @@ function caseLabels(labels, range, context) {
 }
 function concatOperand(expression, context, signatures) {
   if (
-    isSpanLink(expression) &&
+    (isSpanLink(expression) || spanTernary(expression)) &&
     !(spanReturnCall(expression) && loweredSpanCalls.has(expression))
   ) {
     const root = spanChainRoot(expression);
@@ -668,6 +668,31 @@ function rewriteExpression(expression, expected, context, signatures) {
     ) {
       const fused = fuseConcat(expression, context, signatures);
       if (fused) return rewriteExpression(fused, expected, context, signatures);
+    }
+    if (
+      expression.operator === 102 &&
+      !context.representationSensitive &&
+      expression.left instanceof IdentifierExpression &&
+      expressionRepresentation(expression.left, context, signatures) ===
+        "native"
+    ) {
+      const right = concatOperand(expression.right, context, signatures);
+      if (right?.owner)
+        return rewriteExpression(
+          Node.createBinaryExpression(
+            101,
+            expression.left,
+            staticViewCall(
+              "concatStringSpan",
+              identifier(expression.left.text, expression.left.range),
+              [right.owner, right.value],
+            ),
+            expression.range,
+          ),
+          expected,
+          context,
+          signatures,
+        );
     }
     if (
       expression.operator === 101 &&

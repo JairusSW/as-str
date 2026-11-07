@@ -253,3 +253,25 @@ export function concatenations(cut: i32): i32 {
     (key.trim() + "!").length * 19
   );
 }
+
+let appended = "";
+export function appendSpans(cut: i32): i32 {
+  pairEffects = 0;
+  const source = " alpha, beta ,gamma ";
+  let out = "";
+  let start = 0;
+  while (true) {
+    const comma = source.indexOf(",", start);
+    out +=
+      comma < 0
+        ? source.slice(start).trim()
+        : source.slice(start, comma).trim();
+    if (comma < 0) break;
+    out += "|";
+    start = comma + 1;
+  }
+  out += source.slice(step(cut)).trimEnd();
+  appended = "g";
+  appended += source.substring(0, 3);
+  return hash(out) + hash(appended) * 3 + pairEffects * 7;
+}
