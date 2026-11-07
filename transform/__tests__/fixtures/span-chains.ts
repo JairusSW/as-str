@@ -305,3 +305,21 @@ export function nativeTrimCompatibility(leading: i32): i32 {
     input.trim().length * 10000 + concatenated.length * 100 + chained.length
   );
 }
+
+function unchangedTrimStart(value: string): string {
+  return value.trimStart().trimLeft();
+}
+function canonicalTrimEnd(value: string): string {
+  return value.trimEnd().trimStart();
+}
+export function nativeEmptyChainIdentity(): i32 {
+  const input = changetype<string>(__new(0, idof<string>()));
+  let result = 0;
+  if (changetype<usize>(unchangedTrimStart(input)) == changetype<usize>(input))
+    result |= 1;
+  if (changetype<usize>(unchangedSubstring(input)) == changetype<usize>(input))
+    result |= 2;
+  if (changetype<usize>(canonicalTrimEnd(input)) == changetype<usize>(input))
+    result |= 4;
+  return result;
+}

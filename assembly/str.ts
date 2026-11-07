@@ -1129,12 +1129,16 @@ import { Str8 } from "./str8";
 
   /** Preserve native no-op substring/trim identity when a chain never copies. */
   // @ts-ignore: decorator
-  @inline static spanToStringOrOriginal(owner: string, value: u64): string {
+  @inline static spanToStringOrOriginal(
+    owner: string,
+    value: u64,
+    preserveEmpty: bool = false,
+  ): string {
     const start = Str.spanStart(value);
     const end = Str.spanEnd(value);
     if (
       start == changetype<usize>(owner) &&
-      end > start &&
+      (end > start || preserveEmpty) &&
       end - start == (<usize>owner.length) << 1
     )
       return owner;

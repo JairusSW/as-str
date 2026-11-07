@@ -673,6 +673,7 @@ function fuseNativeChain(
     !conversion &&
     expressionRepresentation(root, context, signatures) === "native";
   let link = chain;
+  let preserveEmpty = true;
   while (link !== root && noCopy) {
     const parts = link instanceof CallExpression ? viewCallParts(link) : null;
     if (
@@ -689,8 +690,14 @@ function fuseNativeChain(
       noCopy = false;
       break;
     }
+    // Only trimStart/trimLeft keep a freshly allocated empty receiver.
+    preserveEmpty &&=
+      parts.method === "trimStart" || parts.method === "trimLeft";
     link = parts.receiver;
   }
+  const args = [lowerPackedSpanInitializer(chain, context)];
+  if (noCopy && preserveEmpty)
+    args.push(Node.createTrueExpression(chain.range));
   return staticViewCall(
     conversion
       ? `${conversion}Span`
@@ -698,7 +705,7 @@ function fuseNativeChain(
         ? "spanToStringOrOriginal"
         : "spanToString",
     owner,
-    [lowerPackedSpanInitializer(chain, context)],
+    args,
   );
 }
 

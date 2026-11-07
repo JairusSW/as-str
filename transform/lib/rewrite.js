@@ -557,6 +557,7 @@ function fuseNativeChain(expression, context, signatures) {
     !conversion &&
     expressionRepresentation(root, context, signatures) === "native";
   let link = chain;
+  let preserveEmpty = true;
   while (link !== root && noCopy) {
     const parts = link instanceof CallExpression ? viewCallParts(link) : null;
     if (
@@ -573,8 +574,13 @@ function fuseNativeChain(expression, context, signatures) {
       noCopy = false;
       break;
     }
+    preserveEmpty &&=
+      parts.method === "trimStart" || parts.method === "trimLeft";
     link = parts.receiver;
   }
+  const args = [lowerPackedSpanInitializer(chain, context)];
+  if (noCopy && preserveEmpty)
+    args.push(Node.createTrueExpression(chain.range));
   return staticViewCall(
     conversion
       ? `${conversion}Span`
@@ -582,7 +588,7 @@ function fuseNativeChain(expression, context, signatures) {
         ? "spanToStringOrOriginal"
         : "spanToString",
     owner,
-    [lowerPackedSpanInitializer(chain, context)],
+    args,
   );
 }
 function rewriteExpression(expression, expected, context, signatures) {

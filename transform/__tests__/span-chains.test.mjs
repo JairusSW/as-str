@@ -3,6 +3,7 @@ import { compileFixture, functionBody, instantiate } from "./harness.mjs";
 
 const cases = {
   nativeTrimCompatibility: [[0], [1], [2], [3], [4], [5], [8], [16]],
+  nativeEmptyChainIdentity: [[]],
   nativeChainIdentity: [[]],
   chainedLocal: [[]],
   chainedEquality: [[0], [3], [5], [6], [-2], [100]],
