@@ -1544,6 +1544,38 @@ function sourceUsesViewName(source) {
 function trustedRepresentationSource(source) {
   return admitSource(source).packageSource || isStandardSource(source);
 }
+function isMemoryIntrinsic(call, target, context) {
+  const parts = [];
+  let expression = call.expression;
+  while (expression instanceof PropertyAccessExpression) {
+    parts.unshift(expression.property.text);
+    expression = expression.expression;
+  }
+  if (!(expression instanceof IdentifierExpression) || !parts.length)
+    return false;
+  if (
+    target === null ||
+    (target && !isStandardSource(target.range.source)) ||
+    context.parameters.has(expression.text) ||
+    context.classes.declarationOf(expression, context)
+  )
+    return false;
+  const root = expression.text;
+  return (
+    (root === "memory" &&
+      ["fill", "copy", "init", "repeat", "compare", "atomic"].includes(
+        parts[0],
+      )) ||
+    root === "atomic" ||
+    (["i32", "i64", "f32", "f64", "v128"].includes(root) &&
+      parts.some(
+        (part) =>
+          part.startsWith("load") ||
+          part.startsWith("store") ||
+          part === "atomic",
+      ))
+  );
+}
 function representationEffects(node, context) {
   const write = writeTarget(node);
   if (
@@ -1579,6 +1611,7 @@ function representationEffects(node, context) {
     targets: target ? [target] : [],
     opaque:
       isUnsafeIntrinsic(node) ||
+      isMemoryIntrinsic(node, target, context) ||
       !!(
         target &&
         target.name.text === "set" &&

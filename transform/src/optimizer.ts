@@ -1806,6 +1806,42 @@ function trustedRepresentationSource(source: Source): boolean {
   return admitSource(source).packageSource || isStandardSource(source);
 }
 
+/** Namespaced builtins can observe or change storage without a local pointer cast. */
+function isMemoryIntrinsic(
+  call: CallExpression,
+  target: FunctionDeclaration | null | undefined,
+  context: FunctionContext,
+): boolean {
+  const parts: string[] = [];
+  let expression = call.expression;
+  while (expression instanceof PropertyAccessExpression) {
+    parts.unshift(expression.property.text);
+    expression = expression.expression;
+  }
+  if (!(expression instanceof IdentifierExpression) || !parts.length)
+    return false;
+  if (
+    target === null ||
+    (target && !isStandardSource(target.range.source)) ||
+    context.parameters.has(expression.text) ||
+    context.classes.declarationOf(expression, context)
+  )
+    return false;
+  const root = expression.text;
+  return (
+    (root === "memory" &&
+      ["fill", "copy", "init", "repeat", "compare", "atomic"].includes(parts[0])) ||
+    root === "atomic" ||
+    (["i32", "i64", "f32", "f64", "v128"].includes(root) &&
+      parts.some(
+        (part) =>
+          part.startsWith("load") ||
+          part.startsWith("store") ||
+          part === "atomic",
+      ))
+  );
+}
+
 function representationEffects(
   node: Node,
   context: FunctionContext,
@@ -1848,6 +1884,7 @@ function representationEffects(
     targets: target ? [target] : [],
     opaque:
       isUnsafeIntrinsic(node) ||
+      isMemoryIntrinsic(node, target, context) ||
       // Str.set can replace both range and backing data. Package pointer reads
       // remain trusted, but this managed mutation invalidates borrowed spans.
       !!(

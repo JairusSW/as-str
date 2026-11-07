@@ -95,3 +95,4 @@ for (const [build, extra] of [
   }
 }
 console.log("native snapshots survive opaque host calls");
+await import("./memory-effects.test.mjs");
