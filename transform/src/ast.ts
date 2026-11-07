@@ -14,6 +14,10 @@ import { requestViewTypeAlias } from "./view-aliases.js";
 
 export type Representation = "native" | "view" | "unknown";
 
+// Native String#trim in affected compilers shrinks size while advancing offset.
+// Key by source so separate compiler runs cannot leak compatibility decisions.
+export const legacyNativeTrimSources = new WeakSet<Source>();
+
 /**
  * Types the optimizer writes onto rewritten declarations. Semantic analysis of
  * a preliminarily rewritten program must not report them as source types.

@@ -275,3 +275,33 @@ export function appendSpans(cut: i32): i32 {
   appended += source.substring(0, 3);
   return hash(out) + hash(appended) * 3 + pairEffects * 7;
 }
+
+function unchangedSubstring(value: string): string {
+  return value.substring(0).trim();
+}
+function copiedSlice(value: string): string {
+  return value.slice(0).trim();
+}
+function copiedSubstr(value: string): string {
+  return value.substr(0).trim();
+}
+export function nativeChainIdentity(): i32 {
+  const input = String.fromCharCodes([97, 98, 99]);
+  let result = 0;
+  if (changetype<usize>(unchangedSubstring(input)) == changetype<usize>(input))
+    result |= 1;
+  if (changetype<usize>(copiedSlice(input)) == changetype<usize>(input))
+    result |= 2;
+  if (changetype<usize>(copiedSubstr(input)) == changetype<usize>(input))
+    result |= 4;
+  return result;
+}
+
+export function nativeTrimCompatibility(leading: i32): i32 {
+  const input = " ".repeat(leading) + "a";
+  const concatenated = input.trim() + "!";
+  const chained = input.trim().slice(0);
+  return (
+    input.trim().length * 10000 + concatenated.length * 100 + chained.length
+  );
+}

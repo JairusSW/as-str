@@ -1127,6 +1127,20 @@ import { Str8 } from "./str8";
     return out;
   }
 
+  /** Preserve native no-op substring/trim identity when a chain never copies. */
+  // @ts-ignore: decorator
+  @inline static spanToStringOrOriginal(owner: string, value: u64): string {
+    const start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    if (
+      start == changetype<usize>(owner) &&
+      end > start &&
+      end - start == (<usize>owner.length) << 1
+    )
+      return owner;
+    return Str.spanToString(owner, value);
+  }
+
   /** Lowercase a span into an owned `string`; see {@link Str.toLowerCase}. */
   // @ts-ignore: decorator
   @inline static toLowerCaseSpan<T>(owner: T, value: u64): string {
@@ -1435,6 +1449,25 @@ import { Str8 } from "./str8";
     while (start < end && isWhiteSpace(load<u16>(start))) start += 2;
     while (end > start && isWhiteSpace(load<u16>(end - 2))) end -= 2;
     return Str.span(start, end);
+  }
+
+  /** Compatibility with native String#trim's shrinking-size loop. Transform only. */
+  // @ts-ignore: decorator
+  @inline static nativeTrimSpan<T>(s: T): u64 {
+    return Str.nativeTrimSpanOf(Str.span(bStart(s), bEnd(s)));
+  }
+
+  // @ts-ignore: decorator
+  @inline static nativeTrimSpanOf(value: u64): u64 {
+    const start = Str.spanStart(value);
+    let size = Str.spanEnd(value) - start;
+    while (size && isWhiteSpace(load<u16>(start + size - 2))) size -= 2;
+    let offset: usize = 0;
+    while (offset < size && isWhiteSpace(load<u16>(start + offset))) {
+      offset += 2;
+      size -= 2;
+    }
+    return Str.span(start + offset, start + offset + size);
   }
 
   // @ts-ignore: decorator

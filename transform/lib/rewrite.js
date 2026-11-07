@@ -553,8 +553,34 @@ function fuseNativeChain(expression, context, signatures) {
     return null;
   const owner = spanChainOwner(chain, context);
   if (!owner) return null;
+  let noCopy =
+    !conversion &&
+    expressionRepresentation(root, context, signatures) === "native";
+  let link = chain;
+  while (link !== root && noCopy) {
+    const parts = link instanceof CallExpression ? viewCallParts(link) : null;
+    if (
+      !parts ||
+      ![
+        "substring",
+        "trim",
+        "trimStart",
+        "trimEnd",
+        "trimLeft",
+        "trimRight",
+      ].includes(parts.method)
+    ) {
+      noCopy = false;
+      break;
+    }
+    link = parts.receiver;
+  }
   return staticViewCall(
-    conversion ? `${conversion}Span` : "spanToString",
+    conversion
+      ? `${conversion}Span`
+      : noCopy
+        ? "spanToStringOrOriginal"
+        : "spanToString",
     owner,
     [lowerPackedSpanInitializer(chain, context)],
   );

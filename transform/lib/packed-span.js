@@ -12,6 +12,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   identifier,
+  legacyNativeTrimSources,
   expressionRangeKey,
   loweredSpanCalls,
   spanReturnCalls,
@@ -311,6 +312,16 @@ export function isSpanCall(expression) {
   const parts = viewCallParts(expression);
   return !!parts && operationSemantics(parts.method).spanProducing;
 }
+function nativeTrim(expression, context) {
+  const parts = viewCallParts(expression);
+  return (
+    !!parts &&
+    parts.method === "trim" &&
+    legacyNativeTrimSources.has(expression.range.source) &&
+    !isStrStaticCall(expression) &&
+    !context.originalViewReceivers?.has(expressionRangeKey(parts.receiver))
+  );
+}
 export function lowerPackedSpanInitializer(expression, context) {
   const ternary = spanTernary(expression);
   if (ternary) {
@@ -352,7 +363,9 @@ export function lowerPackedSpanInitializer(expression, context) {
   if (!(expression instanceof CallExpression)) return expression;
   const parts = viewCallParts(expression);
   if (!parts) return expression;
-  const method = operationSemantics(parts.method).normalizedSpanName;
+  const method = nativeTrim(expression, context)
+    ? "nativeTrim"
+    : operationSemantics(parts.method).normalizedSpanName;
   if (isSpanLink(parts.receiver)) {
     return staticViewCall(
       `${method}SpanOf`,
@@ -378,6 +391,13 @@ export function lowerPackedLengthInitializer(expression, context) {
       context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan) ||
     (isSpanCall(expression) && isSpanLink(parts.receiver))
   ) {
+    const owner = spanChainOwner(expression, context);
+    if (owner)
+      return staticViewCall("spanLength", owner, [
+        lowerPackedSpanInitializer(expression, context),
+      ]);
+  }
+  if (nativeTrim(expression, context)) {
     const owner = spanChainOwner(expression, context);
     if (owner)
       return staticViewCall("spanLength", owner, [

@@ -7,6 +7,7 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import { arrayElementType, stringRepresentation } from "./type-resolution.js";
 import { requestViewTypeAlias } from "./view-aliases.js";
+export const legacyNativeTrimSources = new WeakSet();
 export const generatedTypes = new WeakSet();
 function generated(type) {
   generatedTypes.add(type);

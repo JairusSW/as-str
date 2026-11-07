@@ -56,6 +56,7 @@ import {
   viewType,
   u64Type,
   generatedCalls,
+  legacyNativeTrimSources,
   generatedTypes,
   spanReturnCalls,
 } from "./ast.js";
@@ -2220,6 +2221,14 @@ export function optimizeSources(
   const userSources = sources.filter(
     (source) => admitSource(source).optimization,
   );
+  const nativeString = sources.find(
+    (source) => source.internalPath === "~lib/string",
+  );
+  if (
+    nativeString &&
+    /offset\s*\+=\s*2\s*;\s*size\s*-=\s*2\s*;/.test(nativeString.text)
+  )
+    for (const source of userSources) legacyNativeTrimSources.add(source);
   const sharedSignatures = new FunctionSignatures();
   const ambiguous = new Set<string>();
   for (const source of userSources) {
