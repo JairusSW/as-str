@@ -1,4 +1,8 @@
 import {
+  BinaryExpression,
+  ParenthesizedExpression,
+  UnaryPrefixExpression,
+  UnaryPostfixExpression,
   ClassDeclaration,
   Expression,
   FunctionDeclaration,
@@ -8,6 +12,21 @@ import {
   PropertyAccessExpression,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
+const ASSIGNMENTS = new Set([
+  101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113,
+]);
+export function writeTarget(node) {
+  let target =
+    node instanceof BinaryExpression && ASSIGNMENTS.has(node.operator)
+      ? node.left
+      : (node instanceof UnaryPrefixExpression ||
+            node instanceof UnaryPostfixExpression) &&
+          (node.operator === 87 || node.operator === 88)
+        ? node.operand
+        : null;
+  while (target instanceof ParenthesizedExpression) target = target.expression;
+  return target;
+}
 function isNode(value) {
   return !!value && typeof value === "object" && "kind" in value;
 }

@@ -237,6 +237,15 @@ export class SourceClassTypes {
     return key ? this.globals.get(key) : undefined;
   }
 
+  /** A concrete class, including `this` and inferred constructor results. */
+  classDeclarationOf(
+    expression: Expression,
+    context: FunctionContext,
+  ): ClassDeclaration | null {
+    const owner = this.classOf(expression, context, new Set());
+    return owner ? (this.classes.get(owner)?.declaration ?? null) : null;
+  }
+
   propertyOf(
     expression: PropertyAccessExpression,
     context: FunctionContext,

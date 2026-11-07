@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { compileFixture, instantiate } from "./harness.mjs";
 const cases = {
+  "parenthesized-owner": { parameterOwner: 65, localOwner: 65 },
   "span-return-owner": { run: 1 },
   "virtual-effects": { run: 1, baseControl: 0, constructorDispatch: 1 },
   "mutating-call": {

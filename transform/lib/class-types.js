@@ -188,6 +188,10 @@ export class SourceClassTypes {
     const key = this.runtimeKey(expression.text, expression.range.start);
     return key ? this.globals.get(key) : undefined;
   }
+  classDeclarationOf(expression, context) {
+    const owner = this.classOf(expression, context, new Set());
+    return owner ? (this.classes.get(owner)?.declaration ?? null) : null;
+  }
   propertyOf(expression, context) {
     return this.propertyInfo(expression, context)?.representation ?? "unknown";
   }

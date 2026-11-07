@@ -1,4 +1,9 @@
 import {
+  BinaryExpression,
+  ParenthesizedExpression,
+  UnaryPrefixExpression,
+  UnaryPostfixExpression,
+  Token,
   ClassDeclaration,
   Expression,
   FunctionDeclaration,
@@ -10,6 +15,37 @@ import {
   CallExpression,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
+
+const ASSIGNMENTS = new Set([
+  Token.Equals,
+  Token.Plus_Equals,
+  Token.Minus_Equals,
+  Token.Asterisk_Equals,
+  Token.Asterisk_Asterisk_Equals,
+  Token.Slash_Equals,
+  Token.Percent_Equals,
+  Token.LessThan_LessThan_Equals,
+  Token.GreaterThan_GreaterThan_Equals,
+  Token.GreaterThan_GreaterThan_GreaterThan_Equals,
+  Token.Ampersand_Equals,
+  Token.Bar_Equals,
+  Token.Caret_Equals,
+]);
+
+/** The assigned location is unchanged by any number of parentheses. */
+export function writeTarget(node: Node): Expression | null {
+  let target: Expression | null =
+    node instanceof BinaryExpression && ASSIGNMENTS.has(node.operator)
+      ? node.left
+      : (node instanceof UnaryPrefixExpression ||
+            node instanceof UnaryPostfixExpression) &&
+          (node.operator === Token.Plus_Plus ||
+            node.operator === Token.Minus_Minus)
+        ? node.operand
+        : null;
+  while (target instanceof ParenthesizedExpression) target = target.expression;
+  return target;
+}
 
 export interface WalkRef {
   parent: Node | null;

@@ -108,15 +108,12 @@ for (const [build, extra] of [
         /String#split|String#(?:trim\w*|slice)/,
         `${mode}/${name} must read fields in place`,
       );
-    assert.doesNotMatch(
-      functionBody(compiled.wat, `${fixture}/viewSplitMutation `),
-      /Str#split|Array<assembly\/str\/Str>/,
-      `${mode}: a view snapshot must retain array-free field reads`,
-    );
+    // Repointing managed views is representation-sensitive, like raw writes.
+    // Keep their original owning arrays while pure split readers still lower.
     assert.match(
       functionBody(compiled.wat, `${fixture}/viewSplitMutation `),
-      /Str\.slice<|Str#slice/,
-      `${mode}: a mutable view needs an independently rooted range snapshot`,
+      /Str#split/,
+      `${mode}: view mutation preserves the original split ownership`,
     );
     assert.match(
       functionBody(compiled.wat, `${fixture}/userSplit `),

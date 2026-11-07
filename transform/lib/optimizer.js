@@ -70,6 +70,7 @@ import {
   isStrStaticCall,
   propertyCall,
   walk,
+  writeTarget,
 } from "./visitor.js";
 import {
   expressionRepresentation,
@@ -605,12 +606,8 @@ function assignsName(body, name) {
   let assigned = false;
   walk(body, (node) => {
     if (node instanceof FunctionDeclaration) return false;
-    if (
-      node instanceof BinaryExpression &&
-      (node.operator === 101 || node.operator === 102) &&
-      node.left instanceof IdentifierExpression &&
-      node.left.text === name
-    )
+    const target = writeTarget(node);
+    if (target instanceof IdentifierExpression && target.text === name)
       assigned = true;
   });
   return assigned;
@@ -632,12 +629,9 @@ function collectLocalBindings(declaration, semanticFacts, classes, globals) {
     walk(body, (node) => {
       if (node instanceof FunctionDeclaration && node !== declaration)
         return false;
-      if (
-        node instanceof BinaryExpression &&
-        (node.operator === 101 || node.operator === 102) &&
-        node.left instanceof IdentifierExpression
-      )
-        assignedNames.add(node.left.text);
+      const target = writeTarget(node);
+      if (target instanceof IdentifierExpression)
+        assignedNames.add(target.text);
       if (node instanceof CallExpression && isUnsafeIntrinsic(node))
         representationSensitive = true;
       if (!(node instanceof VariableDeclaration)) return;
@@ -1103,9 +1097,19 @@ function analyzeCandidates(context, signatures) {
       );
   }
   for (const binding of context.bindings.values()) {
+    const init = binding.declaration.initializer;
+    if (
+      binding.candidate &&
+      binding.declared === "unknown" &&
+      init &&
+      representationOfType(context.classes.typeOf(init, context)) === "view"
+    ) {
+      binding.candidate = false;
+      binding.semantic = "view";
+      binding.decision = "view";
+    }
     if (context.representationSensitive && binding.candidate)
       binding.forcedReason ??= "raw-memory or representation intrinsic";
-    const init = binding.declaration.initializer;
     if (!binding.candidate || !init) continue;
     const field = splitField(init);
     const property = init instanceof CallExpression ? propertyCall(init) : null;
@@ -1279,6 +1283,7 @@ function analyzeCandidates(context, signatures) {
   const accept = (binding, optimistic) => {
     const initializer = binding.declaration.initializer;
     if (
+      context.representationSensitive ||
       binding.decision !== "view" ||
       retainedViewSnapshots.has(binding.declaration) ||
       binding.scalarizedLength ||
@@ -1536,6 +1541,18 @@ function sourceUsesViewName(source) {
   return usesView;
 }
 function representationEffects(node, context) {
+  const write = writeTarget(node);
+  if (
+    write instanceof PropertyAccessExpression &&
+    ["data", "start", "end"].includes(write.property.text)
+  ) {
+    const receiverType = context.classes.typeOf(write.expression, context);
+    if (
+      representationOfType(receiverType) === "view" ||
+      !context.classes.classDeclarationOf(write.expression, context)
+    )
+      return { targets: [], opaque: true };
+  }
   if (node instanceof PropertyAccessExpression) {
     const targets = context.classes.accessorsOf(node, context);
     return {
@@ -1558,6 +1575,13 @@ function representationEffects(node, context) {
     targets: target ? [target] : [],
     opaque:
       isUnsafeIntrinsic(node) ||
+      !!(
+        target &&
+        target.name.text === "set" &&
+        admitSource(target.range.source).packageSource &&
+        representationOfType(target.signature.returnType) === "view"
+      ) ||
+      (!target && propertyCall(node)?.property.text === "set") ||
       (target
         ? !target.body && admitSource(target.range.source).semanticFacts
         : (node.expression instanceof IdentifierExpression &&
@@ -1636,7 +1660,8 @@ function representationSensitiveDeclarations(sources) {
           !(
             node instanceof CallExpression ||
             node instanceof PropertyAccessExpression ||
-            node instanceof NewExpression
+            node instanceof NewExpression ||
+            writeTarget(node) !== null
           )
         )
           return;
@@ -1693,7 +1718,8 @@ function hasSensitiveCalls(node, context, sensitive) {
       !(
         child instanceof CallExpression ||
         child instanceof PropertyAccessExpression ||
-        child instanceof NewExpression
+        child instanceof NewExpression ||
+        writeTarget(child) !== null
       )
     )
       return;

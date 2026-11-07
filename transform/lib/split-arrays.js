@@ -8,7 +8,6 @@ import {
   IdentifierExpression,
   IntegerLiteralExpression,
   Node,
-  ParenthesizedExpression,
   PropertyAccessExpression,
   StringLiteralExpression,
   UnaryPostfixExpression,
@@ -30,22 +29,8 @@ import {
   isStrStaticCall,
   propertyCall,
   walk,
+  writeTarget,
 } from "./visitor.js";
-const ASSIGNMENTS = new Set([
-  101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113,
-]);
-function writeTarget(node) {
-  let target =
-    node instanceof BinaryExpression && ASSIGNMENTS.has(node.operator)
-      ? node.left
-      : (node instanceof UnaryPrefixExpression ||
-            node instanceof UnaryPostfixExpression) &&
-          (node.operator === 87 || node.operator === 88)
-        ? node.operand
-        : null;
-  while (target instanceof ParenthesizedExpression) target = target.expression;
-  return target;
-}
 function splitArray(expression, context, signatures) {
   if (!(expression instanceof CallExpression) || isStrStaticCall(expression))
     return null;

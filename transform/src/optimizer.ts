@@ -91,6 +91,7 @@ import {
   isStrStaticCall,
   propertyCall,
   walk,
+  writeTarget,
   WalkRef,
 } from "./visitor.js";
 import {
@@ -750,12 +751,8 @@ function assignsName(body: Node, name: string): boolean {
   walk(body, (node): boolean | void => {
     // AssemblyScript closures cannot capture locals or parameters.
     if (node instanceof FunctionDeclaration) return false;
-    if (
-      node instanceof BinaryExpression &&
-      (node.operator === Token.Equals || node.operator === Token.Plus_Equals) &&
-      node.left instanceof IdentifierExpression &&
-      node.left.text === name
-    )
+    const target = writeTarget(node);
+    if (target instanceof IdentifierExpression && target.text === name)
       assigned = true;
   });
   return assigned;
@@ -785,13 +782,9 @@ function collectLocalBindings(
     walk(body, (node): boolean | void => {
       if (node instanceof FunctionDeclaration && node !== declaration)
         return false;
-      if (
-        node instanceof BinaryExpression &&
-        (node.operator === Token.Equals ||
-          node.operator === Token.Plus_Equals) &&
-        node.left instanceof IdentifierExpression
-      )
-        assignedNames.add(node.left.text);
+      const target = writeTarget(node);
+      if (target instanceof IdentifierExpression)
+        assignedNames.add(target.text);
       if (node instanceof CallExpression && isUnsafeIntrinsic(node))
         representationSensitive = true;
       if (!(node instanceof VariableDeclaration)) return;
@@ -1322,13 +1315,23 @@ function analyzeCandidates(
       );
   }
 
-  // A familiar method name on a non-string object is not a string operation.
+  // A manual view already has object identity. Native promotion decisions
+  // must not reclassify an inferred Str local or insert copies at its uses.
   for (const binding of context.bindings.values()) {
-    // Raw pointers can observe allocation identity through methods and aliases,
-    // even when the candidate identifier is not an intrinsic's direct argument.
+    const init = binding.declaration.initializer;
+    if (
+      binding.candidate &&
+      binding.declared === "unknown" &&
+      init &&
+      representationOfType(context.classes.typeOf(init, context)) === "view"
+    ) {
+      binding.candidate = false;
+      binding.semantic = "view";
+      binding.decision = "view";
+    }
     if (context.representationSensitive && binding.candidate)
       binding.forcedReason ??= "raw-memory or representation intrinsic";
-    const init = binding.declaration.initializer;
+    // A familiar method name on a non-string object is not a string operation.
     if (!binding.candidate || !init) continue;
     const field = splitField(init);
     const property = init instanceof CallExpression ? propertyCall(init) : null;
@@ -1520,6 +1523,7 @@ function analyzeCandidates(
   const accept = (binding: Binding, optimistic: boolean): SpanOwner | null => {
     const initializer = binding.declaration.initializer;
     if (
+      context.representationSensitive ||
       binding.decision !== "view" ||
       retainedViewSnapshots.has(binding.declaration) ||
       binding.scalarizedLength ||
@@ -1804,6 +1808,19 @@ function representationEffects(
   targets: Node[];
   opaque: boolean;
 } {
+  const write = writeTarget(node);
+  if (
+    write instanceof PropertyAccessExpression &&
+    ["data", "start", "end"].includes(write.property.text)
+  ) {
+    const receiverType = context.classes.typeOf(write.expression, context);
+    // Unresolved array elements and generic parameters may also be Strs.
+    if (
+      representationOfType(receiverType) === "view" ||
+      !context.classes.classDeclarationOf(write.expression, context)
+    )
+      return { targets: [], opaque: true };
+  }
   if (node instanceof PropertyAccessExpression) {
     const targets = context.classes.accessorsOf(node, context);
     return {
@@ -1826,6 +1843,15 @@ function representationEffects(
     targets: target ? [target] : [],
     opaque:
       isUnsafeIntrinsic(node) ||
+      // Str.set can replace both range and backing data. Package pointer reads
+      // remain trusted, but this managed mutation invalidates borrowed spans.
+      !!(
+        target &&
+        target.name.text === "set" &&
+        admitSource(target.range.source).packageSource &&
+        representationOfType(target.signature.returnType) === "view"
+      ) ||
+      (!target && propertyCall(node)?.property.text === "set") ||
       (target
         ? !target.body && admitSource(target.range.source).semanticFacts
         : (node.expression instanceof IdentifierExpression &&
@@ -1836,7 +1862,7 @@ function representationEffects(
   };
 }
 
-/** Propagate raw-memory observations through calls, accessors and construction. */
+/** Propagate raw observations and view mutations through calls and construction. */
 function representationSensitiveDeclarations(sources: Source[]): Set<Node> {
   const contexts = new Map<
     FunctionDeclaration | ClassDeclaration,
@@ -1909,7 +1935,8 @@ function representationSensitiveDeclarations(sources: Source[]): Set<Node> {
           !(
             node instanceof CallExpression ||
             node instanceof PropertyAccessExpression ||
-            node instanceof NewExpression
+            node instanceof NewExpression ||
+            writeTarget(node) !== null
           )
         )
           return;
@@ -1974,7 +2001,8 @@ function hasSensitiveCalls(
       !(
         child instanceof CallExpression ||
         child instanceof PropertyAccessExpression ||
-        child instanceof NewExpression
+        child instanceof NewExpression ||
+        writeTarget(child) !== null
       )
     )
       return;

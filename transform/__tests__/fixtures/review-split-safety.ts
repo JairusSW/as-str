@@ -38,17 +38,20 @@ export function counterAssign(): i32 {
   let total = 0;
   for (let i = 0; i < parts.length; i++) {
     total += parts[i].length;
-    i += 1;
+    // prettier-ignore
+    ((i)) += 1;
   }
   return total;
 }
 export function parenthesizedField(): i32 {
   const parts = "a,b".split(",");
-  parts[0] = "changed";
+  // prettier-ignore
+  ((parts[0])) = "changed";
   return parts[0].length;
 }
 export function parenthesizedLength(): i32 {
   const parts = "a,b".split(",");
-  parts.length = 1;
+  // prettier-ignore
+  ((parts.length)) = 1;
   return parts.length;
 }
