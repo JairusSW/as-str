@@ -2043,8 +2043,9 @@ export function optimizeSources(sources, manifest = null) {
       }
     });
   }
-  const sensitiveDeclarations =
-    representationSensitiveDeclarations(userSources);
+  const sensitiveDeclarations = representationSensitiveDeclarations(
+    sources.filter((source) => admitSource(source).semanticFacts),
+  );
   for (const declaration of sensitiveDeclarations) {
     if (!(declaration instanceof FunctionDeclaration)) continue;
     const signature = sharedSignatures.forDeclaration(declaration);

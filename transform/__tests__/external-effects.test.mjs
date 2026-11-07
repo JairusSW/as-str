@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { compileFixture } from "./harness.mjs";
+import { compileFixture, instantiate } from "./harness.mjs";
 for (const [build, extra] of [
   ["debug", []],
   ["release", ["-O3", "--noAssert", "--enable", "simd"]],
 ]) {
   for (const mode of ["global", "single", "auto"]) {
+    const hidden = await instantiate(
+      compileFixture("review-hidden-effects", {
+        mode,
+        suffix: `${mode}-${build}`,
+        extra,
+      }).wasm,
+    );
+    assert.equal(
+      hidden.instance.exports.run(),
+      1,
+      `${mode}/${build}: hidden mutation`,
+    );
     const compiled = compileFixture("review-external-effects", {
       mode,
       suffix: `${mode}-${build}`,
