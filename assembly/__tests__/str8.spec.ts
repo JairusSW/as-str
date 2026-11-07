@@ -282,6 +282,10 @@ describe("str8 allocating helpers", () => {
     expect(str8.from("a-b").replace("-", "😀").toString()).toBe("a😀b");
     // multi-byte needle, shorter replacement
     expect(str8.from("a😀b😀c").replaceAll("😀", "-").toString()).toBe("a-b-c");
+    // empty search inserts between code points, never inside a sequence
+    expect(str8.from("a😀é").replaceAll("", "-").toString()).toBe("-a-😀-é-");
+    expect(str8.from("").replaceAll("", "-").toString()).toBe("-");
+    expect(str8.from("😀").replaceAll("", "").toString()).toBe("😀");
   });
 
   test("case folding round-trips through native String", () => {
