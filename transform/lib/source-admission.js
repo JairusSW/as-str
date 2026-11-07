@@ -42,7 +42,10 @@ export function admitSource(source, forcedImport = false) {
   const semanticFacts = sourceIsConfigured(source);
   const packageSource = isPackageSource(source);
   const already = importedNames(source);
+  const requestsView =
+    !already.has(VIEW_NAME) && (forcedImport || VIEW_USES.test(source.text));
   const viewNameAvailable =
+    ((semanticFacts && !packageSource) || requestsView) &&
     !sourceBindsName(source, VIEW_NAME) &&
     (!already.has(VIEW_NAME) ||
       stringRepresentation(
@@ -54,17 +57,13 @@ export function admitSource(source, forcedImport = false) {
         ),
       ) === "view");
   const requestedViewNames = [];
-  if (
-    !already.has(VIEW_NAME) &&
-    viewNameAvailable &&
-    (forcedImport || VIEW_USES.test(source.text))
-  ) {
+  if (requestsView && viewNameAvailable) {
     requestedViewNames.push(VIEW_NAME);
   }
   if (
     !already.has(VIEW_CLASS_NAME) &&
-    !sourceBindsName(source, VIEW_CLASS_NAME) &&
-    VIEW_CLASS_USES.test(source.text)
+    VIEW_CLASS_USES.test(source.text) &&
+    !sourceBindsName(source, VIEW_CLASS_NAME)
   ) {
     requestedViewNames.push(VIEW_CLASS_NAME);
   }

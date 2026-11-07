@@ -156,7 +156,9 @@ const slicedNativeLowercase = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/slicedNativeLowercase",
 );
-assert.match(slicedNativeLowercase, /call \$~lib\/string\/String#toLowerCase/);
+// The slice narrows a span and the lowercase copy is the only allocation.
+assert.match(slicedNativeLowercase, /Str\.toLowerCaseSpan/);
+assert.doesNotMatch(slicedNativeLowercase, /String#slice/);
 assert.doesNotMatch(slicedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
 
 const viewLowercase = functionBody(

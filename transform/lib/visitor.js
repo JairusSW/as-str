@@ -11,6 +11,24 @@ import {
 function isNode(value) {
   return !!value && typeof value === "object" && "kind" in value;
 }
+const childKeys = new Map();
+function childKeysOf(node) {
+  let keys = childKeys.get(node.constructor);
+  if (!keys) {
+    const record = node;
+    keys = Object.keys(node).filter(
+      (key) =>
+        key !== "range" &&
+        key !== "implicitFieldDeclaration" &&
+        key !== "kind" &&
+        (record[key] === null ||
+          record[key] === undefined ||
+          typeof record[key] === "object"),
+    );
+    childKeys.set(node.constructor, keys);
+  }
+  return keys;
+}
 export function walk(
   node,
   visitor,
@@ -20,25 +38,18 @@ export function walk(
 ) {
   if (!node) return;
   if (visitor(node, { parent, key, grandparent }) === false) return;
-  const keys = Object.keys(node);
+  const keys = childKeysOf(node);
   const values = new Array(keys.length);
   for (let i = 0; i < keys.length; i++) values[i] = node[keys[i]];
   for (let i = 0; i < keys.length; i++) {
-    const childKey = keys[i];
     const value = values[i];
-    if (
-      childKey === "range" ||
-      childKey === "implicitFieldDeclaration" ||
-      childKey === "kind"
-    ) {
-      continue;
-    }
-    if (isNode(value)) {
-      walk(value, visitor, node, childKey, parent);
-    } else if (Array.isArray(value)) {
+    if (value === null || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
       for (const child of value) {
-        if (isNode(child)) walk(child, visitor, node, childKey, parent);
+        if (isNode(child)) walk(child, visitor, node, keys[i], parent);
       }
+    } else if (isNode(value)) {
+      walk(value, visitor, node, keys[i], parent);
     }
   }
 }

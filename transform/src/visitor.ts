@@ -21,6 +21,28 @@ function isNode(value: unknown): value is Node {
   return !!value && typeof value === "object" && "kind" in value;
 }
 
+// Every AST class assigns the same own properties in its constructor, so the
+// properties that can hold children are computed once per class.
+const childKeys = new Map<unknown, string[]>();
+
+function childKeysOf(node: Node): string[] {
+  let keys = childKeys.get(node.constructor);
+  if (!keys) {
+    const record = node as unknown as Record<string, unknown>;
+    keys = Object.keys(node).filter(
+      (key) =>
+        key !== "range" &&
+        key !== "implicitFieldDeclaration" &&
+        key !== "kind" &&
+        (record[key] === null ||
+          record[key] === undefined ||
+          typeof record[key] === "object"),
+    );
+    childKeys.set(node.constructor, keys);
+  }
+  return keys;
+}
+
 /** Lightweight recursive visitor following the source-first json-as pattern. */
 export function walk(
   node: Node | null,
@@ -33,27 +55,19 @@ export function walk(
   if (visitor(node, { parent, key, grandparent }) === false) return;
 
   // Snapshot values before visiting children: a visitor may replace a sibling.
-  // Separate key/value arrays avoid allocating a pair for every AST property.
-  const keys = Object.keys(node);
+  const keys = childKeysOf(node);
   const values: unknown[] = new Array(keys.length);
   for (let i = 0; i < keys.length; i++)
     values[i] = (node as unknown as Record<string, unknown>)[keys[i]];
   for (let i = 0; i < keys.length; i++) {
-    const childKey = keys[i];
     const value = values[i];
-    if (
-      childKey === "range" ||
-      childKey === "implicitFieldDeclaration" ||
-      childKey === "kind"
-    ) {
-      continue;
-    }
-    if (isNode(value)) {
-      walk(value, visitor, node, childKey, parent);
-    } else if (Array.isArray(value)) {
+    if (value === null || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
       for (const child of value) {
-        if (isNode(child)) walk(child, visitor, node, childKey, parent);
+        if (isNode(child)) walk(child, visitor, node, keys[i], parent);
       }
+    } else if (isNode(value)) {
+      walk(value, visitor, node, keys[i], parent);
     }
   }
 }

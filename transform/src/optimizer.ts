@@ -22,7 +22,10 @@ import {
   DecoratorNode,
   ElementAccessExpression,
   Expression,
+  ExportStatement,
   ExpressionStatement,
+  ImportStatement,
+  ForStatement,
   FieldDeclaration,
   FunctionDeclaration,
   FunctionExpression,
@@ -49,9 +52,19 @@ import {
   Representation,
   representationOfType,
   viewType,
+  generatedCalls,
 } from "./ast.js";
 import { containerArgumentKind, operationSemantics } from "./operations.js";
-import { planPackedSpanParameters } from "./packed-span.js";
+import {
+  isSpanLink,
+  planPackedSpanParameters,
+  spanChainRoot,
+  spanLinkReceiver,
+  spanTernary,
+  splitField,
+} from "./packed-span.js";
+import { normalizeCharComparisons } from "./char-compare.js";
+import { normalizeSplitArrays } from "./split-arrays.js";
 import { factsForSource, SemanticFact, SemanticManifest } from "./manifest.js";
 import { admitSource } from "./source-admission.js";
 import {
@@ -194,8 +207,22 @@ function collectFunctionSignatures(
   const signatures = new FunctionSignatures();
   const ambiguous = new Set<string>();
 
+  // One walk gathers what the three ordered phases below consume.
+  const functions: { node: FunctionDeclaration; ref: WalkRef }[] = [];
+  const aliases: VariableDeclaration[] = [];
+  const references: { node: IdentifierExpression; ref: WalkRef }[] = [];
   walk(source, (node, ref): boolean | void => {
-    if (!(node instanceof FunctionDeclaration)) return;
+    if (node instanceof FunctionDeclaration) functions.push({ node, ref });
+    else if (
+      node instanceof VariableDeclaration &&
+      node.initializer instanceof IdentifierExpression
+    )
+      aliases.push(node);
+    else if (node instanceof IdentifierExpression)
+      references.push({ node, ref });
+  });
+
+  for (const { node, ref } of functions) {
     const name = node.name.text;
     if (signatures.has(name)) ambiguous.add(name);
     const annotatedResult = representationOfType(node.signature.returnType);
@@ -231,37 +258,32 @@ function collectFunctionSignatures(
       lowercaseSpanParameters: new Set(),
       spanAppliedDeclarations: new Set(),
     });
-  });
+  }
 
   for (const name of ambiguous) signatures.rejectAmbiguousName(name);
 
   // Preserve precision for direct, immutable local aliases such as
   // `const callback = helper; callback(value)`. The alias shares the original
   // signature and does not make the target an unresolved callback.
-  walk(source, (node) => {
-    if (
-      !(node instanceof VariableDeclaration) ||
-      !(node.initializer instanceof IdentifierExpression)
-    ) {
-      return;
-    }
-    const target = signatures.get(node.initializer.text);
-    if (!target || signatures.has(node.name.text)) return;
+  for (const node of aliases) {
+    const target = signatures.get(
+      (node.initializer as IdentifierExpression).text,
+    );
+    if (!target || signatures.has(node.name.text)) continue;
     signatures.set(node.name.text, target);
-  });
+  }
 
   // A function used as a value or callback does not have a closed set of calls.
-  walk(source, (node, ref) => {
-    if (!(node instanceof IdentifierExpression)) return;
+  for (const { node, ref } of references) {
     const signature = signatures.get(node.text);
-    if (!signature || node === signature.declaration.name) return;
-    if (isDeclarationIdentifier(node, ref)) return;
+    if (!signature || node === signature.declaration.name) continue;
+    if (isDeclarationIdentifier(node, ref)) continue;
     if (
       ref.parent instanceof VariableDeclaration &&
       ref.parent.initializer === node &&
       signatures.get(ref.parent.name.text) === signature
     ) {
-      return;
+      continue;
     }
     if (
       !(ref.parent instanceof CallExpression && ref.parent.expression === node)
@@ -269,7 +291,7 @@ function collectFunctionSignatures(
       signature.callable = false;
       signature.promotable = false;
     }
-  });
+  }
   return signatures;
 }
 
@@ -306,7 +328,8 @@ function countViewBoundaryUses(
       !(node instanceof IdentifierExpression) ||
       node.text !== name ||
       isDeclarationIdentifier(node, ref) ||
-      !(ref.parent instanceof CallExpression)
+      !(ref.parent instanceof CallExpression) ||
+      generatedCalls.has(ref.parent)
     ) {
       return;
     }
@@ -533,6 +556,42 @@ function initializerElementRepresentation(
   return representationOfType(expression.typeArguments?.[0] ?? null);
 }
 
+function sameSpanOwner(left: SpanOwner, right: SpanOwner): boolean {
+  return left.kind === "identifier"
+    ? right.kind === "identifier" && left.name === right.name
+    : right.kind === "string-literal" && left.value === right.value;
+}
+
+/**
+ * A statement that assigns a chain of span operations to `node`. The assigned
+ * value is never read, so the binding may hold a packed span instead.
+ */
+function spanAssignment(
+  node: IdentifierExpression,
+  ref: WalkRef,
+): (BinaryExpression & { right: CallExpression }) | null {
+  const assignment = ref.parent;
+  if (
+    !(assignment instanceof BinaryExpression) ||
+    assignment.operator !== Token.Equals ||
+    assignment.left !== node ||
+    !(assignment.right instanceof CallExpression) ||
+    !operationSemantics(propertyCall(assignment.right)?.property.text ?? "")
+      .spanProducing ||
+    !(
+      ref.grandparent instanceof ExpressionStatement ||
+      (ref.grandparent instanceof ForStatement &&
+        ref.grandparent.incrementor === assignment) ||
+      // A comma operand other than the last is evaluated only for effect.
+      (ref.grandparent instanceof CommaExpression &&
+        ref.grandparent.expressions.indexOf(assignment) <
+          ref.grandparent.expressions.length - 1)
+    )
+  )
+    return null;
+  return assignment as BinaryExpression & { right: CallExpression };
+}
+
 /**
  * A packed span holds raw pointers; its owner argument is what keeps the
  * backing string reachable. Every later use names the owner again, so that
@@ -627,7 +686,9 @@ function collectLocalBindings(
         !explicitView &&
         (declared === "unknown" || declared === "native") &&
         !!node.initializer &&
-        (expressionCanProduceView(node.initializer) || preferView);
+        (expressionCanProduceView(node.initializer) ||
+          !!spanTernary(node.initializer) ||
+          preferView);
       bindings.set(name, {
         declaration: node,
         name,
@@ -853,6 +914,12 @@ function reasonForUse(
 
   if (parent instanceof PropertyAccessExpression && ref.key === "expression") {
     if (operationSemantics(parent.property.text).container) {
+      // A split read only through a field or its length never builds an array.
+      if (
+        grandparent instanceof CallExpression &&
+        context.inPlaceSplits?.has(grandparent)
+      )
+        return null;
       return `view container result from .${parent.property.text} is not yet modeled`;
     }
     return operationSemantics(parent.property.text).result !== "unknown"
@@ -925,6 +992,13 @@ function reasonForUse(
     return "operator use";
   }
 
+  // A branch of a same-root span conditional is a span of that root.
+  if (
+    parent instanceof TernaryExpression &&
+    parent.condition !== node &&
+    spanTernary(parent)
+  )
+    return null;
   if (parent instanceof TernaryExpression) return "conditional merge";
   if (parent instanceof CommaExpression) return "comma expression";
   if (parent instanceof ThrowStatement) return "throw boundary";
@@ -1008,8 +1082,18 @@ function derivedViewUseReason(
     }
     return "derived view used by operator";
   }
-  if (parent instanceof TernaryExpression)
+  if (parent instanceof TernaryExpression) {
+    // A same-root span conditional initializing a candidate is itself a span.
+    const declaration = ref.grandparent;
+    if (
+      spanTernary(parent) &&
+      declaration instanceof VariableDeclaration &&
+      declaration.initializer === parent &&
+      context.bindings.get(declaration.name.text)?.candidate
+    )
+      return null;
     return "derived view used by conditional merge";
+  }
   if (parent instanceof CommaExpression) return "derived view used by comma";
   if (parent instanceof ThrowStatement) return "derived view reaches throw";
 
@@ -1034,6 +1118,31 @@ function analyzeCandidates(
   if (!declaration) return;
   const body = declaration.body;
   if (!body) return;
+
+  // Literal-separated splits whose array is only indexed or measured.
+  context.inPlaceSplits = new Set();
+  walk(body, (node): boolean | void => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    const field = splitField(node as Expression);
+    if (field) {
+      context.inPlaceSplits!.add(
+        (node as ElementAccessExpression).expression as CallExpression,
+      );
+      return;
+    }
+    if (
+      node instanceof PropertyAccessExpression &&
+      node.property.text === "length" &&
+      node.expression instanceof CallExpression &&
+      !isStrStaticCall(node.expression) &&
+      propertyCall(node.expression)?.property.text === "split" &&
+      node.expression.args.length === 1 &&
+      node.expression.args[0] instanceof StringLiteralExpression &&
+      (node.expression.args[0] as StringLiteralExpression).value.length > 0
+    )
+      context.inPlaceSplits!.add(node.expression);
+  });
 
   // Resolve uses once. Classification below scans only each binding's uses,
   // rather than walking the function once for every candidate.
@@ -1083,11 +1192,17 @@ function analyzeCandidates(
     if (context.representationSensitive && binding.candidate)
       binding.forcedReason ??= "raw-memory or representation intrinsic";
     const init = binding.declaration.initializer;
-    if (!binding.candidate || !(init instanceof CallExpression)) continue;
-    const property = propertyCall(init);
-    if (!property || isStrStaticCall(init)) continue;
+    if (!binding.candidate || !init) continue;
+    const field = splitField(init);
+    const property = init instanceof CallExpression ? propertyCall(init) : null;
+    const receiver = field
+      ? field.receiver
+      : property && !isStrStaticCall(init as CallExpression)
+        ? property.expression
+        : null;
+    if (!receiver) continue;
     if (
-      expressionRepresentation(property.expression, context, signatures) ===
+      expressionRepresentation(spanChainRoot(receiver), context, signatures) ===
       "unknown"
     ) {
       binding.candidate = false;
@@ -1159,7 +1274,8 @@ function analyzeCandidates(
       : initializer.expression;
     if (
       !receiver ||
-      expressionRepresentation(receiver, context, signatures) === "unknown"
+      expressionRepresentation(spanChainRoot(receiver), context, signatures) ===
+        "unknown"
     )
       continue;
     const onlyLengthReads = (bindingUses.get(binding) ?? []).every(
@@ -1171,95 +1287,237 @@ function analyzeCandidates(
     binding.scalarizedLength = onlyLengthReads;
   }
 
+  // Chains consumed in place as scalars: their root is read through one span.
+  const scalarChains = new Set<CallExpression>();
+  const markChain = (chain: Expression): void => {
+    for (
+      let link: Expression | null = chain;
+      link && isSpanLink(link);
+      link = spanLinkReceiver(link)
+    ) {
+      const call =
+        link instanceof ElementAccessExpression ? link.expression : link;
+      if (call instanceof CallExpression) scalarChains.add(call);
+    }
+  };
+  walk(body, (node): boolean | void => {
+    if (node instanceof FunctionDeclaration && node !== declaration)
+      return false;
+    if (
+      node instanceof PropertyAccessExpression &&
+      node.property.text === "length"
+    ) {
+      markChain(node.expression);
+      // The length of a literal-separated split counts separators in place.
+      const split = node.expression;
+      const separator = split instanceof CallExpression ? split.args[0] : null;
+      if (
+        split instanceof CallExpression &&
+        !isStrStaticCall(split) &&
+        propertyCall(split)?.property.text === "split" &&
+        split.args.length === 1 &&
+        separator instanceof StringLiteralExpression &&
+        separator.value.length
+      ) {
+        scalarChains.add(split);
+        markChain(propertyCall(split)!.expression);
+      }
+    } else if (node instanceof CallExpression) {
+      const property = propertyCall(node);
+      if (
+        property &&
+        !isStrStaticCall(node) &&
+        operationSemantics(property.property.text).spanScalar
+      )
+        markChain(property.expression);
+    } else if (
+      node instanceof BinaryExpression &&
+      (node.operator === Token.Equals_Equals ||
+        node.operator === Token.Equals_Equals_Equals ||
+        node.operator === Token.Exclamation_Equals ||
+        node.operator === Token.Exclamation_Equals_Equals)
+    ) {
+      // Only the operand compared in place; see the rewriter's equality path.
+      if (isSpanLink(node.left)) markChain(node.left);
+      else if (node.left instanceof StringLiteralExpression)
+        markChain(node.right);
+    }
+  });
+
+  // Every link of a chain that initializes or is assigned to a binding leads to
+  // that binding, so a packed root may start a chain of any length.
   const consumers = new Map<CallExpression, Binding>();
+  const ternaryTargets = new Map<TernaryExpression, Binding>();
+  const consume = (value: Expression, target: Binding): void => {
+    const ternary = spanTernary(value);
+    if (ternary) {
+      ternaryTargets.set(ternary, target);
+      consume(ternary.ifThen, target);
+      consume(ternary.ifElse, target);
+      return;
+    }
+    for (
+      let link: Expression | null = value;
+      link && isSpanLink(link);
+      link = spanLinkReceiver(link)
+    ) {
+      // A split field is read through its split call.
+      const call =
+        link instanceof ElementAccessExpression ? link.expression : link;
+      if (call instanceof CallExpression) consumers.set(call, target);
+    }
+  };
   for (const target of context.bindings.values()) {
-    if (target.declaration.initializer instanceof CallExpression) {
-      consumers.set(target.declaration.initializer, target);
+    if (target.declaration.initializer) {
+      consume(target.declaration.initializer, target);
+    }
+    for (const { node, ref } of bindingUses.get(target) ?? []) {
+      const assignment = spanAssignment(node, ref);
+      if (assignment) consume(assignment.right, target);
     }
   }
+
+  // Whether a binding can hold a packed span, and over which owner. Mutually
+  // dependent bindings, such as a cursor and a conditional row over it, are
+  // first accepted optimistically, assuming candidates they feed will pack.
+  const accept = (binding: Binding, optimistic: boolean): SpanOwner | null => {
+    const initializer = binding.declaration.initializer;
+    if (
+      binding.decision !== "view" ||
+      binding.scalarizedLength ||
+      !initializer ||
+      !(isSpanLink(initializer) || spanTernary(initializer))
+    )
+      return null;
+    // A chain of span links narrows one span of its root's memory.
+    const root = spanChainRoot(initializer);
+    if (
+      !root ||
+      expressionRepresentation(root, context, signatures) === "unknown"
+    )
+      return null;
+    const receiverBinding =
+      root instanceof IdentifierExpression
+        ? context.classes.bindingOf(root, context)
+        : null;
+    const owner: SpanOwner | null =
+      receiverBinding?.scalarizedSpan && receiverBinding.packedSpan
+        ? receiverBinding.packedSpan.owner
+        : root instanceof IdentifierExpression
+          ? { kind: "identifier", name: root.text }
+          : root instanceof StringLiteralExpression
+            ? { kind: "string-literal", value: root.value }
+            : null;
+    if (owner === null || !spanOwnerIsStable(owner, context)) return null;
+    const packs = (target: Binding | undefined): boolean =>
+      !!target &&
+      (target === binding ||
+        target.scalarizedLength ||
+        target.scalarizedSpan ||
+        (optimistic && target.candidate && target.decision === "view"));
+
+    for (const { node, ref } of bindingUses.get(binding) ?? []) {
+      if (
+        ref.parent instanceof PropertyAccessExpression &&
+        ref.key === "expression"
+      ) {
+        if (
+          ref.parent.property.text === "length" ||
+          ref.parent.property.text === "isEmpty"
+        ) {
+          continue;
+        }
+        if (
+          ref.grandparent instanceof CallExpression &&
+          ref.grandparent.expression === ref.parent &&
+          operationSemantics(ref.parent.property.text).spanScalar
+        ) {
+          continue;
+        }
+        if (
+          ref.grandparent instanceof CallExpression &&
+          ref.grandparent.expression === ref.parent &&
+          (operationSemantics(ref.parent.property.text).spanProducing ||
+            ref.parent.property.text === "split") &&
+          // Whatever the consumer becomes, a chain from a packed root lowers:
+          // packed, copied once natively, or wrapped once as a view.
+          (scalarChains.has(ref.grandparent) || consumers.has(ref.grandparent))
+        )
+          continue;
+      }
+      if (
+        ref.parent instanceof BinaryExpression &&
+        (ref.parent.operator === Token.Equals_Equals ||
+          ref.parent.operator === Token.Equals_Equals_Equals ||
+          ref.parent.operator === Token.Exclamation_Equals ||
+          ref.parent.operator === Token.Exclamation_Equals_Equals)
+      ) {
+        continue;
+      }
+      // A bare branch of a same-root conditional is the whole root's span.
+      if (
+        ref.parent instanceof TernaryExpression &&
+        ref.key !== "condition" &&
+        packs(ternaryTargets.get(ref.parent))
+      )
+        continue;
+      // A cursor may move to another span of the same owner.
+      const assignment = spanAssignment(node, ref);
+      if (assignment) {
+        const root = spanChainRoot(assignment.right);
+        const rootBinding =
+          root instanceof IdentifierExpression
+            ? context.classes.bindingOf(root, context)
+            : null;
+        const rootOwner: SpanOwner | null =
+          rootBinding === binding
+            ? owner
+            : rootBinding?.scalarizedSpan && rootBinding.packedSpan
+              ? rootBinding.packedSpan.owner
+              : root instanceof IdentifierExpression
+                ? { kind: "identifier", name: root.text }
+                : root instanceof StringLiteralExpression
+                  ? { kind: "string-literal", value: root.value }
+                  : null;
+        if (
+          rootOwner &&
+          sameSpanOwner(rootOwner, owner) &&
+          (rootBinding === binding ||
+            expressionRepresentation(root, context, signatures) !== "unknown")
+        )
+          continue;
+      }
+      return null;
+    }
+    return owner;
+  };
 
   let changed = true;
   while (changed) {
     changed = false;
     for (const binding of context.bindings.values()) {
-      if (
-        binding.decision !== "view" ||
-        binding.scalarizedLength ||
-        binding.scalarizedSpan ||
-        !(binding.declaration.initializer instanceof CallExpression)
-      ) {
-        continue;
-      }
-      const initializer = propertyCall(binding.declaration.initializer);
-      if (
-        !initializer ||
-        !operationSemantics(initializer.property.text).spanProducing
-      )
-        continue;
-      const receiver = isStrStaticCall(binding.declaration.initializer)
-        ? binding.declaration.initializer.args[0]
-        : initializer.expression;
-      if (
-        !receiver ||
-        expressionRepresentation(receiver, context, signatures) === "unknown"
-      )
-        continue;
-      const receiverBinding =
-        receiver instanceof IdentifierExpression
-          ? context.classes.bindingOf(receiver, context)
-          : null;
-      const owner =
-        receiverBinding?.scalarizedSpan && receiverBinding.packedSpan
-          ? receiverBinding.packedSpan.owner
-          : receiver instanceof IdentifierExpression
-            ? { kind: "identifier" as const, name: receiver.text }
-            : receiver instanceof StringLiteralExpression
-              ? { kind: "string-literal" as const, value: receiver.value }
-              : null;
-      if (owner === null || !spanOwnerIsStable(owner, context)) continue;
-
-      let scalarUsesOnly = true;
-      for (const { ref } of bindingUses.get(binding) ?? []) {
-        if (
-          ref.parent instanceof PropertyAccessExpression &&
-          ref.key === "expression"
-        ) {
-          if (
-            ref.parent.property.text === "length" ||
-            ref.parent.property.text === "isEmpty"
-          ) {
-            continue;
-          }
-          if (
-            ref.grandparent instanceof CallExpression &&
-            ref.grandparent.expression === ref.parent &&
-            operationSemantics(ref.parent.property.text).spanScalar
-          ) {
-            continue;
-          }
-          if (
-            ref.grandparent instanceof CallExpression &&
-            ref.grandparent.expression === ref.parent &&
-            operationSemantics(ref.parent.property.text).spanProducing
-          ) {
-            const target = consumers.get(ref.grandparent);
-            if (target?.scalarizedLength || target?.scalarizedSpan) continue;
-          }
-        }
-        if (
-          ref.parent instanceof BinaryExpression &&
-          (ref.parent.operator === Token.Equals_Equals ||
-            ref.parent.operator === Token.Equals_Equals_Equals ||
-            ref.parent.operator === Token.Exclamation_Equals ||
-            ref.parent.operator === Token.Exclamation_Equals_Equals)
-        ) {
-          continue;
-        }
-        scalarUsesOnly = false;
-      }
-      if (!scalarUsesOnly) continue;
+      if (binding.scalarizedSpan) continue;
+      const owner = accept(binding, true);
+      if (!owner) continue;
       binding.scalarizedSpan = true;
       binding.packedSpan = { owner };
+      changed = true;
+    }
+  }
+  // Keep only what holds without optimism; unpacking one binding can unpack
+  // others that relied on it, so repeat until nothing changes.
+  changed = true;
+  while (changed) {
+    changed = false;
+    for (const binding of context.bindings.values()) {
+      if (!binding.scalarizedSpan) continue;
+      const owner = accept(binding, false);
+      if (owner) {
+        binding.packedSpan = { owner };
+        continue;
+      }
+      binding.scalarizedSpan = false;
+      binding.packedSpan = null;
       changed = true;
     }
   }
@@ -1276,9 +1534,11 @@ function analyzeCandidates(
       }
       const parts = propertyCall(binding.declaration.initializer);
       if (!parts) continue;
-      const receiver = isStrStaticCall(binding.declaration.initializer)
-        ? binding.declaration.initializer.args[0]
-        : parts.expression;
+      const receiver = spanChainRoot(
+        isStrStaticCall(binding.declaration.initializer)
+          ? binding.declaration.initializer.args[0]
+          : parts.expression,
+      );
       if (!(receiver instanceof IdentifierExpression)) continue;
       const receiverBinding = context.classes.bindingOf(receiver, context);
       if (
@@ -1299,6 +1559,8 @@ function analyzeCandidates(
       !binding.preferred &&
       !binding.scalarizedLength &&
       !binding.scalarizedSpan &&
+      // One view object replaces the split array and every field.
+      !splitField(binding.declaration.initializer!) &&
       (bindingUses.get(binding) ?? []).filter(
         ({ node, ref }) =>
           ref.parent instanceof CallExpression &&
@@ -1315,6 +1577,23 @@ function analyzeCandidates(
       binding.decision = "native";
       binding.forcedReason =
         "class-backed local does not eliminate a net allocation";
+    }
+  }
+
+  // Merging a root with its span costs a view object on either branch; only a
+  // packed span improves on the native string.
+  for (const binding of context.bindings.values()) {
+    const initializer = binding.declaration.initializer;
+    if (
+      binding.candidate &&
+      binding.decision === "view" &&
+      !binding.preferred &&
+      !binding.scalarizedSpan &&
+      initializer &&
+      spanTernary(initializer)
+    ) {
+      binding.decision = "native";
+      binding.forcedReason = "conditional span merge is not packed";
     }
   }
 }
@@ -1342,6 +1621,23 @@ function diagnosticFor(binding: Binding): OptimizationDiagnostic {
     uses: binding.uses,
     conversions: binding.conversions,
   };
+}
+
+function importsAny(source: Source, paths: ReadonlySet<string>): boolean {
+  return source.statements.some(
+    (statement) =>
+      (statement instanceof ImportStatement ||
+        statement instanceof ExportStatement) &&
+      statement.internalPath !== null &&
+      paths.has(statement.internalPath),
+  );
+}
+
+function mentionsAnyName(text: string, names: Map<string, unknown>): boolean {
+  if (!names.size) return false;
+  for (const word of text.match(/[\p{ID_Continue}$\u200c\u200d]+/gu) ?? [])
+    if (names.has(word)) return true;
+  return false;
 }
 
 function collectFunctions(source: Source): FunctionDeclaration[] {
@@ -1590,21 +1886,55 @@ export function optimizeSource(
       signatures.set(name, shared ?? local);
     }
   }
-  const classes = new SourceClassTypes(source);
+  let classes = new SourceClassTypes(source);
   const globals = collectGlobalRepresentations(source, semanticFacts);
   const canPromoteBoundaries = manifest?.complete === true;
 
   const functions = collectFunctions(source);
   const contexts = new Map<FunctionDeclaration, FunctionContext>();
+  let declared = false;
   for (const declaration of functions) {
-    const context = collectLocalBindings(
+    let context = collectLocalBindings(
       declaration,
       semanticFacts,
       classes,
       globals,
     );
-    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
+    const charsChanged = normalizeCharComparisons(
+      declaration,
+      context,
+      signatures,
+    );
+    const splits = normalizeSplitArrays(
+      declaration,
+      context,
+      signatures,
+      (name) => spanOwnerIsStable({ kind: "identifier", name }, context),
+    );
+    declared ||= splits === "declared";
+    if (charsChanged || splits) {
+      changedSources.add(source);
+      context = collectLocalBindings(
+        declaration,
+        semanticFacts,
+        classes,
+        globals,
+      );
+    }
     contexts.set(declaration, context);
+  }
+  // Split loops declare cursors, which the scope index must see.
+  if (declared) {
+    classes = new SourceClassTypes(source);
+    for (const declaration of functions)
+      contexts.set(
+        declaration,
+        collectLocalBindings(declaration, semanticFacts, classes, globals),
+      );
+  }
+  for (const declaration of functions) {
+    const context = contexts.get(declaration)!;
+    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
     if (context.representationSensitive) {
       const signature = signatureForDeclaration(declaration, signatures);
       if (signature) signature.promotable = false;
@@ -1613,7 +1943,7 @@ export function optimizeSource(
 
   const sourceContext: FunctionContext = {
     declaration: null,
-    globals: collectGlobalRepresentations(source, semanticFacts),
+    globals,
     bindings: new Map(),
     parameters: new Map(),
     parameterSpans: new Map(),
@@ -1630,6 +1960,7 @@ export function optimizeSource(
   // of their own. Their captures share this module-level list, emitted below.
   const moduleOwners: VariableStatement[] = [];
   sourceContext.temporaryOwners = moduleOwners;
+  sourceContext.moduleConstants = moduleOwners;
   rewriteDeclarationBoundaries(source.statements, sourceContext, signatures);
 
   // Record explicit view receivers before promotion changes native bindings.
@@ -1699,6 +2030,7 @@ export function optimizeSource(
     if (!declaration.body) continue;
     const context = contexts.get(declaration)!;
     analyzeCandidates(context, signatures);
+    context.moduleConstants = moduleOwners;
 
     if (!(declaration.body instanceof BlockStatement)) {
       context.temporaryOwners = moduleOwners;
@@ -1779,12 +2111,26 @@ export function optimizeSources(
   // every reference is a direct call in a source we will rewrite. This keeps
   // exported library helpers optimizable without guessing about callbacks,
   // unselected dependencies, or host-visible entry points.
+  // Another source can name a user function only through an import from a
+  // user source, or through a global declaration. Same-named identifiers
+  // elsewhere resolve to that source's own bindings.
+  const userPaths = new Set(userSources.map((source) => source.internalPath));
+  const userGlobals = userSources.some((source) =>
+    /@global\b/.test(source.text),
+  );
   for (const source of sources) {
+    const userSource = userSources.includes(source);
+    if (
+      !userSource &&
+      ((!userGlobals && !importsAny(source, userPaths)) ||
+        !mentionsAnyName(source.text, sharedSignatures))
+    )
+      continue;
     const scopes: FunctionContext[] = [];
     const sourceFacts = factsForSource(manifest, source);
     const globals = collectGlobalRepresentations(source, sourceFacts);
     const classes = new SourceClassTypes(source);
-    if (userSources.includes(source)) {
+    if (userSource) {
       walk(source, (node) => {
         if (node instanceof FunctionDeclaration)
           scopes.push(
@@ -1843,7 +2189,7 @@ export function optimizeSources(
       const outsideBody =
         context.declaration &&
         (!body || node.range.start < body.start || node.range.end > body.end);
-      if (!call || !userSources.includes(source) || outsideBody) {
+      if (!call || !userSource || outsideBody) {
         signature.promotable = false;
       } else {
         signature.directCallCount++;

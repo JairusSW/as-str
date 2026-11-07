@@ -1,4 +1,5 @@
 import {
+  CallExpression,
   FunctionDeclaration,
   Expression,
   Source,
@@ -50,6 +51,10 @@ export interface Binding {
 export interface FunctionContext {
   declaration: FunctionDeclaration | null;
   temporaryOwners?: VariableStatement[];
+  /** Splits whose array is only indexed or measured, read in place. */
+  inPlaceSplits?: Set<CallExpression>;
+  /** Constants hoisted to the top of the source, shared by every function. */
+  moduleConstants?: VariableStatement[];
   bindings: Map<string, Binding>;
   parameters: Map<string, Representation>;
   parameterSpans: Map<string, PackedSpanLink>;

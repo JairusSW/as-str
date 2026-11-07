@@ -973,6 +973,131 @@ import { Str8 } from "./str8";
     return unitLength(Str.spanStart(value), Str.spanEnd(value));
   }
 
+  /**
+   * Index of the first label equal to a span, or -1: the case a `switch` on the
+   * span's string would take.
+   */
+  static caseIndexSpan<T>(
+    owner: T,
+    value: u64,
+    labels: StaticArray<string>,
+  ): i32 {
+    const start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    let found = -1;
+    for (let i = 0; i < labels.length; i++) {
+      const label = unchecked(labels[i]);
+      const labelStart = changetype<usize>(label);
+      if (
+        rangeEquals(
+          start,
+          end,
+          labelStart,
+          labelStart + ((<usize>label.length) << 1),
+        )
+      ) {
+        found = i;
+        break;
+      }
+    }
+    bData(owner);
+    return found;
+  }
+
+  /** The span of all of `s`, for a branch that keeps its whole receiver. */
+  // @ts-ignore: decorator
+  @inline static wholeSpan<T>(s: T): u64 {
+    return Str.span(bStart(s), bEnd(s));
+  }
+
+  /** A view object over a span of `owner`; one allocation for a whole chain. */
+  // @ts-ignore: decorator
+  @inline static fromSpan<T>(owner: T, value: u64): Str {
+    return new Str(bData(owner), Str.spanStart(value), Str.spanEnd(value));
+  }
+
+  /**
+   * Span of field `index` of `split(separator)` for a non-empty separator.
+   * Like `Array#[]` on the split result, a missing field throws.
+   */
+  // @ts-ignore: decorator
+  @inline static splitFieldSpan<T>(s: T, separator: string, index: i32): u64 {
+    return Str.splitFieldSpanOf(Str.span(bStart(s), bEnd(s)), separator, index);
+  }
+
+  static splitFieldSpanOf(value: u64, separator: string, index: i32): u64 {
+    let start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    const sepStart = changetype<usize>(separator);
+    const sepEnd = sepStart + ((<usize>separator.length) << 1);
+    if (index < 0) throw new RangeError("Index out of range");
+    for (let field = 0; field < index; field++) {
+      const at = rangeIndexOf(start, end, sepStart, sepEnd, 0);
+      if (at < 0) throw new RangeError("Index out of range");
+      start += ((<usize>at) << 1) + (sepEnd - sepStart);
+    }
+    const at = rangeIndexOf(start, end, sepStart, sepEnd, 0);
+    return Str.span(start, at < 0 ? end : start + ((<usize>at) << 1));
+  }
+
+  /** Length of `split(separator)` for a non-empty separator, without the array. */
+  // @ts-ignore: decorator
+  @inline static splitCount<T>(s: T, separator: string): i32 {
+    return Str.splitCountOf(Str.span(bStart(s), bEnd(s)), separator);
+  }
+
+  // @ts-ignore: decorator
+  @inline static splitCountSpan<T>(
+    owner: T,
+    value: u64,
+    separator: string,
+  ): i32 {
+    bData(owner);
+    return Str.splitCountOf(value, separator);
+  }
+
+  static splitCountOf(value: u64, separator: string): i32 {
+    let start = Str.spanStart(value);
+    const end = Str.spanEnd(value);
+    const sepStart = changetype<usize>(separator);
+    const sepEnd = sepStart + ((<usize>separator.length) << 1);
+    let count = 1;
+    while (true) {
+      const at = rangeIndexOf(start, end, sepStart, sepEnd, 0);
+      if (at < 0) return count;
+      count++;
+      start += ((<usize>at) << 1) + (sepEnd - sepStart);
+    }
+  }
+
+  /**
+   * Copy a span into an owned `string`. One copy replaces the copies a native
+   * chain makes at every link.
+   */
+  // @ts-ignore: decorator
+  @inline static spanToString<T>(owner: T, value: u64): string {
+    const out = materialize(Str.spanStart(value), Str.spanEnd(value));
+    // Reading the owner after the copy keeps it rooted across the allocation.
+    bData(owner);
+    return out;
+  }
+
+  /** Lowercase a span into an owned `string`; see {@link Str.toLowerCase}. */
+  // @ts-ignore: decorator
+  @inline static toLowerCaseSpan<T>(owner: T, value: u64): string {
+    const out = lowerCaseRange(Str.spanStart(value), Str.spanEnd(value));
+    bData(owner);
+    return out;
+  }
+
+  /** Uppercase a span into an owned `string`; see {@link Str.toUpperCase}. */
+  // @ts-ignore: decorator
+  @inline static toUpperCaseSpan<T>(owner: T, value: u64): string {
+    const out = upperCaseRange(Str.spanStart(value), Str.spanEnd(value));
+    bData(owner);
+    return out;
+  }
+
   // @ts-ignore: decorator
   @inline static isEmptySpan<T>(owner: T, value: u64): bool {
     bData(owner);
@@ -1782,17 +1907,9 @@ import { Str8 } from "./str8";
    * @returns A freshly allocated uppercased `string`.
    */
   static toUpperCase<T>(s: T): string {
-    const start = bStart(s);
-    const end = bEnd(s);
-    // ASCII fast path: fold a-z in one allocate-and-scan pass, skipping the
-    // materialize + Unicode-aware native call. Non-ASCII defers to native.
-    if (isAsciiRange(start, end)) {
-      const bytes = end - start;
-      const out = allocString(bytes);
-      asciiCaseFold(changetype<usize>(out), start, bytes, 0x61, 0x7a, -0x20);
-      return out;
-    }
-    return materialize(start, end).toUpperCase();
+    const out = upperCaseRange(bStart(s), bEnd(s));
+    bData(s);
+    return out;
   }
 
   /**
@@ -1803,17 +1920,9 @@ import { Str8 } from "./str8";
    * @returns A freshly allocated lowercased `string`.
    */
   static toLowerCase<T>(s: T): string {
-    const start = bStart(s);
-    const end = bEnd(s);
-    // ASCII fast path: fold A-Z in one allocate-and-scan pass, skipping the
-    // materialize + Unicode-aware native call. Non-ASCII defers to native.
-    if (isAsciiRange(start, end)) {
-      const bytes = end - start;
-      const out = allocString(bytes);
-      asciiCaseFold(changetype<usize>(out), start, bytes, 0x41, 0x5a, 0x20);
-      return out;
-    }
-    return materialize(start, end).toLowerCase();
+    const out = lowerCaseRange(bStart(s), bEnd(s));
+    bData(s);
+    return out;
   }
 
   /**
@@ -2028,6 +2137,30 @@ import { Str8 } from "./str8";
     copyBytes(op, tailStart, end - tailStart); // trailing segment
     return out;
   }
+}
+
+// ASCII fast paths fold in one allocate-and-scan pass, skipping the
+// materialize + Unicode-aware native call. Non-ASCII defers to native.
+function upperCaseRange(start: usize, end: usize): string {
+  if (start == end) return "";
+  if (isAsciiRange(start, end)) {
+    const bytes = end - start;
+    const out = allocString(bytes);
+    asciiCaseFold(changetype<usize>(out), start, bytes, 0x61, 0x7a, -0x20);
+    return out;
+  }
+  return materialize(start, end).toUpperCase();
+}
+
+function lowerCaseRange(start: usize, end: usize): string {
+  if (start == end) return "";
+  if (isAsciiRange(start, end)) {
+    const bytes = end - start;
+    const out = allocString(bytes);
+    asciiCaseFold(changetype<usize>(out), start, bytes, 0x41, 0x5a, 0x20);
+    return out;
+  }
+  return materialize(start, end).toLowerCase();
 }
 
 // @ts-ignore: decorator

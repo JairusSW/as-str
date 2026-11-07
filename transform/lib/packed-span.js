@@ -2,11 +2,13 @@ import {
   BinaryExpression,
   BlockStatement,
   CallExpression,
+  ElementAccessExpression,
   ExpressionStatement,
   IdentifierExpression,
   Node,
   PropertyAccessExpression,
   StringLiteralExpression,
+  TernaryExpression,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   identifier,
@@ -22,7 +24,7 @@ import {
   propertyCall,
   walk,
 } from "./visitor.js";
-function viewCallParts(expression) {
+export function viewCallParts(expression) {
   const property = propertyCall(expression);
   if (!property) return null;
   if (isStrStaticCall(expression) && expression.args.length > 0) {
@@ -215,10 +217,131 @@ export function planPackedSpanParameters(context, signature) {
     },
   };
 }
+export function splitField(expression) {
+  if (!(expression instanceof ElementAccessExpression)) return null;
+  const split = expression.expression;
+  if (!(split instanceof CallExpression) || isStrStaticCall(split)) return null;
+  const property = propertyCall(split);
+  const separator = split.args[0];
+  if (
+    property?.property.text !== "split" ||
+    split.args.length !== 1 ||
+    split.typeArguments?.length ||
+    !(separator instanceof StringLiteralExpression) ||
+    !separator.value.length
+  )
+    return null;
+  return {
+    receiver: property.expression,
+    separator,
+    index: expression.elementExpression,
+  };
+}
+export function isSpanLink(expression) {
+  return isSpanCall(expression) || !!splitField(expression);
+}
+export function spanLinkReceiver(expression) {
+  const field = splitField(expression);
+  if (field) return field.receiver;
+  if (!(expression instanceof CallExpression)) return null;
+  const parts = viewCallParts(expression);
+  return parts && operationSemantics(parts.method).spanProducing
+    ? parts.receiver
+    : null;
+}
+export function spanTernary(expression) {
+  if (!(expression instanceof TernaryExpression)) return null;
+  const branches = [expression.ifThen, expression.ifElse];
+  if (
+    !branches.some(isSpanLink) ||
+    !branches.every(
+      (branch) =>
+        isSpanLink(branch) ||
+        branch instanceof IdentifierExpression ||
+        branch instanceof StringLiteralExpression,
+    )
+  )
+    return null;
+  const [left, right] = branches.map((branch) => spanChainRoot(branch));
+  return (left instanceof IdentifierExpression &&
+    right instanceof IdentifierExpression &&
+    left.text === right.text) ||
+    (left instanceof StringLiteralExpression &&
+      right instanceof StringLiteralExpression &&
+      left.value === right.value)
+    ? expression
+    : null;
+}
+export function spanChainRoot(expression) {
+  const ternary = spanTernary(expression);
+  if (ternary) return spanChainRoot(ternary.ifThen);
+  let current = expression;
+  for (
+    let receiver = spanLinkReceiver(current);
+    receiver;
+    receiver = spanLinkReceiver(current)
+  )
+    current = receiver;
+  return current;
+}
+export function spanChainOwner(expression, context) {
+  const root = spanChainRoot(expression);
+  if (root instanceof StringLiteralExpression) return root;
+  if (!(root instanceof IdentifierExpression)) return null;
+  const binding = context.classes.bindingOf(root, context);
+  return binding?.scalarizedSpan && binding.packedSpan
+    ? spanOwnerExpression(binding.packedSpan.owner, root.range)
+    : root;
+}
+export function isSpanCall(expression) {
+  if (!(expression instanceof CallExpression)) return false;
+  const parts = viewCallParts(expression);
+  return !!parts && operationSemantics(parts.method).spanProducing;
+}
 export function lowerPackedSpanInitializer(expression, context) {
+  const ternary = spanTernary(expression);
+  if (ternary) {
+    const branch = (value) =>
+      isSpanLink(value)
+        ? lowerPackedSpanInitializer(value, context)
+        : value instanceof IdentifierExpression &&
+            context.classes.bindingOf(value, context)?.scalarizedSpan
+          ? value
+          : staticViewCall("wholeSpan", value, []);
+    return Node.createTernaryExpression(
+      ternary.condition,
+      branch(ternary.ifThen),
+      branch(ternary.ifElse),
+      ternary.range,
+    );
+  }
+  const field = splitField(expression);
+  if (field) {
+    const args = [field.separator, field.index];
+    if (isSpanLink(field.receiver))
+      return staticViewCall(
+        "splitFieldSpanOf",
+        lowerPackedSpanInitializer(field.receiver, context),
+        args,
+      );
+    if (
+      field.receiver instanceof IdentifierExpression &&
+      context.classes.bindingOf(field.receiver, context)?.scalarizedSpan
+    )
+      return staticViewCall("splitFieldSpanOf", field.receiver, args);
+    return staticViewCall("splitFieldSpan", field.receiver, args);
+  }
+  if (!(expression instanceof CallExpression)) return expression;
   const parts = viewCallParts(expression);
   if (!parts) return expression;
   const method = operationSemantics(parts.method).normalizedSpanName;
+  if (isSpanLink(parts.receiver)) {
+    return staticViewCall(
+      `${method}SpanOf`,
+      lowerPackedSpanInitializer(parts.receiver, context),
+      parts.args,
+    );
+  }
   if (
     parts.receiver instanceof IdentifierExpression &&
     context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan
@@ -233,20 +356,15 @@ export function lowerPackedLengthInitializer(expression, context) {
     return expression;
   }
   if (
-    parts.receiver instanceof IdentifierExpression &&
-    context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan
+    (parts.receiver instanceof IdentifierExpression &&
+      context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan) ||
+    (isSpanCall(expression) && isSpanLink(parts.receiver))
   ) {
-    const receiver = context.classes.bindingOf(parts.receiver, context);
-    const span = staticViewCall(
-      `${operationSemantics(parts.method).normalizedSpanName}SpanOf`,
-      parts.receiver,
-      parts.args,
-    );
-    return staticViewCall(
-      "spanLength",
-      spanOwnerExpression(receiver.packedSpan.owner, expression.range),
-      [span],
-    );
+    const owner = spanChainOwner(expression, context);
+    if (owner)
+      return staticViewCall("spanLength", owner, [
+        lowerPackedSpanInitializer(expression, context),
+      ]);
   }
   const method =
     parts.method === "at" &&
