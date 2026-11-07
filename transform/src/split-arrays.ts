@@ -9,6 +9,7 @@ import {
   IdentifierExpression,
   IntegerLiteralExpression,
   Node,
+  ParenthesizedExpression,
   PropertyAccessExpression,
   StringLiteralExpression,
   Token,
@@ -50,6 +51,21 @@ const ASSIGNMENTS = new Set([
   Token.Bar_Equals,
   Token.Caret_Equals,
 ]);
+
+/** The assigned location is unchanged by any number of parentheses. */
+function writeTarget(node: Node): Expression | null {
+  let target: Expression | null =
+    node instanceof BinaryExpression && ASSIGNMENTS.has(node.operator)
+      ? node.left
+      : (node instanceof UnaryPrefixExpression ||
+            node instanceof UnaryPostfixExpression) &&
+          (node.operator === Token.Plus_Plus ||
+            node.operator === Token.Minus_Minus)
+        ? node.operand
+        : null;
+  while (target instanceof ParenthesizedExpression) target = target.expression;
+  return target;
+}
 
 interface SplitArray {
   receiver: IdentifierExpression | StringLiteralExpression;
@@ -178,18 +194,11 @@ function splitLoop(
   walk(loop.body, (node, ref): boolean | void => {
     if (ref.parent) parents.set(node, ref.parent);
     if (node instanceof FunctionDeclaration) return false;
+    const target = writeTarget(node);
+    if (target instanceof IdentifierExpression && target.text === index)
+      written = true;
     if (!(node instanceof IdentifierExpression) || node.text !== index) return;
     const parent = ref.parent;
-    if (
-      (parent instanceof BinaryExpression &&
-        parent.left === node &&
-        ASSIGNMENTS.has(parent.operator)) ||
-      ((parent instanceof UnaryPrefixExpression ||
-        parent instanceof UnaryPostfixExpression) &&
-        (parent.operator === Token.Plus_Plus ||
-          parent.operator === Token.Minus_Minus))
-    )
-      written = true;
     if (
       parent instanceof ElementAccessExpression &&
       ref.key === "elementExpression" &&
@@ -262,7 +271,12 @@ export function normalizeSplitArrays(
   }
   if (!candidates.size) return false;
   const loops = new Map<VariableDeclaration, SplitLoop[]>();
-  walk(body, (node): boolean | void => {
+  const parents = new Map<Node, Node>();
+  const writtenTargets = new Set<Expression>();
+  walk(body, (node, ref): boolean | void => {
+    if (ref.parent) parents.set(node, ref.parent);
+    const target = writeTarget(node);
+    if (target) writtenTargets.add(target);
     if (node instanceof FunctionDeclaration && node !== declaration)
       return false;
     if (!(node instanceof ForStatement)) return;
@@ -287,16 +301,29 @@ export function normalizeSplitArrays(
     const local = context.classes.declarationOf(node, context);
     if (!local || !candidates.has(local)) return;
     const parent = ref.parent;
-    const grandparent = ref.grandparent;
-    // Neither form may be written: a field or length assignment mutates.
-    const written =
-      (grandparent instanceof BinaryExpression &&
-        grandparent.left === parent &&
-        ASSIGNMENTS.has(grandparent.operator)) ||
-      ((grandparent instanceof UnaryPrefixExpression ||
-        grandparent instanceof UnaryPostfixExpression) &&
-        (grandparent.operator === Token.Plus_Plus ||
-          grandparent.operator === Token.Minus_Minus));
+    const written = parent instanceof Expression && writtenTargets.has(parent);
+    const split = candidates.get(local)!;
+    if (
+      parent instanceof ElementAccessExpression &&
+      expressionRepresentation(split.receiver, context, signatures) === "view"
+    ) {
+      // View elements are mutable objects. Only direct read-only observations
+      // may be reconstructed; aliases, arguments and mutators keep the array.
+      const use = parents.get(parent);
+      const call = use ? parents.get(use) : null;
+      const readOnly =
+        use instanceof PropertyAccessExpression &&
+        use.expression === parent &&
+        (use.property.text === "length" ||
+          use.property.text === "isEmpty" ||
+          (operationSemantics(use.property.text).spanScalar &&
+            call instanceof CallExpression &&
+            call.expression === use));
+      if (!readOnly) {
+        candidates.delete(local);
+        return;
+      }
+    }
     if (
       !written &&
       ((parent instanceof PropertyAccessExpression &&

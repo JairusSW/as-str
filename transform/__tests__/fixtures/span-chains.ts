@@ -323,3 +323,40 @@ export function nativeEmptyChainIdentity(): i32 {
     result |= 4;
   return result;
 }
+
+export function splitFirstNative(value: string): string {
+  return value.split(",")[0];
+}
+export function splitNativeIdentity(): i32 {
+  const input = String.fromCharCodes([97, 98, 99]);
+  const empty = changetype<string>(__new(0, idof<string>()));
+  let result = 0;
+  if (changetype<usize>(splitFirstNative(input)) == changetype<usize>(input))
+    result |= 1;
+  if (changetype<usize>(splitFirstNative("a,b")) == changetype<usize>("a,b"))
+    result |= 2;
+  if (changetype<usize>(splitFirstNative(empty)) == changetype<usize>(empty))
+    result |= 4;
+  return result;
+}
+export function emptyLower(value: string): string {
+  return value.trimStart().toLowerCase();
+}
+export function emptyUpper(value: string): string {
+  return value.trimLeft().toUpperCase();
+}
+export function emptyEndLower(value: string): string {
+  return value.trimEnd().toLowerCase();
+}
+export function emptyConversionIdentity(): i32 {
+  const empty = changetype<string>(__new(0, idof<string>()));
+  let result = 0;
+  if (changetype<usize>(emptyLower(empty)) == changetype<usize>(empty))
+    result |= 1;
+  if (changetype<usize>(emptyUpper(empty)) == changetype<usize>(empty))
+    result |= 2;
+  if (changetype<usize>(emptyLower(" ")) == changetype<usize>("")) result |= 4;
+  if (changetype<usize>(emptyEndLower(empty)) == changetype<usize>(empty))
+    result |= 8;
+  return result;
+}

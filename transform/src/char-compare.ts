@@ -182,7 +182,7 @@ export function normalizeCharComparisons(
   signatures: FunctionSignatures,
 ): boolean {
   const body = declaration.body;
-  if (!body) return false;
+  if (!body || context.representationSensitive) return false;
   const locals = scalarLocals(body, declaration, context, signatures);
   const scalar = (expression: Expression): boolean => {
     if (!(expression instanceof IdentifierExpression)) return false;

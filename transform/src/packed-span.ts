@@ -8,6 +8,8 @@ import {
   IdentifierExpression,
   Node,
   ParameterKind,
+  ParenthesizedExpression,
+  IntegerLiteralExpression,
   PropertyAccessExpression,
   Range,
   Statement,
@@ -288,6 +290,17 @@ export function splitField(expression: Expression): SplitField | null {
   if (!(split instanceof CallExpression) || isStrStaticCall(split)) return null;
   const property = propertyCall(split);
   const separator = split.args[0];
+  let index = expression.elementExpression;
+  while (index instanceof ParenthesizedExpression) index = index.expression;
+  // Calls, accessors and compound expressions can change a view's range or
+  // backing data after split() would have snapshotted it. Keep those arrays.
+  if (
+    !(
+      index instanceof IntegerLiteralExpression ||
+      index instanceof IdentifierExpression
+    )
+  )
+    return null;
   if (
     property?.property.text !== "split" ||
     split.args.length !== 1 ||

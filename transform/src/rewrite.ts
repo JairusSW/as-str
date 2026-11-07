@@ -1,4 +1,8 @@
-import { callArgumentType, typeIsNullable } from "./type-resolution.js";
+import {
+  callArgumentType,
+  typeIsNullable,
+  sourceBindsName,
+} from "./type-resolution.js";
 import {
   AssertionExpression,
   AssertionKind,
@@ -669,12 +673,18 @@ function fuseNativeChain(
   if (!owner) return null;
   // Full-range substring and unchanged trims return their native receiver.
   // Slice/substr, split fields and unknown packed roots still require a copy.
-  let noCopy =
-    !conversion &&
-    expressionRepresentation(root, context, signatures) === "native";
+  let noCopy = expressionRepresentation(root, context, signatures) === "native";
   let link = chain;
   let preserveEmpty = true;
   while (link !== root && noCopy) {
+    const field = splitField(link);
+    if (field) {
+      // A whole nonempty field means no separator matched; native split
+      // reuses its receiver. Empty split results are canonical instead.
+      preserveEmpty = false;
+      link = field.receiver;
+      continue;
+    }
     const parts = link instanceof CallExpression ? viewCallParts(link) : null;
     if (
       !parts ||
@@ -1590,6 +1600,7 @@ export function rewriteStatement(
       loweredReturns.add(statement);
       statement.value = rewriteExpression(
         statement.value instanceof IdentifierExpression &&
+          !context.parameterSpans.has(statement.value.text) &&
           !context.classes.bindingOf(statement.value, context)?.scalarizedSpan
           ? staticViewCall("wholeSpan", statement.value, [])
           : lowerPackedSpanInitializer(statement.value, context),
@@ -1672,6 +1683,8 @@ export function rewriteStatement(
     const labels = statement.cases.map((switchCase) => switchCase.label);
     const owner =
       !context.representationSensitive &&
+      !sourceBindsName(statement.range.source, "StaticArray") &&
+      !sourceBindsName(statement.range.source, "string") &&
       isSpanLink(statement.condition) &&
       labels.every(
         (label) => label === null || label instanceof StringLiteralExpression,

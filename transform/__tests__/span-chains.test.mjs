@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { compileFixture, functionBody, instantiate } from "./harness.mjs";
 
 const cases = {
+  splitNativeIdentity: [[]],
+  emptyConversionIdentity: [[]],
   nativeTrimCompatibility: [[0], [1], [2], [3], [4], [5], [8], [16]],
   nativeEmptyChainIdentity: [[]],
   nativeChainIdentity: [[]],

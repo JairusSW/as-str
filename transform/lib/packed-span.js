@@ -6,6 +6,8 @@ import {
   ExpressionStatement,
   IdentifierExpression,
   Node,
+  ParenthesizedExpression,
+  IntegerLiteralExpression,
   PropertyAccessExpression,
   StringLiteralExpression,
   TernaryExpression,
@@ -226,6 +228,15 @@ export function splitField(expression) {
   if (!(split instanceof CallExpression) || isStrStaticCall(split)) return null;
   const property = propertyCall(split);
   const separator = split.args[0];
+  let index = expression.elementExpression;
+  while (index instanceof ParenthesizedExpression) index = index.expression;
+  if (
+    !(
+      index instanceof IntegerLiteralExpression ||
+      index instanceof IdentifierExpression
+    )
+  )
+    return null;
   if (
     property?.property.text !== "split" ||
     split.args.length !== 1 ||

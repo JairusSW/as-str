@@ -1147,7 +1147,21 @@ import { Str8 } from "./str8";
 
   /** Lowercase a span into an owned `string`; see {@link Str.toLowerCase}. */
   // @ts-ignore: decorator
-  @inline static toLowerCaseSpan<T>(owner: T, value: u64): string {
+  @inline static toLowerCaseSpan<T>(
+    owner: T,
+    value: u64,
+    preserveEmpty: bool = false,
+  ): string {
+    if (isString<T>()) {
+      const native = changetype<string>(owner);
+      if (
+        preserveEmpty &&
+        !native.length &&
+        Str.spanStart(value) == changetype<usize>(native) &&
+        Str.spanEnd(value) == changetype<usize>(native)
+      )
+        return native;
+    }
     const out = lowerCaseRange(Str.spanStart(value), Str.spanEnd(value));
     bData(owner);
     return out;
@@ -1155,7 +1169,21 @@ import { Str8 } from "./str8";
 
   /** Uppercase a span into an owned `string`; see {@link Str.toUpperCase}. */
   // @ts-ignore: decorator
-  @inline static toUpperCaseSpan<T>(owner: T, value: u64): string {
+  @inline static toUpperCaseSpan<T>(
+    owner: T,
+    value: u64,
+    preserveEmpty: bool = false,
+  ): string {
+    if (isString<T>()) {
+      const native = changetype<string>(owner);
+      if (
+        preserveEmpty &&
+        !native.length &&
+        Str.spanStart(value) == changetype<usize>(native) &&
+        Str.spanEnd(value) == changetype<usize>(native)
+      )
+        return native;
+    }
     const out = upperCaseRange(Str.spanStart(value), Str.spanEnd(value));
     bData(owner);
     return out;

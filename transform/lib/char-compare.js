@@ -136,7 +136,7 @@ function scalarLocals(body, declaration, context, signatures) {
 }
 export function normalizeCharComparisons(declaration, context, signatures) {
   const body = declaration.body;
-  if (!body) return false;
+  if (!body || context.representationSensitive) return false;
   const locals = scalarLocals(body, declaration, context, signatures);
   const scalar = (expression) => {
     if (!(expression instanceof IdentifierExpression)) return false;

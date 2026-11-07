@@ -2,11 +2,13 @@ import {
   BinaryExpression,
   CallExpression,
   ElementAccessExpression,
+  Expression,
   ForStatement,
   FunctionDeclaration,
   IdentifierExpression,
   IntegerLiteralExpression,
   Node,
+  ParenthesizedExpression,
   PropertyAccessExpression,
   StringLiteralExpression,
   UnaryPostfixExpression,
@@ -32,6 +34,18 @@ import {
 const ASSIGNMENTS = new Set([
   101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113,
 ]);
+function writeTarget(node) {
+  let target =
+    node instanceof BinaryExpression && ASSIGNMENTS.has(node.operator)
+      ? node.left
+      : (node instanceof UnaryPrefixExpression ||
+            node instanceof UnaryPostfixExpression) &&
+          (node.operator === 87 || node.operator === 88)
+        ? node.operand
+        : null;
+  while (target instanceof ParenthesizedExpression) target = target.expression;
+  return target;
+}
 function splitArray(expression, context, signatures) {
   if (!(expression instanceof CallExpression) || isStrStaticCall(expression))
     return null;
@@ -128,17 +142,11 @@ function splitLoop(loop, array, context) {
   walk(loop.body, (node, ref) => {
     if (ref.parent) parents.set(node, ref.parent);
     if (node instanceof FunctionDeclaration) return false;
+    const target = writeTarget(node);
+    if (target instanceof IdentifierExpression && target.text === index)
+      written = true;
     if (!(node instanceof IdentifierExpression) || node.text !== index) return;
     const parent = ref.parent;
-    if (
-      (parent instanceof BinaryExpression &&
-        parent.left === node &&
-        ASSIGNMENTS.has(parent.operator)) ||
-      ((parent instanceof UnaryPrefixExpression ||
-        parent instanceof UnaryPostfixExpression) &&
-        (parent.operator === 87 || parent.operator === 88))
-    )
-      written = true;
     if (
       parent instanceof ElementAccessExpression &&
       ref.key === "elementExpression" &&
@@ -202,7 +210,12 @@ export function normalizeSplitArrays(
   }
   if (!candidates.size) return false;
   const loops = new Map();
-  walk(body, (node) => {
+  const parents = new Map();
+  const writtenTargets = new Set();
+  walk(body, (node, ref) => {
+    if (ref.parent) parents.set(node, ref.parent);
+    const target = writeTarget(node);
+    if (target) writtenTargets.add(target);
     if (node instanceof FunctionDeclaration && node !== declaration)
       return false;
     if (!(node instanceof ForStatement)) return;
@@ -224,14 +237,27 @@ export function normalizeSplitArrays(
     const local = context.classes.declarationOf(node, context);
     if (!local || !candidates.has(local)) return;
     const parent = ref.parent;
-    const grandparent = ref.grandparent;
-    const written =
-      (grandparent instanceof BinaryExpression &&
-        grandparent.left === parent &&
-        ASSIGNMENTS.has(grandparent.operator)) ||
-      ((grandparent instanceof UnaryPrefixExpression ||
-        grandparent instanceof UnaryPostfixExpression) &&
-        (grandparent.operator === 87 || grandparent.operator === 88));
+    const written = parent instanceof Expression && writtenTargets.has(parent);
+    const split = candidates.get(local);
+    if (
+      parent instanceof ElementAccessExpression &&
+      expressionRepresentation(split.receiver, context, signatures) === "view"
+    ) {
+      const use = parents.get(parent);
+      const call = use ? parents.get(use) : null;
+      const readOnly =
+        use instanceof PropertyAccessExpression &&
+        use.expression === parent &&
+        (use.property.text === "length" ||
+          use.property.text === "isEmpty" ||
+          (operationSemantics(use.property.text).spanScalar &&
+            call instanceof CallExpression &&
+            call.expression === use));
+      if (!readOnly) {
+        candidates.delete(local);
+        return;
+      }
+    }
     if (
       !written &&
       ((parent instanceof PropertyAccessExpression &&

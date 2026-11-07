@@ -1,4 +1,8 @@
-import { callArgumentType, typeIsNullable } from "./type-resolution.js";
+import {
+  callArgumentType,
+  typeIsNullable,
+  sourceBindsName,
+} from "./type-resolution.js";
 import {
   AssertionExpression,
   BinaryExpression,
@@ -553,12 +557,16 @@ function fuseNativeChain(expression, context, signatures) {
     return null;
   const owner = spanChainOwner(chain, context);
   if (!owner) return null;
-  let noCopy =
-    !conversion &&
-    expressionRepresentation(root, context, signatures) === "native";
+  let noCopy = expressionRepresentation(root, context, signatures) === "native";
   let link = chain;
   let preserveEmpty = true;
   while (link !== root && noCopy) {
+    const field = splitField(link);
+    if (field) {
+      preserveEmpty = false;
+      link = field.receiver;
+      continue;
+    }
     const parts = link instanceof CallExpression ? viewCallParts(link) : null;
     if (
       !parts ||
@@ -1416,6 +1424,7 @@ export function rewriteStatement(statement, context, signatures) {
       loweredReturns.add(statement);
       statement.value = rewriteExpression(
         statement.value instanceof IdentifierExpression &&
+          !context.parameterSpans.has(statement.value.text) &&
           !context.classes.bindingOf(statement.value, context)?.scalarizedSpan
           ? staticViewCall("wholeSpan", statement.value, [])
           : lowerPackedSpanInitializer(statement.value, context),
@@ -1496,6 +1505,8 @@ export function rewriteStatement(statement, context, signatures) {
     const labels = statement.cases.map((switchCase) => switchCase.label);
     const owner =
       !context.representationSensitive &&
+      !sourceBindsName(statement.range.source, "StaticArray") &&
+      !sourceBindsName(statement.range.source, "string") &&
       isSpanLink(statement.condition) &&
       labels.every(
         (label) => label === null || label instanceof StringLiteralExpression,
