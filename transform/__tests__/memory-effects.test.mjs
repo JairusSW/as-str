@@ -11,7 +11,14 @@ for (const [build, flags] of [
       extra: ["--enable", "simd", "--enable", "threads", ...flags],
     });
     const { instance } = await instantiate(compiled.wasm);
-    for (const name of ["fill", "copy", "simd", "atomicWrite"])
+    for (const name of [
+      "fill",
+      "copy",
+      "simd",
+      "atomicWrite",
+      "encodeUnsafe",
+      "encodeUnsafe16",
+    ])
       assert.equal(instance.exports[name](), 1, `${mode}/${build}/${name}`);
     if (mode !== "global" && build === "debug") {
       const body = functionBody(

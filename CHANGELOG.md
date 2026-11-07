@@ -15,8 +15,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Preserve native string snapshots across excluded dependency helpers, including
   package-index imports, hidden virtual overrides, and host declarations.
-- Treat namespaced memory intrinsics such as `memory.fill`, `memory.copy`, and
-  SIMD loads and stores as raw-storage barriers during transform analysis.
+- Treat namespaced memory intrinsics such as `memory.fill`, `memory.copy`, SIMD
+  loads and stores, atomics, and unsafe string encoders as raw-storage barriers
+  during transform analysis.
 
 - Resolve switch-case locals and namespace globals by their actual declarations,
   including globals outside a local's scope and expressions in case labels.

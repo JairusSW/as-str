@@ -1567,6 +1567,9 @@ function isMemoryIntrinsic(call, target, context) {
         parts[0],
       )) ||
     root === "atomic" ||
+    (root === "String" &&
+      ["UTF8", "UTF16"].includes(parts[0]) &&
+      parts.at(-1)?.endsWith("Unsafe") === true) ||
     (["i32", "i64", "f32", "f64", "v128"].includes(root) &&
       parts.some(
         (part) =>
