@@ -47,6 +47,7 @@ import {
   u64Type,
   generatedCalls,
   legacyNativeTrimSources,
+  retainedViewSnapshots,
   generatedTypes,
   spanReturnCalls,
 } from "./ast.js";
@@ -1265,6 +1266,7 @@ function analyzeCandidates(context, signatures) {
     const initializer = binding.declaration.initializer;
     if (
       binding.decision !== "view" ||
+      retainedViewSnapshots.has(binding.declaration) ||
       binding.scalarizedLength ||
       !initializer ||
       !(isSpanLink(initializer) || spanTernary(initializer))
@@ -2061,7 +2063,10 @@ export function optimizeSources(sources, manifest = null) {
     });
   }
   const sensitiveDeclarations = representationSensitiveDeclarations(
-    sources.filter((source) => admitSource(source).semanticFacts),
+    sources.filter((source) => {
+      const admission = admitSource(source);
+      return admission.semanticFacts && !admission.packageSource;
+    }),
   );
   for (const declaration of sensitiveDeclarations) {
     if (!(declaration instanceof FunctionDeclaration)) continue;

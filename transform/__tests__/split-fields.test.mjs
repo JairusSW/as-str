@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { compileFixture, functionBody, instantiate } from "./harness.mjs";
 
 const cases = {
+  viewSplitGc: [[]],
   viewSplitMutation: [[]],
   nativeSplitMutation: [[]],
   namespacedSplitOwner: [[]],
@@ -107,6 +108,16 @@ for (const [build, extra] of [
         /String#split|String#(?:trim\w*|slice)/,
         `${mode}/${name} must read fields in place`,
       );
+    assert.doesNotMatch(
+      functionBody(compiled.wat, `${fixture}/viewSplitMutation `),
+      /Str#split|Array<assembly\/str\/Str>/,
+      `${mode}: a view snapshot must retain array-free field reads`,
+    );
+    assert.match(
+      functionBody(compiled.wat, `${fixture}/viewSplitMutation `),
+      /Str\.slice<|Str#slice/,
+      `${mode}: a mutable view needs an independently rooted range snapshot`,
+    );
     assert.match(
       functionBody(compiled.wat, `${fixture}/userSplit `),
       /Splitter#split/,

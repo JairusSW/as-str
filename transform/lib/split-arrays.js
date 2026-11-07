@@ -14,7 +14,13 @@ import {
   VariableDeclaration,
   VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
-import { i32Type, identifier, integer, viewType } from "./ast.js";
+import {
+  i32Type,
+  identifier,
+  integer,
+  viewType,
+  retainedViewSnapshots,
+} from "./ast.js";
 import { operationSemantics } from "./operations.js";
 import { expressionRepresentation } from "./rewrite.js";
 import {
@@ -268,16 +274,16 @@ export function normalizeSplitArrays(
                 receiver.range,
               )
             : receiver;
-          declarations.push(
-            Node.createVariableDeclaration(
-              identifier(name, local.range),
-              null,
-              8,
-              view ? viewType(local.range) : null,
-              snapshot,
-              local.range,
-            ),
+          const capture = Node.createVariableDeclaration(
+            identifier(name, local.range),
+            null,
+            8,
+            view ? viewType(local.range) : null,
+            snapshot,
+            local.range,
           );
+          if (view) retainedViewSnapshots.add(capture);
+          declarations.push(capture);
           split.receiver = identifier(name, receiver.range);
           local.initializer = splitCall(split, local.initializer.range);
         }

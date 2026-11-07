@@ -8,11 +8,15 @@ import {
   Source,
   Tokenizer,
   TypeNode,
+  VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { arrayElementType, stringRepresentation } from "./type-resolution.js";
 import { requestViewTypeAlias } from "./view-aliases.js";
 
 export type Representation = "native" | "view" | "unknown";
+
+/** View snapshots must keep their own backing-data root after Str.set(). */
+export const retainedViewSnapshots = new WeakSet<VariableDeclaration>();
 
 // Native String#trim in affected compilers shrinks size while advancing offset.
 // Key by source so separate compiler runs cannot leak compatibility decisions.

@@ -57,6 +57,7 @@ import {
   u64Type,
   generatedCalls,
   legacyNativeTrimSources,
+  retainedViewSnapshots,
   generatedTypes,
   spanReturnCalls,
 } from "./ast.js";
@@ -1505,6 +1506,7 @@ function analyzeCandidates(
     const initializer = binding.declaration.initializer;
     if (
       binding.decision !== "view" ||
+      retainedViewSnapshots.has(binding.declaration) ||
       binding.scalarizedLength ||
       !initializer ||
       !(isSpanLink(initializer) || spanTernary(initializer))
@@ -2383,7 +2385,12 @@ export function optimizeSources(
   }
 
   const sensitiveDeclarations = representationSensitiveDeclarations(
-    sources.filter((source) => admitSource(source).semanticFacts),
+    sources.filter((source) => {
+      const admission = admitSource(source);
+      // Package operations have known semantics; their internal pointer reads
+      // must not classify every manual-view caller as representation-sensitive.
+      return admission.semanticFacts && !admission.packageSource;
+    }),
   );
   for (const declaration of sensitiveDeclarations) {
     if (!(declaration instanceof FunctionDeclaration)) continue;

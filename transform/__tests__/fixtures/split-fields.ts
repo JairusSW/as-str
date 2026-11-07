@@ -185,3 +185,19 @@ namespace SplitOwner {
 export function namespacedSplitOwner(): i32 {
   return SplitOwner.read() + source.length;
 }
+
+function dynamicView(): str {
+  return str.from(String.fromCharCodes([97, 44, 98]));
+}
+
+export function viewSplitGc(): i32 {
+  const view = dynamicView();
+  const parts = view.split(",");
+  view.set(str.from("x,y,z"));
+  let total = 0;
+  for (let i = 0; i < 2048; i++) {
+    const values = new Array<i32>(128);
+    total += values.length;
+  }
+  return parts[0].charCodeAt(0) + total;
+}
