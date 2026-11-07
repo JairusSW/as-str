@@ -113,3 +113,12 @@ export function shadowReturn(): i32 {
   const input = "abcdef";
   return shadowed(input).length;
 }
+
+function earlyFirstLine(text: string): string {
+  const nl = text.indexOf("\n");
+  if (nl < 0) return text;
+  return text.slice(0, nl);
+}
+export function earlyLine(text: string): i32 {
+  return earlyFirstLine(text).length;
+}

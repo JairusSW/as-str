@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { compileFixture, functionBody, instantiate } from "./harness.mjs";
 
 const cases = {
+  earlyLine: [["abc"], ["a\nb"], [""], ["\nb"]],
   lineMethod: [["GET / HTTP\nHost"], ["GET /"], [""], ["nospace\n"]],
   extensions: [[]],
   prefixLength: [["abc"], [""]],

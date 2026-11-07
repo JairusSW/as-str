@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { compileFixture, instantiate } from "./harness.mjs";
 const cases = {
+  "span-return-owner": { run: 1 },
   "virtual-effects": { run: 1, baseControl: 0, constructorDispatch: 1 },
   "mutating-call": {
     direct: 1,

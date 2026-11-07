@@ -653,7 +653,11 @@ function planSpanReturn(
       !(
         argument instanceof StringLiteralExpression ||
         (argument instanceof IdentifierExpression &&
-          expressionRepresentation(argument, caller, signatures) === "native")
+          expressionRepresentation(argument, caller, signatures) === "native" &&
+          spanOwnerIsStable(
+            { kind: "identifier", name: argument.text },
+            caller,
+          ))
       ) ||
       !consumesSpan(call, callParents.get(call) ?? null)
     )

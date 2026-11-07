@@ -1415,7 +1415,10 @@ export function rewriteStatement(statement, context, signatures) {
       if (loweredReturns.has(statement)) return;
       loweredReturns.add(statement);
       statement.value = rewriteExpression(
-        lowerPackedSpanInitializer(statement.value, context),
+        statement.value instanceof IdentifierExpression &&
+          !context.classes.bindingOf(statement.value, context)?.scalarizedSpan
+          ? staticViewCall("wholeSpan", statement.value, [])
+          : lowerPackedSpanInitializer(statement.value, context),
         "unknown",
         context,
         signatures,
