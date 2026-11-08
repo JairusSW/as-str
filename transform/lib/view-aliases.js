@@ -22,7 +22,7 @@ export function requestScalarTypeAlias(source, type) {
   if (!requested) scalarAliases.set(source, (requested = new Map()));
   const existing = requested.get(type);
   if (existing) return existing;
-  const text = source.text + ASTBuilder.build(source);
+  const text = source.text;
   let name = `__as_str_${type}_type`;
   let suffix = 0;
   while (text.includes(name)) name = `__as_str_${type}_type_${suffix++}`;

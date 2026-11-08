@@ -1063,7 +1063,7 @@ function reasonForUse(
   }
 
   if (parent instanceof ElementAccessExpression && ref.key === "expression") {
-    return null;
+    return "native string indexing must remain string-valued";
   }
 
   if (parent instanceof AssertionExpression)
@@ -2138,6 +2138,26 @@ export function optimizeSource(
   const canPromoteBoundaries = manifest?.complete === true;
 
   const functions = collectFunctions(source);
+  const scalarTypeScopes: Node[] = [];
+  walk(source, (node) => {
+    const typeParameters = (
+      node as Node & {
+        typeParameters?: readonly { name: { text: string } }[];
+      }
+    ).typeParameters;
+    if (
+      typeParameters?.some((parameter) =>
+        ["i32", "u64"].includes(parameter.name.text),
+      )
+    )
+      scalarTypeScopes.push(node);
+  });
+  const shadowsScalarType = (declaration: FunctionDeclaration): boolean =>
+    scalarTypeScopes.some(
+      (scope) =>
+        scope.range.start <= declaration.range.start &&
+        scope.range.end >= declaration.range.end,
+    );
   const contexts = new Map<FunctionDeclaration, FunctionContext>();
   let declared = false;
   for (const declaration of functions) {
@@ -2147,7 +2167,8 @@ export function optimizeSource(
       classes,
       globals,
     );
-    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
+    context.representationSensitive ||=
+      sensitiveDeclarations.has(declaration) || shadowsScalarType(declaration);
     const charsChanged = normalizeCharComparisons(
       declaration,
       context,
@@ -2169,7 +2190,8 @@ export function optimizeSource(
         globals,
       );
     }
-    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
+    context.representationSensitive ||=
+      sensitiveDeclarations.has(declaration) || shadowsScalarType(declaration);
     contexts.set(declaration, context);
   }
   // Split loops declare cursors and split receivers, which the scope index
@@ -2185,7 +2207,8 @@ export function optimizeSource(
         globals,
       );
       context.representationSensitive ||=
-        sensitiveDeclarations.has(declaration);
+        sensitiveDeclarations.has(declaration) ||
+        shadowsScalarType(declaration);
       const splits =
         pass < 2 &&
         normalizeSplitArrays(declaration, context, signatures, (name) =>
@@ -2210,7 +2233,8 @@ export function optimizeSource(
   }
   for (const declaration of functions) {
     const context = contexts.get(declaration)!;
-    context.representationSensitive ||= sensitiveDeclarations.has(declaration);
+    context.representationSensitive ||=
+      sensitiveDeclarations.has(declaration) || shadowsScalarType(declaration);
     if (context.representationSensitive) {
       const signature = signatureForDeclaration(declaration, signatures);
       if (signature) signature.promotable = false;
@@ -2473,25 +2497,87 @@ export function optimizeSources(
       classes,
       duplicateNames: new Set(),
     };
+    const contextAt = (node: Node): FunctionContext =>
+      scopes.find(
+        (scope) =>
+          scope.declaration!.range.start <= node.range.start &&
+          scope.declaration!.range.end >= node.range.end,
+      ) || topContext;
+    const outsideBody = (node: Node, context: FunctionContext): boolean => {
+      const body = context.declaration?.body?.range;
+      return !!(
+        context.declaration &&
+        (!body || node.range.start < body.start || node.range.end > body.end)
+      );
+    };
+    const accountCall = (
+      call: CallExpression,
+      parent: Node | null,
+      context: FunctionContext,
+      signature: FunctionSignature,
+    ): void => {
+      if (!userSource || outsideBody(call, context)) {
+        signature.promotable = false;
+        return;
+      }
+      signature.directCallCount++;
+      (signature.callSites ??= []).push({ call, context });
+      callParents.set(call, parent);
+      call.args.forEach((argument, index) => {
+        if (
+          argument instanceof CallExpression &&
+          operationSemantics(propertyCall(argument)?.property.text ?? "")
+            .spanProducing &&
+          expressionRepresentation(
+            isStrStaticCall(argument)
+              ? argument.args[0]
+              : propertyCall(argument)!.expression,
+            context,
+            sharedSignatures,
+          ) !== "unknown"
+        ) {
+          signature.spanArgumentCounts.set(
+            index,
+            (signature.spanArgumentCounts.get(index) ?? 0) + 1,
+          );
+        }
+      });
+    };
     walk(source, (node, ref) => {
+      if (node instanceof CallExpression) {
+        const context = contextAt(node);
+        const signature = signatureForCall(node, context, sharedSignatures);
+        if (signature) accountCall(node, ref.parent, context, signature);
+        return;
+      }
+      if (
+        node instanceof PropertyAccessExpression &&
+        !(
+          ref.parent instanceof CallExpression && ref.parent.expression === node
+        )
+      ) {
+        const context = contextAt(node);
+        const declaration = context.classes.callableOf(node, context);
+        const signature = declaration
+          ? sharedSignatures.forDeclaration(declaration)
+          : undefined;
+        if (signature) signature.promotable = false;
+        return;
+      }
       if (!(node instanceof IdentifierExpression)) return;
       if (isDeclarationIdentifier(node, ref)) return;
-      const call =
-        ref.parent instanceof CallExpression && ref.parent.expression === node
-          ? ref.parent
-          : null;
-      const context =
-        scopes.find(
-          (scope) =>
-            scope.declaration!.range.start <= node.range.start &&
-            scope.declaration!.range.end >= node.range.end,
-        ) || topContext;
+      if (
+        (ref.parent instanceof CallExpression &&
+          ref.parent.expression === node) ||
+        (ref.parent instanceof PropertyAccessExpression &&
+          ref.parent.expression === node)
+      )
+        return;
+      const context = contextAt(node);
       const declaration = context.classes.callableOf(node, context);
-      const signature = call
-        ? signatureForCall(call, context, sharedSignatures)
-        : declaration
-          ? sharedSignatures.forDeclaration(declaration)
-          : sharedSignatures.get(node.text);
+      const signature = declaration
+        ? sharedSignatures.forDeclaration(declaration)
+        : sharedSignatures.get(node.text);
       if (
         !signature ||
         [...signature.declarations].some(
@@ -2499,38 +2585,8 @@ export function optimizeSources(
         )
       )
         return;
-      const body = context.declaration?.body?.range;
-      // Calls in defaults are counted by the planner but are outside the body
-      // rewriter. A callee used there must retain its original ABI.
-      const outsideBody =
-        context.declaration &&
-        (!body || node.range.start < body.start || node.range.end > body.end);
-      if (!call || !userSource || outsideBody) {
-        signature.promotable = false;
-      } else {
-        signature.directCallCount++;
-        (signature.callSites ??= []).push({ call, context });
-        callParents.set(call, ref.grandparent);
-        call.args.forEach((argument, index) => {
-          if (
-            argument instanceof CallExpression &&
-            operationSemantics(propertyCall(argument)?.property.text ?? "")
-              .spanProducing &&
-            expressionRepresentation(
-              isStrStaticCall(argument)
-                ? argument.args[0]
-                : propertyCall(argument)!.expression,
-              context,
-              sharedSignatures,
-            ) !== "unknown"
-          ) {
-            signature.spanArgumentCounts.set(
-              index,
-              (signature.spanArgumentCounts.get(index) ?? 0) + 1,
-            );
-          }
-        });
-      }
+      // Non-call references can escape the rewriting boundary.
+      signature.promotable = false;
     });
   }
 

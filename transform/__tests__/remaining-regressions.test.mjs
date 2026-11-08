@@ -35,7 +35,17 @@ await checkFixture("review-shadowed-u64", {
   returned: 2,
 });
 await checkFixture("review-shadowed-i32", { run: 1 });
-await checkFixture("review-native-indexing", { run: 1, firstCode: 98 });
+await checkFixture("review-native-indexing", {
+  run: 1,
+  firstCode: 98,
+  promotedString: 1,
+  promotedLength: 105,
+});
+await checkFixture("review-shadowed-imports", {
+  packed: 1,
+  character: 1,
+});
+await checkFixture("review-shadowed-generic", { run: 1 });
 await checkFixture("review-between-last", {
   utf16Instance: 5,
   utf16Static: 5,
@@ -48,6 +58,21 @@ const priorPrefixes = process.env.AS_STR_LIBRARY_PREFIXES;
 process.env.AS_STR_LIBRARY_PREFIXES = "~lib/review-count";
 try {
   await checkFixture("review-library-alias", { run: 6 }, [
+    "--path",
+    `${repo}/transform/__tests__/fixtures/libraries`,
+  ]);
+  await checkFixture("review-library-namespace", { run: 6 }, [
+    "--path",
+    `${repo}/transform/__tests__/fixtures/libraries`,
+  ]);
+} finally {
+  if (priorPrefixes === undefined) delete process.env.AS_STR_LIBRARY_PREFIXES;
+  else process.env.AS_STR_LIBRARY_PREFIXES = priorPrefixes;
+}
+
+process.env.AS_STR_LIBRARY_PREFIXES = "~lib/review-shadowed-library";
+try {
+  await checkFixture("review-shadowed-library", { run: 1 }, [
     "--path",
     `${repo}/transform/__tests__/fixtures/libraries`,
   ]);

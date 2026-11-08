@@ -59,7 +59,7 @@ assert.match(
 );
 assert.match(
   local.output,
-  /inject \{ str \}/,
+  /inject \{ str(?:,| \})/,
   "generated view use must auto-import str",
 );
 assert.match(

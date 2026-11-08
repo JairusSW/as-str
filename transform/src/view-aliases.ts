@@ -34,7 +34,10 @@ export function requestScalarTypeAlias(
   if (!requested) scalarAliases.set(source, (requested = new Map()));
   const existing = requested.get(type);
   if (existing) return existing;
-  const text = source.text + ASTBuilder.build(source);
+  // Scalar annotations can be requested while a rewrite is replacing an AST
+  // child. The original source contains every application-defined binding we
+  // must avoid and remains valid throughout that transient mutation.
+  const text = source.text;
   let name = `__as_str_${type}_type`;
   let suffix = 0;
   while (text.includes(name)) name = `__as_str_${type}_type_${suffix++}`;

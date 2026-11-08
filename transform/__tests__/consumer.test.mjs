@@ -84,7 +84,7 @@ try {
   const input = path.join(scratch, "index.ts");
   writeFileSync(
     input,
-    'export function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\nexport function checkEntryView(): i32 { return str.from("abcdef").slice(1, 4).length; }\n',
+    'type u64 = i32;\nexport function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\nexport function checkEntryView(): i32 { return str.from("abcdef").slice(1, 4).length; }\nexport function checkShadow(): bool { const part = "abc".slice(1); return part == "bc"; }\n',
   );
   const asc = path.join(scratch, "node_modules/assemblyscript/bin/asc.js");
   for (const [name, heading, transform, optimized] of [
@@ -207,6 +207,24 @@ try {
   });
   assert.equal(autoModule.instance.exports.check(), 3);
   assert.equal(autoModule.instance.exports.checkEntryView(), 3);
+  assert.equal(autoModule.instance.exports.checkShadow(), 1);
+  const singleWasm = path.join(scratch, "consumer-single.wasm");
+  run(process.execPath, [
+    asc,
+    input,
+    "--transform",
+    "as-str/single",
+    "--outFile",
+    singleWasm,
+  ]);
+  const singleModule = await WebAssembly.instantiate(readFileSync(singleWasm), {
+    env: {
+      abort() {
+        throw new Error("AssemblyScript abort");
+      },
+    },
+  });
+  assert.equal(singleModule.instance.exports.checkShadow(), 1);
   const assemblyEntry = path.join(scratch, "assembly/index.ts");
   mkdirSync(path.dirname(assemblyEntry), { recursive: true });
   writeFileSync(assemblyEntry, readFileSync(input, "utf8"));

@@ -13,6 +13,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Keep originally native string indexing string-valued when an otherwise
+  eligible local could be promoted to a view.
+- Resolve namespace-qualified calls in excluded dependencies before changing
+  an optimized library helper's signature.
+- Re-export collision-free scalar aliases from the package root and use them
+  for every generated `i32` and `u64` annotation.
+- Leave functions under conflicting generic `i32` or `u64` parameters on the
+  native path, where runtime helper annotations would resolve incorrectly.
 - Preserve left-to-right evaluation when equality compares a side-effecting
   expression with a packed span on the right.
 - Import collision-free primitive aliases for generated `i32` and `u64`
