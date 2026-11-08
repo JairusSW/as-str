@@ -1,4 +1,5 @@
 import {
+  CallExpression,
   Expression,
   Token,
   IdentifierExpression,
@@ -103,6 +104,18 @@ export function u64Type(range: Source["range"]): NamedTypeNode {
   );
 }
 
+export function stringType(range: Source["range"]): NamedTypeNode {
+  const name = requestScalarTypeAlias(range.source, "string");
+  return generated(
+    Node.createNamedType(
+      Node.createSimpleTypeName(name, range),
+      null,
+      false,
+      range,
+    ),
+  );
+}
+
 /** Stable identity for an original expression, including nested expressions. */
 export function expressionRangeKey(expression: Expression): string {
   const range = expression.range;
@@ -121,6 +134,9 @@ export function identifier(
  * read their arguments as view boundaries of the source program.
  */
 export const generatedCalls = new WeakSet<Expression>();
+
+/** Calls whose original arguments have already been expanded for a span ABI. */
+export const loweredSpanParameterCalls = new WeakSet<CallExpression>();
 
 /**
  * Calls to functions that return a packed span of one argument, by that

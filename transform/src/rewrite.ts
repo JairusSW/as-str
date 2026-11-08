@@ -50,9 +50,11 @@ import {
   i32Type,
   integer,
   loweredSpanCalls,
+  loweredSpanParameterCalls,
   Representation,
   representationOfType,
   staticViewCall,
+  stringType,
   u64Type,
   viewType,
   wrapAsView,
@@ -536,14 +538,7 @@ function caseLabels(
           CommonFlags.Const,
           Node.createNamedType(
             Node.createSimpleTypeName("StaticArray", range),
-            [
-              Node.createNamedType(
-                Node.createSimpleTypeName("string", range),
-                null,
-                false,
-                range,
-              ),
-            ],
+            [stringType(range)],
             false,
             range,
           ),
@@ -568,6 +563,10 @@ function concatOperand(
   context: FunctionContext,
   signatures: FunctionSignatures,
 ): ConcatOperand | null {
+  // Explicit views use Str's overloaded `+`, whose result remains a Str.
+  // A native backing owner does not change that source-level contract.
+  if (expressionRepresentation(expression, context, signatures) === "view")
+    return null;
   if (
     (isSpanLink(expression) || spanTernary(expression)) &&
     !(spanReturnCall(expression) && loweredSpanCalls.has(expression))
@@ -1344,7 +1343,10 @@ function rewriteExpression(
         context,
         signatures,
       );
+      if (loweredSpanParameterCalls.has(expression))
+        return convertExpression(expression, expected, context, signatures);
       const rewrittenArgs: Expression[] = [];
+      let expandedSpanParameter = false;
       expression.args.forEach((argument, index) => {
         if (
           signature?.callable &&
@@ -1387,12 +1389,7 @@ function rewriteExpression(
                     owner(),
                     null,
                     CommonFlags.Let,
-                    Node.createNamedType(
-                      Node.createSimpleTypeName("string", range),
-                      null,
-                      false,
-                      range,
-                    ),
+                    stringType(range),
                     Node.createStringLiteralExpression("", range),
                     range,
                   ),
@@ -1428,6 +1425,7 @@ function rewriteExpression(
               ),
               owner(),
             );
+            expandedSpanParameter = true;
             return;
           }
         }
@@ -1443,6 +1441,7 @@ function rewriteExpression(
         );
       });
       expression.args = rewrittenArgs;
+      if (expandedSpanParameter) loweredSpanParameterCalls.add(expression);
     }
     return convertExpression(expression, expected, context, signatures);
   }

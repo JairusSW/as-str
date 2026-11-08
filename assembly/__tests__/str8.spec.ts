@@ -5,7 +5,7 @@
 // gives the expected byte offset).
 
 import { describe, test, expect } from "as-test";
-import { str, str8 } from "../index";
+import { Str8, str, str8 } from "../index";
 
 const SAMPLE = "hello, world"; // pure ASCII: byte offset == char index
 const MULTI = "xx héllo, 世界 😀 yy"; // mixed 1/2/3/4-byte codepoints
@@ -51,8 +51,23 @@ describe("str8 views (zero-copy, byte-indexed)", () => {
     expect(str8.trim(padded).toString()).toBe(padded.trim());
     expect(str8.trimStart(padded).toString()).toBe(padded.trimStart());
     expect(str8.trimEnd(padded).toString()).toBe(padded.trimEnd());
+    expect(str8.trimLeft(padded).toString()).toBe(padded.trimLeft());
+    expect(str8.trimRight(padded).toString()).toBe(padded.trimRight());
+    expect(Str8.trimLeft(padded).toString()).toBe(padded.trimLeft());
+    expect(Str8.trimRight(padded).toString()).toBe(padded.trimRight());
     // trim leaves multi-byte content intact
     expect(str8.from("  héllo, 世界  ").trim().toString()).toBe("héllo, 世界");
+  });
+
+  test("prefix negation matches String emptiness", () => {
+    const empty = str8.from("abc").slice(3);
+    const present = str8.from("abc");
+    let nullable: str8 | null = empty;
+    expect(!empty).toBe(true);
+    expect(!nullable).toBe(true);
+    expect(!present).toBe(false);
+    nullable = null;
+    expect(!nullable).toBe(true);
   });
 
   test("a view of a view stays anchored to the original buffer", () => {

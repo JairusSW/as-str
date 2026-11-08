@@ -10,3 +10,4 @@ export { Str8, str8 } from "./str8";
 // application declarations named after AssemblyScript primitive types.
 export type __as_str_i32 = i32;
 export type __as_str_u64 = u64;
+export type __as_str_string = string;

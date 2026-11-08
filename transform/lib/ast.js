@@ -73,6 +73,17 @@ export function u64Type(range) {
     ),
   );
 }
+export function stringType(range) {
+  const name = requestScalarTypeAlias(range.source, "string");
+  return generated(
+    Node.createNamedType(
+      Node.createSimpleTypeName(name, range),
+      null,
+      false,
+      range,
+    ),
+  );
+}
 export function expressionRangeKey(expression) {
   const range = expression.range;
   return `${range.source.normalizedPath}:${range.start}:${range.end}`;
@@ -81,6 +92,7 @@ export function identifier(name, range) {
   return Node.createIdentifierExpression(name, range, false);
 }
 export const generatedCalls = new WeakSet();
+export const loweredSpanParameterCalls = new WeakSet();
 export const spanReturnCalls = new WeakMap();
 export const loweredSpanCalls = new WeakSet();
 export function staticViewCall(method, receiver, args) {

@@ -744,6 +744,12 @@ import { Str } from "./str";
     return !Str8.operatorEquals(a, b);
   }
 
+  // @ts-ignore: decorator
+  @operator.prefix("!") static operatorNot(value: Str8 | null): bool {
+    if (!changetype<usize>(value)) return true;
+    return value!.start == value!.end;
+  }
+
   /** `a < b` - `true` if this view sorts before `other` by byte (codepoint) order. */
   // @ts-ignore: decorator
   @operator("<") lessThan(other: Str8): bool {
@@ -847,6 +853,16 @@ import { Str } from "./str";
   static trimEnd<T>(s: T): Str8 {
     const v = asView(s);
     return Str8.trimEndRange(v.buffer, v.start, v.end);
+  }
+
+  /** Alias of {@link Str8.trimStart}, matching native `String.trimLeft`. */
+  static trimLeft<T>(s: T): Str8 {
+    return Str8.trimStart<T>(s);
+  }
+
+  /** Alias of {@link Str8.trimEnd}, matching native `String.trimRight`. */
+  static trimRight<T>(s: T): Str8 {
+    return Str8.trimEnd<T>(s);
   }
 
   /** Length in bytes. Free-function form of {@link Str8#length}. */
@@ -1861,6 +1877,12 @@ export namespace str8 {
   }
   export function trimEnd<T>(s: T): Str8 {
     return Str8.trimEnd<T>(s);
+  }
+  export function trimLeft<T>(s: T): Str8 {
+    return Str8.trimLeft<T>(s);
+  }
+  export function trimRight<T>(s: T): Str8 {
+    return Str8.trimRight<T>(s);
   }
   export function split<T>(
     s: T,

@@ -13,6 +13,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve explicit `str` addition as a view operation instead of fusing it
+  into a native-string result.
+- Keep packed-parameter call rewriting stable across the automatic transform's
+  second pass, including view parameters after one or more packed parameters.
+- Use a collision-free runtime alias for generated native-string annotations,
+  including captured owners and switch tables.
+- Match native string prefix negation for empty, nonempty, and nullable `str`
+  and `str8` views.
+- Add static and free-function `trimLeft` and `trimRight` aliases for both view
+  encodings.
 - Keep originally native string indexing string-valued when an otherwise
   eligible local could be promoted to a view.
 - Resolve namespace-qualified calls in excluded dependencies before changing

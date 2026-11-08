@@ -780,6 +780,12 @@ import { Str8 } from "./str8";
     return !Str.operatorEquals(a, b);
   }
 
+  // @ts-ignore: decorator
+  @operator.prefix("!") static operatorNot(value: Str | null): bool {
+    if (!changetype<usize>(value)) return true;
+    return value!.start == value!.end;
+  }
+
   /** `a < b` - `true` if this view sorts before `other` by code-unit ordering. */
   // @ts-ignore: decorator
   @operator("<") lessThan(other: Str): bool {
@@ -948,6 +954,16 @@ import { Str8 } from "./str8";
   // @ts-ignore: decorator
   @inline static trimEnd<T>(s: T): Str {
     return Str.trimEndRange(bData(s), bStart(s), bEnd(s));
+  }
+
+  /** Alias of {@link Str.trimStart}, matching native `String.trimLeft`. */
+  @inline static trimLeft<T>(s: T): Str {
+    return Str.trimStart<T>(s);
+  }
+
+  /** Alias of {@link Str.trimEnd}, matching native `String.trimRight`. */
+  @inline static trimRight<T>(s: T): Str {
+    return Str.trimEnd<T>(s);
   }
 
   // Allocation-free scalar consumers used by the optimizer when a produced
@@ -2602,6 +2618,12 @@ export namespace str {
   }
   export function trimEnd<T>(s: T): Str {
     return Str.trimEnd<T>(s);
+  }
+  export function trimLeft<T>(s: T): Str {
+    return Str.trimLeft<T>(s);
+  }
+  export function trimRight<T>(s: T): Str {
+    return Str.trimRight<T>(s);
   }
   export function split<T>(
     s: T,

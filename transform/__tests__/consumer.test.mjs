@@ -82,9 +82,15 @@ try {
     tarball,
   ]);
   const input = path.join(scratch, "index.ts");
+  writeFileSync(path.join(scratch, "types.ts"), "export type Text = string;\n");
   writeFileSync(
     input,
     'type u64 = i32;\nexport function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\nexport function checkEntryView(): i32 { return str.from("abcdef").slice(1, 4).length; }\nexport function checkShadow(): bool { const part = "abc".slice(1); return part == "bc"; }\n',
+  );
+  const stringShadowInput = path.join(scratch, "string-shadow.ts");
+  writeFileSync(
+    stringShadowInput,
+    'import { Text } from "./types";\ntype string = i32;\nfunction measure(value: Text): i32 { return value.length; }\nexport function checkStringShadow(): i32 { return measure("abcdef".slice(1)); }\n',
   );
   const asc = path.join(scratch, "node_modules/assemblyscript/bin/asc.js");
   for (const [name, heading, transform, optimized] of [
@@ -208,6 +214,26 @@ try {
   assert.equal(autoModule.instance.exports.check(), 3);
   assert.equal(autoModule.instance.exports.checkEntryView(), 3);
   assert.equal(autoModule.instance.exports.checkShadow(), 1);
+  const stringShadowWasm = path.join(scratch, "string-shadow.wasm");
+  run(process.execPath, [
+    asc,
+    stringShadowInput,
+    "--transform",
+    "as-str/auto",
+    "--outFile",
+    stringShadowWasm,
+  ]);
+  const stringShadowModule = await WebAssembly.instantiate(
+    readFileSync(stringShadowWasm),
+    {
+      env: {
+        abort() {
+          throw new Error("AssemblyScript abort");
+        },
+      },
+    },
+  );
+  assert.equal(stringShadowModule.instance.exports.checkStringShadow(), 5);
   const singleWasm = path.join(scratch, "consumer-single.wasm");
   run(process.execPath, [
     asc,

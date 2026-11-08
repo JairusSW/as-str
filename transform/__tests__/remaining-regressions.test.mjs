@@ -46,6 +46,9 @@ await checkFixture("review-shadowed-imports", {
   character: 1,
 });
 await checkFixture("review-shadowed-generic", { run: 1 });
+await checkFixture("review-view-concat", { property: 1, indexing: 1 });
+await checkFixture("review-mixed-packed-parameters", { run: 8, multiple: 10 });
+await checkFixture("review-shadowed-string", { run: 5 });
 await checkFixture("review-between-last", {
   utf16Instance: 5,
   utf16Static: 5,

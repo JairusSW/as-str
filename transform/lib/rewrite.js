@@ -45,8 +45,10 @@ import {
   i32Type,
   integer,
   loweredSpanCalls,
+  loweredSpanParameterCalls,
   representationOfType,
   staticViewCall,
+  stringType,
   u64Type,
   viewType,
   wrapAsView,
@@ -455,14 +457,7 @@ function caseLabels(labels, range, context) {
           8,
           Node.createNamedType(
             Node.createSimpleTypeName("StaticArray", range),
-            [
-              Node.createNamedType(
-                Node.createSimpleTypeName("string", range),
-                null,
-                false,
-                range,
-              ),
-            ],
+            [stringType(range)],
             false,
             range,
           ),
@@ -476,6 +471,8 @@ function caseLabels(labels, range, context) {
   return identifier(name, range);
 }
 function concatOperand(expression, context, signatures) {
+  if (expressionRepresentation(expression, context, signatures) === "view")
+    return null;
   if (
     (isSpanLink(expression) || spanTernary(expression)) &&
     !(spanReturnCall(expression) && loweredSpanCalls.has(expression))
@@ -1189,7 +1186,10 @@ function rewriteExpression(expression, expected, context, signatures) {
         context,
         signatures,
       );
+      if (loweredSpanParameterCalls.has(expression))
+        return convertExpression(expression, expected, context, signatures);
       const rewrittenArgs = [];
+      let expandedSpanParameter = false;
       expression.args.forEach((argument, index) => {
         if (
           signature?.callable &&
@@ -1228,12 +1228,7 @@ function rewriteExpression(expression, expected, context, signatures) {
                     owner(),
                     null,
                     16,
-                    Node.createNamedType(
-                      Node.createSimpleTypeName("string", range),
-                      null,
-                      false,
-                      range,
-                    ),
+                    stringType(range),
                     Node.createStringLiteralExpression("", range),
                     range,
                   ),
@@ -1269,6 +1264,7 @@ function rewriteExpression(expression, expected, context, signatures) {
               ),
               owner(),
             );
+            expandedSpanParameter = true;
             return;
           }
         }
@@ -1284,6 +1280,7 @@ function rewriteExpression(expression, expected, context, signatures) {
         );
       });
       expression.args = rewrittenArgs;
+      if (expandedSpanParameter) loweredSpanParameterCalls.add(expression);
     }
     return convertExpression(expression, expected, context, signatures);
   }

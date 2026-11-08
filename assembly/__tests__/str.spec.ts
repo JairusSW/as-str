@@ -3,7 +3,7 @@
 // equivalent native operation produces.
 
 import { describe, test, expect } from "as-test";
-import { str, str8 } from "../index";
+import { Str, str, str8 } from "../index";
 
 const SAMPLE = "hello, world";
 
@@ -45,6 +45,21 @@ describe("str views (zero-copy)", () => {
     expect(str.trim(padded).toString()).toBe(padded.trim());
     expect(str.trimStart(padded).toString()).toBe(padded.trimStart());
     expect(str.trimEnd(padded).toString()).toBe(padded.trimEnd());
+    expect(str.trimLeft(padded).toString()).toBe(padded.trimLeft());
+    expect(str.trimRight(padded).toString()).toBe(padded.trimRight());
+    expect(Str.trimLeft(padded).toString()).toBe(padded.trimLeft());
+    expect(Str.trimRight(padded).toString()).toBe(padded.trimRight());
+  });
+
+  test("prefix negation matches String emptiness", () => {
+    const empty = str.from("abc").slice(3);
+    const present = str.from("abc");
+    let nullable: str | null = empty;
+    expect(!empty).toBe(true);
+    expect(!nullable).toBe(true);
+    expect(!present).toBe(false);
+    nullable = null;
+    expect(!nullable).toBe(true);
   });
 
   test("a view of a view stays anchored to the original data", () => {

@@ -1,7 +1,8 @@
 import { ASTBuilder, Source } from "assemblyscript/dist/assemblyscript.js";
 
 const aliases = new WeakMap<Source, string>();
-const scalarAliases = new WeakMap<Source, Map<"i32" | "u64", string>>();
+export type GeneratedTypeName = "i32" | "u64" | "string";
+const scalarAliases = new WeakMap<Source, Map<GeneratedTypeName, string>>();
 
 export function viewTypeAlias(source: Source): string | undefined {
   return aliases.get(source);
@@ -21,14 +22,14 @@ export function requestViewTypeAlias(source: Source): string {
 
 export function scalarTypeAliases(
   source: Source,
-): ReadonlyMap<"i32" | "u64", string> | undefined {
+): ReadonlyMap<GeneratedTypeName, string> | undefined {
   return scalarAliases.get(source);
 }
 
 /** A collision-free local name for a primitive alias exported by the runtime. */
 export function requestScalarTypeAlias(
   source: Source,
-  type: "i32" | "u64",
+  type: GeneratedTypeName,
 ): string {
   let requested = scalarAliases.get(source);
   if (!requested) scalarAliases.set(source, (requested = new Map()));
