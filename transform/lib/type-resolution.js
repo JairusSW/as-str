@@ -583,16 +583,17 @@ export function constructedType(type, actual) {
       member instanceof FunctionDeclaration &&
       member.name.text === "constructor",
   );
-  const patterns =
-    constructor?.signature.parameters.map((p) => p.type) ??
-    declaration.typeParameters.map((parameter) =>
-      Node.createNamedType(
-        Node.createSimpleTypeName(parameter.name.text, parameter.range),
-        null,
-        false,
-        parameter.range,
-      ),
-    );
+  const patterns = constructor
+    ? Array.from(
+        {
+          length: Math.max(
+            actual.length,
+            constructor.signature.parameters.length,
+          ),
+        },
+        (_, index) => callArgumentType(constructor.signature, index),
+      )
+    : [];
   const inputs = [...actual];
   const defaultArguments = new Set();
   for (
@@ -635,6 +636,22 @@ export function constructedType(type, actual) {
   );
 }
 const resolvingExpressions = new WeakSet();
+export function nativeStringType(range) {
+  const nativeSource = sourcesFor(range.source).find(
+    (source) => source.internalPath === "~lib/string",
+  );
+  const declaration = nativeSource?.statements.find(
+    (statement) =>
+      statement instanceof ClassDeclaration && statement.name.text === "String",
+  );
+  const nativeRange = declaration?.name.range ?? range;
+  return Node.createNamedType(
+    Node.createSimpleTypeName("String", nativeRange),
+    null,
+    false,
+    nativeRange,
+  );
+}
 function declaredExpressionType(expression, seen = new Set()) {
   if (resolvingExpressions.has(expression)) return null;
   resolvingExpressions.add(expression);
@@ -648,12 +665,7 @@ function inferExpressionType(expression, seen) {
   if (seen.has(expression)) return null;
   const next = new Set(seen).add(expression);
   if (expression instanceof StringLiteralExpression)
-    return Node.createNamedType(
-      Node.createSimpleTypeName("string", expression.range),
-      null,
-      false,
-      expression.range,
-    );
+    return nativeStringType(expression.range);
   if (expression instanceof FunctionExpression)
     return expression.declaration.signature;
   if (expression instanceof NewExpression)

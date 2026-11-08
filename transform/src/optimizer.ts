@@ -184,6 +184,7 @@ function isUnsafeIntrinsic(call: CallExpression): boolean {
     name === "store" ||
     name === "idof" ||
     name === "offsetof" ||
+    name === "isDefined" ||
     name === "__pin" ||
     name === "__unpin" ||
     name === "__new"
@@ -994,13 +995,19 @@ function expectedCallArgument(
   signatures: FunctionSignatures,
   context?: FunctionContext,
 ): Representation {
-  if (isStrStaticCall(call)) return "view";
   const declared = context
     ? declaredCallSignature(call, context, signatures)
     : undefined;
-  if (declared) return declared.parameters[index] ?? "unknown";
+  if (declared) {
+    const expected = declared.parameters[index] ?? "unknown";
+    if (expected !== "unknown") return expected;
+  }
   const callback = context ? declaredCallType(call, context) : undefined;
-  if (callback) return representationOfType(callArgumentType(callback, index));
+  if (callback) {
+    const expected = representationOfType(callArgumentType(callback, index));
+    if (expected !== "unknown") return expected;
+  }
+  if (isStrStaticCall(call)) return index === 0 ? "view" : "unknown";
   const property =
     call.expression instanceof PropertyAccessExpression
       ? call.expression
@@ -1168,7 +1175,7 @@ function derivedViewUseReason(
     return null;
   }
   if (parent instanceof ElementAccessExpression && parent.expression === call) {
-    return null;
+    return "native string indexing of derived result must remain string-valued";
   }
   if (parent instanceof VariableDeclaration && parent.initializer === call) {
     const target = context.bindings.get(parent.name.text);
@@ -1890,6 +1897,15 @@ function representationEffects(
       ),
     };
   }
+  if (node instanceof ElementAccessExpression) {
+    const target = context.classes.indexOperatorOf(node, context);
+    const owner = context.classes.classDeclarationOf(node.expression, context);
+    return {
+      targets: target ? [target] : [],
+      opaque:
+        !target && !!owner && !trustedRepresentationSource(owner.range.source),
+    };
+  }
   if (node instanceof NewExpression) {
     const declaration = classDeclarationOfType(
       context.classes.typeOf(node, context),
@@ -2016,6 +2032,7 @@ function representationSensitiveDeclarations(sources: Source[]): Set<Node> {
           !(
             node instanceof CallExpression ||
             node instanceof PropertyAccessExpression ||
+            node instanceof ElementAccessExpression ||
             node instanceof NewExpression ||
             writeTarget(node) !== null
           )
@@ -2421,6 +2438,8 @@ export function optimizeSources(
       } else if (
         existing.declaration.range.start ===
           signature.declaration.range.start &&
+        existing.declaration.range.source ===
+          signature.declaration.range.source &&
         existing.declaration.range.source.text ===
           signature.declaration.range.source.text
       ) {
@@ -2516,6 +2535,12 @@ export function optimizeSources(
       context: FunctionContext,
       signature: FunctionSignature,
     ): void => {
+      // Qualified calls do not yet share the packed-argument ABI rewriter.
+      // Keep their declarations source-compatible until they do.
+      if (call.expression instanceof PropertyAccessExpression) {
+        signature.promotable = false;
+        return;
+      }
       if (!userSource || outsideBody(call, context)) {
         signature.promotable = false;
         return;

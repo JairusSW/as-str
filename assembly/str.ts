@@ -2429,6 +2429,13 @@ export namespace Str {
 
   /** UTF-8 (WTF-8) encoding/decoding for views and strings. */
   export namespace UTF8 {
+    /** Mirrors {@link String.UTF8.ErrorMode}. */
+    export const enum ErrorMode {
+      WTF8 = U8.ErrorMode.WTF8,
+      REPLACE = U8.ErrorMode.REPLACE,
+      ERROR = U8.ErrorMode.ERROR,
+    }
+
     /**
      * Number of bytes the view occupies when UTF-8 encoded.
      *
@@ -2777,6 +2784,13 @@ export namespace str {
 
   /** UTF-8 (WTF-8) encoding/decoding (delegates to {@link Str.UTF8}). */
   export namespace UTF8 {
+    /** Mirrors {@link String.UTF8.ErrorMode}. */
+    export const enum ErrorMode {
+      WTF8 = U8.ErrorMode.WTF8,
+      REPLACE = U8.ErrorMode.REPLACE,
+      ERROR = U8.ErrorMode.ERROR,
+    }
+
     export function byteLength<T>(s: T, nullTerminated: bool = false): i32 {
       return Str.UTF8.byteLength<T>(s, nullTerminated);
     }

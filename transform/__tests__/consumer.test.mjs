@@ -85,7 +85,7 @@ try {
   writeFileSync(path.join(scratch, "types.ts"), "export type Text = string;\n");
   writeFileSync(
     input,
-    'type u64 = i32;\nexport function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\nexport function checkEntryView(): i32 { return str.from("abcdef").slice(1, 4).length; }\nexport function checkShadow(): bool { const part = "abc".slice(1); return part == "bc"; }\n',
+    'type u64 = i32;\nexport function check(): i32 { const part = "abcdef".slice(1, 4); return part.length; }\nexport function checkEntryView(): i32 { return str.from("abcdef").slice(1, 4).length; }\nexport function checkShadow(): bool { const part = "abc".slice(1); return part == "bc"; }\nexport function checkErrorMode(): i32 { return str.UTF8.encode("é😀", false, str.UTF8.ErrorMode.ERROR).byteLength; }\n',
   );
   const stringShadowInput = path.join(scratch, "string-shadow.ts");
   writeFileSync(
@@ -214,6 +214,7 @@ try {
   assert.equal(autoModule.instance.exports.check(), 3);
   assert.equal(autoModule.instance.exports.checkEntryView(), 3);
   assert.equal(autoModule.instance.exports.checkShadow(), 1);
+  assert.equal(autoModule.instance.exports.checkErrorMode(), 6);
   const stringShadowWasm = path.join(scratch, "string-shadow.wasm");
   run(process.execPath, [
     asc,
@@ -251,6 +252,7 @@ try {
     },
   });
   assert.equal(singleModule.instance.exports.checkShadow(), 1);
+  assert.equal(singleModule.instance.exports.checkErrorMode(), 6);
   const assemblyEntry = path.join(scratch, "assembly/index.ts");
   mkdirSync(path.dirname(assemblyEntry), { recursive: true });
   writeFileSync(assemblyEntry, readFileSync(input, "utf8"));
@@ -288,6 +290,7 @@ try {
       );
       assert.equal(instance.exports.check(), 3);
       assert.equal(instance.exports.checkEntryView(), 3);
+      assert.equal(instance.exports.checkErrorMode(), 6);
       if (mode !== "global")
         assert.doesNotMatch(
           readFileSync(entryWat, "utf8"),

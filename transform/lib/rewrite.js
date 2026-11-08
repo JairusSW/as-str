@@ -912,7 +912,7 @@ function rewriteExpression(expression, expected, context, signatures) {
       if (expression.left instanceof IdentifierExpression) {
         target = bindingRepresentation(expression.left, context, signatures);
       } else if (expression.left instanceof PropertyAccessExpression) {
-        target = context.classes.propertyOf(expression.left, context);
+        target = context.classes.propertyWriteOf(expression.left, context);
       } else if (expression.left instanceof ElementAccessExpression) {
         target = expressionRepresentation(expression.left, context, signatures);
       }
@@ -947,14 +947,24 @@ function rewriteExpression(expression, expected, context, signatures) {
   if (expression instanceof CallExpression) {
     if (isStrStaticCall(expression)) {
       const staticMethod = propertyCall(expression)?.property.text ?? "";
+      const methodSignature = declaredCallSignature(
+        expression,
+        context,
+        signatures,
+      );
+      const callbackType = declaredCallType(expression, context);
       expression.args = expression.args.map((argument, index) =>
         rewriteExpression(
           argument,
-          index === 0 &&
-            staticMethod.endsWith("Length") &&
-            expressionCanProduceView(argument)
-            ? "view"
-            : "unknown",
+          methodSignature
+            ? (methodSignature.parameters[index] ?? "unknown")
+            : callbackType
+              ? representationOfType(callArgumentType(callbackType, index))
+              : index === 0 &&
+                  staticMethod.endsWith("Length") &&
+                  expressionCanProduceView(argument)
+                ? "view"
+                : "unknown",
           context,
           signatures,
         ),

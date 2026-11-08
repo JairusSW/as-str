@@ -49,6 +49,44 @@ await checkFixture("review-shadowed-generic", { run: 1 });
 await checkFixture("review-view-concat", { property: 1, indexing: 1 });
 await checkFixture("review-mixed-packed-parameters", { run: 8, multiple: 10 });
 await checkFixture("review-shadowed-string", { run: 5 });
+await checkFixture("review-derived-native-indexing", {
+  charAtResult: 1,
+  sliceResult: 1,
+  substringResult: 1,
+  longerChain: 1,
+  explicitView: 1,
+});
+await checkFixture("review-qualified-packed-call", { run: 5 });
+await checkFixture("review-is-defined", {
+  packedMember: 0,
+  viewMember: 0,
+  existingMember: 1,
+});
+await checkFixture("review-module-identity", { run: 4 });
+await checkFixture("review-operator-mutation", {
+  overloaded: 5,
+  explicit: 5,
+});
+await checkFixture("review-static-native-args", {
+  lowercaseReplace: 1,
+  uppercaseReplace: 1,
+  genericNeedle: 1,
+  nativeReplacement: 1,
+  nativePadding: 1,
+  nativeSeparator: 1,
+});
+await checkFixture("review-callback-shadow", { runTrue: 3, runFalse: 13 });
+await checkFixture("review-constructor-inference", {
+  rest: 2,
+  restExplicit: 2,
+  inherited: 2,
+  inheritedExplicit: 2,
+});
+await checkFixture("review-accessor-write-type", {
+  differentTypes: 2,
+  setterOnly: 2,
+});
+await checkFixture("review-shadowed-string-literal", { run: 4 });
 await checkFixture("review-between-last", {
   utf16Instance: 5,
   utf16Static: 5,
@@ -65,6 +103,10 @@ try {
     `${repo}/transform/__tests__/fixtures/libraries`,
   ]);
   await checkFixture("review-library-namespace", { run: 6 }, [
+    "--path",
+    `${repo}/transform/__tests__/fixtures/libraries`,
+  ]);
+  await checkFixture("review-qualified-library", { run: 5 }, [
     "--path",
     `${repo}/transform/__tests__/fixtures/libraries`,
   ]);

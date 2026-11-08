@@ -13,6 +13,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve native string semantics through derived indexing and `isDefined`
+  reflection, and propagate mutation effects from overloaded indexing.
+- Keep qualified calls source-compatible until their packed arguments can be
+  expanded, including namespace calls across optimized dependencies.
+- Respect declared lowercase-helper arguments, local callback shadows, and
+  distinct getter and setter types when rewriting values.
+- Key shared function signatures by module identity instead of merging
+  identical source text from separate modules.
+- Match compiler inference for rest and inherited constructors, and give
+  string literals a native type identity that lexical aliases cannot shadow.
+- Mirror `String.UTF8.ErrorMode` through both `Str.UTF8` and `str.UTF8`.
 - Preserve explicit `str` addition as a view operation instead of fusing it
   into a native-string result.
 - Keep packed-parameter call rewriting stable across the automatic transform's

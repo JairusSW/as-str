@@ -7,6 +7,7 @@ import {
   expandedType,
   functionDeclarationOfName,
   functionCallType,
+  nativeStringType,
   nonNullableType,
 } from "./type-resolution.js";
 import {
@@ -126,20 +127,56 @@ export class SourceClassTypes {
           representation: properties.has(key)
             ? "unknown"
             : representationOfType(member.type),
+          writeDeclaration: member,
+          writeType: member.type,
+          writeRepresentation: properties.has(key)
+            ? "unknown"
+            : representationOfType(member.type),
         });
       } else if (member instanceof FunctionDeclaration) {
+        if (
+          member.decorators?.some(
+            (decorator) =>
+              decorator.name instanceof IdentifierExpression &&
+              decorator.name.text === "operator" &&
+              decorator.args?.[0] instanceof StringLiteralExpression &&
+              decorator.args[0].value === "[]",
+          )
+        )
+          methods.set("operator:[]", member);
         if (member.isAny(2048 | 4096)) {
           const getter = member.is(2048);
           methods.set(`${getter ? "get" : "set"}:${key}`, member);
           const type = getter
             ? member.signature.returnType
             : (member.signature.parameters[0]?.type ?? null);
-          if (getter || !properties.has(key))
+          const existing = properties.get(key);
+          if (getter)
             properties.set(key, {
               declaration: member,
               type,
               initializer: null,
               representation: representationOfType(type),
+              writeDeclaration: existing?.writeDeclaration ?? null,
+              writeType: existing?.writeType ?? null,
+              writeRepresentation: existing?.writeRepresentation ?? "unknown",
+            });
+          else if (existing)
+            properties.set(key, {
+              ...existing,
+              writeDeclaration: member,
+              writeType: type,
+              writeRepresentation: representationOfType(type),
+            });
+          else
+            properties.set(key, {
+              declaration: member,
+              type,
+              initializer: null,
+              representation: representationOfType(type),
+              writeDeclaration: member,
+              writeType: type,
+              writeRepresentation: representationOfType(type),
             });
         } else methods.set(key, methods.has(key) ? null : member);
       }
@@ -195,6 +232,11 @@ export class SourceClassTypes {
   propertyOf(expression, context) {
     return this.propertyInfo(expression, context)?.representation ?? "unknown";
   }
+  propertyWriteOf(expression, context) {
+    return (
+      this.propertyInfo(expression, context)?.writeRepresentation ?? "unknown"
+    );
+  }
   accessorsOf(expression, context) {
     const owner = this.classOf(expression.expression, context, new Set());
     if (!owner || this.ambiguous.has(owner)) return [];
@@ -207,6 +249,11 @@ export class SourceClassTypes {
     return [methods?.get(`get:${key}`), methods?.get(`set:${key}`)].filter(
       (method) => !!method,
     );
+  }
+  indexOperatorOf(expression, context) {
+    const owner = this.classOf(expression.expression, context, new Set());
+    if (!owner || this.ambiguous.has(owner)) return undefined;
+    return this.classes.get(owner)?.methods.get("operator:[]") ?? undefined;
   }
   typeOf(expression, context) {
     return expandedType(this.declaredType(expression, context, new Set()));
@@ -361,12 +408,7 @@ export class SourceClassTypes {
       );
     if (expression instanceof AssertionExpression) return expression.toType;
     if (expression instanceof StringLiteralExpression)
-      return Node.createNamedType(
-        Node.createSimpleTypeName("string", expression.range),
-        null,
-        false,
-        expression.range,
-      );
+      return nativeStringType(expression.range);
     if (expression instanceof NewExpression) {
       const type = Node.createNamedType(
         expression.typeName,
@@ -471,19 +513,28 @@ export class SourceClassTypes {
         ),
       );
     if (!property) return undefined;
-    const declaringOwner = this.ownerOf(property.declaration);
-    const declaration = declaringOwner
-      ? this.classes.get(declaringOwner)?.declaration
-      : null;
-    if (!declaration?.typeParameters?.length) return property;
     const receiver = this.declaredType(
       expression.expression,
       context,
       new Set(),
       globalScope,
     );
-    const type = classMemberType(receiver, declaration, property.type);
-    return { ...property, type, representation: representationOfType(type) };
+    const specialize = (member, type) => {
+      const owner = member ? this.ownerOf(member) : null;
+      const declaration = owner ? this.classes.get(owner)?.declaration : null;
+      return declaration?.typeParameters?.length
+        ? classMemberType(receiver, declaration, type)
+        : type;
+    };
+    const type = specialize(property.declaration, property.type);
+    const writeType = specialize(property.writeDeclaration, property.writeType);
+    return {
+      ...property,
+      type,
+      representation: representationOfType(type),
+      writeType,
+      writeRepresentation: representationOfType(writeType),
+    };
   }
   callableOf(expression, context, seen = new Set()) {
     if (seen.has(expression)) return null;
@@ -498,9 +549,8 @@ export class SourceClassTypes {
         context,
       );
       if (variable) {
-        return variable.is(8) && variable.initializer
-          ? this.callableOf(variable.initializer, context, seen)
-          : null;
+        if (!variable.is(8) || !variable.initializer) return null;
+        return this.callableOf(variable.initializer, context, seen) ?? null;
       }
       if (context.parameters.has(expression.text)) return null;
       const local = this.lexicalFunction(
@@ -513,18 +563,19 @@ export class SourceClassTypes {
     const key = path ? this.runtimeKey(path, expression.range.start) : null;
     if (key && this.globals.has(key)) {
       const variable = this.globals.get(key);
-      return variable.is(8) && variable.initializer
-        ? this.callableOf(
-            variable.initializer,
-            {
-              ...context,
-              declaration: null,
-              bindings: new Map(),
-              parameters: new Map(),
-            },
-            seen,
-          )
-        : null;
+      if (!variable.is(8) || !variable.initializer) return null;
+      return (
+        this.callableOf(
+          variable.initializer,
+          {
+            ...context,
+            declaration: null,
+            bindings: new Map(),
+            parameters: new Map(),
+          },
+          seen,
+        ) ?? null
+      );
     }
     if (key && this.functions.has(key)) return this.functions.get(key);
     if (expression instanceof PropertyAccessExpression) {

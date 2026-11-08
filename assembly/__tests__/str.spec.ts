@@ -62,6 +62,15 @@ describe("str views (zero-copy)", () => {
     expect(!nullable).toBe(true);
   });
 
+  test("UTF8 exposes the native error modes", () => {
+    expect(
+      str.UTF8.encode("é😀", false, str.UTF8.ErrorMode.ERROR).byteLength,
+    ).toBe(6);
+    expect(
+      Str.UTF8.encode("é😀", false, Str.UTF8.ErrorMode.ERROR).byteLength,
+    ).toBe(6);
+  });
+
   test("a view of a view stays anchored to the original data", () => {
     const w = str.slice(SAMPLE, 7); // "world"
     expect(w.toString()).toBe("world");
