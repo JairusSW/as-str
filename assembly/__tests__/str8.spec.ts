@@ -167,6 +167,9 @@ describe("str8 queries", () => {
     expect(path.beforeLast("/").toString()).toBe("/root/app/世界");
     expect(path.afterLast("/").toString()).toBe("index.ts");
     expect(str8.betweenLast("a[世] c[界]", "[", "]").toString()).toBe("界");
+    const quoted = str8.from('name="value"');
+    expect(quoted.betweenLast('"', '"').toString()).toBe("value");
+    expect(str8.betweenLast('name="value"', '"', '"').toString()).toBe("value");
     expect(str8.beforeLast("abc", "x").toString()).toBe("");
     expect(str8.afterLast("abc", "x").toString()).toBe("");
     expect(str8.betweenLast("abc", "[", "]").toString()).toBe("");

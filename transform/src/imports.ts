@@ -7,7 +7,7 @@ import {
 import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
-import { viewTypeAlias } from "./view-aliases.js";
+import { scalarTypeAliases, viewTypeAlias } from "./view-aliases.js";
 import {
   admitSource,
   configureSourceAdmission,
@@ -65,6 +65,11 @@ export interface ImportInjectionOptions {
 interface InjectedImport {
   source: Source;
   specifier: string;
+}
+
+interface RequestedImport {
+  imported: string;
+  local: string;
 }
 
 function parseIfMissing(
@@ -158,7 +163,9 @@ export function injectViewImports(
     if (admission.packageSource) continue;
     const librarySource =
       source.isLibrary || source.internalPath.startsWith("~lib");
-    const names = [...admission.requestedViewNames];
+    const names: RequestedImport[] = admission.requestedViewNames.map(
+      (name) => ({ imported: name, local: name }),
+    );
     const alias = viewTypeAlias(source);
     if (
       alias &&
@@ -170,7 +177,9 @@ export function injectViewImports(
           ),
       )
     )
-      names.push(alias);
+      names.push({ imported: "Str", local: alias });
+    for (const [type, local] of scalarTypeAliases(source) ?? [])
+      names.push({ imported: `__as_str_${type}`, local });
     // Existing dependency sources may already obtain as-str through
     // AssemblyScript's package globals. Injecting a new explicit import into
     // those modules can create dependency cycles and change static
@@ -226,15 +235,11 @@ export function injectViewImports(
     const range = source.range;
     source.statements.unshift(
       Node.createImportStatement(
-        names.map((name) =>
+        names.map(({ imported, local }) =>
           Node.createImportDeclaration(
-            Node.createIdentifierExpression(
-              alias === name ? "Str" : name,
-              range,
-              false,
-            ),
-            alias === name
-              ? Node.createIdentifierExpression(name, range, false)
+            Node.createIdentifierExpression(imported, range, false),
+            imported !== local
+              ? Node.createIdentifierExpression(local, range, false)
               : null,
             range,
           ),
@@ -246,7 +251,11 @@ export function injectViewImports(
 
     if (options.debug) {
       options.log(
-        `[as-str] inject { ${names.join(", ")} } from "${specifier}" -> ${source.normalizedPath}`,
+        `[as-str] inject { ${names
+          .map(({ imported, local }) =>
+            imported === local ? imported : `${imported} as ${local}`,
+          )
+          .join(", ")} } from "${specifier}" -> ${source.normalizedPath}`,
       );
     }
   }

@@ -1780,7 +1780,8 @@ function importsAny(source: Source, paths: ReadonlySet<string>): boolean {
       (statement instanceof ImportStatement ||
         statement instanceof ExportStatement) &&
       statement.internalPath !== null &&
-      paths.has(statement.internalPath),
+      (paths.has(statement.internalPath) ||
+        paths.has(`${statement.internalPath}/index`)),
   );
 }
 
@@ -2475,23 +2476,22 @@ export function optimizeSources(
     walk(source, (node, ref) => {
       if (!(node instanceof IdentifierExpression)) return;
       if (isDeclarationIdentifier(node, ref)) return;
-      const namedSignature = sharedSignatures.get(node.text);
-      if (!namedSignature) return;
       const call =
         ref.parent instanceof CallExpression && ref.parent.expression === node
           ? ref.parent
           : null;
       const context =
-        (call &&
-          scopes.find(
-            (scope) =>
-              scope.declaration!.range.start <= node.range.start &&
-              scope.declaration!.range.end >= node.range.end,
-          )) ||
-        topContext;
+        scopes.find(
+          (scope) =>
+            scope.declaration!.range.start <= node.range.start &&
+            scope.declaration!.range.end >= node.range.end,
+        ) || topContext;
+      const declaration = context.classes.callableOf(node, context);
       const signature = call
         ? signatureForCall(call, context, sharedSignatures)
-        : namedSignature;
+        : declaration
+          ? sharedSignatures.forDeclaration(declaration)
+          : sharedSignatures.get(node.text);
       if (
         !signature ||
         [...signature.declarations].some(

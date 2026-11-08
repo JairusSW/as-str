@@ -13,6 +13,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preserve left-to-right evaluation when equality compares a side-effecting
+  expression with a packed span on the right.
+- Import collision-free primitive aliases for generated `i32` and `u64`
+  annotations when application declarations shadow those names.
+- Keep native string indexing string-valued when its receiver is otherwise
+  eligible for view promotion.
+- Resolve aliased calls in excluded dependencies before changing an optimized
+  library helper's signature.
+- Select the last opening delimiter before the closing delimiter in
+  `betweenLast`, including matching quote delimiters for `str` and `str8`.
 - Preserve native string snapshots across excluded dependency helpers, including
   package-index imports, hidden virtual overrides, and host declarations.
 - Treat namespaced memory intrinsics such as `memory.fill`, `memory.copy`, SIMD

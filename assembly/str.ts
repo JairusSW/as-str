@@ -560,9 +560,12 @@ import { Str8 } from "./str8";
   betweenLast<U, V>(open: U, close: V): Str {
     const hi = this.lastIndexOf(close);
     if (hi < 0) return new Str(this.data, this.end, this.end);
-    const lo = this.lastIndexOf(open, hi);
+    const openLength = unitLength(bStart(open), bEnd(open));
+    const before = openLength ? hi - openLength : hi;
+    if (before < 0) return new Str(this.data, this.start, this.start);
+    const lo = this.lastIndexOf(open, before);
     if (lo < 0) return new Str(this.data, this.start, this.start);
-    return this.slice(lo + unitLength(bStart(open), bEnd(open)), hi);
+    return this.slice(lo + openLength, hi);
   }
 
   /**
@@ -1215,6 +1218,21 @@ import { Str8 } from "./str8";
     return !Str.equalsSpan(owner, value, other);
   }
 
+  /** Compare a source-order left value with a packed right span. */
+  // @ts-ignore: decorator
+  @inline static equalsStringSpan<U, T>(other: U, owner: T, value: u64): bool {
+    return Str.equalsSpan(owner, value, other);
+  }
+
+  // @ts-ignore: decorator
+  @inline static notEqualsStringSpan<U, T>(
+    other: U,
+    owner: T,
+    value: u64,
+  ): bool {
+    return !Str.equalsStringSpan(other, owner, value);
+  }
+
   // @ts-ignore: decorator
   @inline static equalsSpanSpan<T, U>(
     owner: T,
@@ -1672,8 +1690,11 @@ import { Str8 } from "./str8";
   @inline static betweenLastLength<T, U, V>(s: T, open: U, close: V): i32 {
     const hi = Str.lastIndexOf(s, close);
     if (hi < 0) return 0;
-    const lo = Str.lastIndexOf(s, open, hi);
-    return lo < 0 ? 0 : max(hi - lo - Str.length(open), 0);
+    const openLength = Str.length(open);
+    const before = openLength ? hi - openLength : hi;
+    if (before < 0) return 0;
+    const lo = Str.lastIndexOf(s, open, before);
+    return lo < 0 ? 0 : max(hi - lo - openLength, 0);
   }
 
   /**
@@ -1936,9 +1957,12 @@ import { Str8 } from "./str8";
     if (hi < 0) return new Str(data, end, end);
     const oStart = bStart(open);
     const oEnd = bEnd(open);
-    const lo = rangeLastIndexOf(start, end, oStart, oEnd, hi);
+    const openLength = unitLength(oStart, oEnd);
+    const before = openLength ? hi - openLength : hi;
+    if (before < 0) return new Str(data, start, start);
+    const lo = rangeLastIndexOf(start, end, oStart, oEnd, before);
     if (lo < 0) return new Str(data, start, start);
-    return Str.sliceRange(data, start, end, lo + unitLength(oStart, oEnd), hi);
+    return Str.sliceRange(data, start, end, lo + openLength, hi);
   }
 
   /**

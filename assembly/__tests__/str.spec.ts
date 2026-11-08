@@ -133,6 +133,10 @@ describe("str queries", () => {
     expect(path.beforeLast("/").toString()).toBe("/root/app/src");
     expect(path.afterLast("/").toString()).toBe("index.ts");
     expect(str.betweenLast("a[b] c[d]", "[", "]").toString()).toBe("d");
+    const quoted = str.from('name="value"');
+    expect(quoted.betweenLast('"', '"').toString()).toBe("value");
+    expect(str.betweenLast('name="value"', '"', '"').toString()).toBe("value");
+    expect(str.betweenLastLength('name="value"', '"', '"')).toBe(5);
     expect(str.beforeLast("abc", "x").toString()).toBe("");
     expect(str.afterLast("abc", "x").toString()).toBe("");
     expect(str.betweenLast("abc", "[", "]").toString()).toBe("");

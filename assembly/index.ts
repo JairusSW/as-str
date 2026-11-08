@@ -5,3 +5,8 @@
  */
 export { Str, str } from "./str";
 export { Str8, str8 } from "./str8";
+
+// Transform-only aliases keep generated scalar annotations independent of
+// application declarations named after AssemblyScript primitive types.
+export type __as_str_i32 = i32;
+export type __as_str_u64 = u64;

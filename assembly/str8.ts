@@ -600,9 +600,12 @@ import { Str } from "./str";
   betweenLast<U, V>(open: U, close: V): Str8 {
     const hi = this.lastIndexOf(close);
     if (hi < 0) return new Str8(this.buffer, this.end, this.end);
-    const lo = this.lastIndexOf(open, hi);
+    const openLength = needleByteLength(open);
+    const before = openLength ? hi - openLength : hi;
+    if (before < 0) return new Str8(this.buffer, this.start, this.start);
+    const lo = this.lastIndexOf(open, before);
     if (lo < 0) return new Str8(this.buffer, this.start, this.start);
-    return this.slice(lo + needleByteLength(open), hi);
+    return this.slice(lo + openLength, hi);
   }
 
   /** Whether the view begins with `search` at the given byte offset. */

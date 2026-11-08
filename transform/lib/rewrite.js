@@ -854,15 +854,23 @@ function rewriteExpression(expression, expected, context, signatures) {
           : null;
       const spanLink = leftLink ?? rightLink;
       if (spanExpression instanceof IdentifierExpression && spanLink) {
-        const other =
-          spanExpression === expression.left
-            ? expression.right
-            : expression.left;
+        const spanOnLeft = spanExpression === expression.left;
+        const other = spanOnLeft ? expression.right : expression.left;
         const lowercase =
           context.lowercaseSpans.has(spanExpression.text) &&
           other instanceof StringLiteralExpression;
+        if (!spanOnLeft && !lowercase) {
+          return staticViewCall(
+            negate ? "notEqualsStringSpan" : "equalsStringSpan",
+            rewriteExpression(other, "unknown", context, signatures),
+            [
+              spanOwnerExpression(spanLink.owner, expression.range),
+              spanExpression,
+            ],
+          );
+        }
         return staticViewCall(
-          expression.operator === 77 || expression.operator === 79
+          negate
             ? lowercase
               ? "notEqualsLowerCaseSpan"
               : "notEqualsSpan"
@@ -1298,13 +1306,19 @@ function rewriteExpression(expression, expected, context, signatures) {
     return convertExpression(expression, expected, context, signatures);
   }
   if (expression instanceof ElementAccessExpression) {
+    const receiverRepresentation = expressionRepresentation(
+      expression.expression,
+      context,
+      signatures,
+    );
     expression.expression = rewriteExpression(
       expression.expression,
-      expressionCanProduceView(expression.expression) &&
-        expressionRepresentation(expression.expression, context, signatures) !==
-          "unknown"
-        ? "view"
-        : "unknown",
+      receiverRepresentation === "native"
+        ? "native"
+        : expressionCanProduceView(expression.expression) &&
+            receiverRepresentation !== "unknown"
+          ? "view"
+          : "unknown",
       context,
       signatures,
     );

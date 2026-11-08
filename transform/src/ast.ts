@@ -10,8 +10,15 @@ import {
   TypeNode,
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
-import { arrayElementType, stringRepresentation } from "./type-resolution.js";
-import { requestViewTypeAlias } from "./view-aliases.js";
+import {
+  arrayElementType,
+  sourceBindsName,
+  stringRepresentation,
+} from "./type-resolution.js";
+import {
+  requestScalarTypeAlias,
+  requestViewTypeAlias,
+} from "./view-aliases.js";
 
 export type Representation = "native" | "view" | "unknown";
 
@@ -77,9 +84,12 @@ export function viewType(range: Source["range"]): NamedTypeNode {
 }
 
 export function i32Type(range: Source["range"]): NamedTypeNode {
+  const name = sourceBindsName(range.source, "i32")
+    ? requestScalarTypeAlias(range.source, "i32")
+    : "i32";
   return generated(
     Node.createNamedType(
-      Node.createSimpleTypeName("i32", range),
+      Node.createSimpleTypeName(name, range),
       null,
       false,
       range,
@@ -88,9 +98,12 @@ export function i32Type(range: Source["range"]): NamedTypeNode {
 }
 
 export function u64Type(range: Source["range"]): NamedTypeNode {
+  const name = sourceBindsName(range.source, "u64")
+    ? requestScalarTypeAlias(range.source, "u64")
+    : "u64";
   return generated(
     Node.createNamedType(
-      Node.createSimpleTypeName("u64", range),
+      Node.createSimpleTypeName(name, range),
       null,
       false,
       range,
