@@ -25,3 +25,27 @@ assert.equal(
   count,
 );
 console.log(`${count} distinct bindings retain length scalarization`);
+
+// Packed owners must use the same assignment index instead of rescanning the
+// whole function once per span. This checks the lowering, not elapsed time.
+const packed = new Parser();
+packed.parseFile(
+  `export function run(input: string): i32 { let sum = 0; ${Array.from(
+    { length: count },
+    (_, i) =>
+      `const part${i} = input.slice(0, 8); sum += part${i}.charCodeAt(0);`,
+  ).join("\n")} return sum; }`,
+  "packed-owner-scaling.ts",
+  true,
+);
+configureSourceAdmission(packed.sources, repo);
+const spans = optimizeSources(packed.sources);
+assert.equal(
+  spans.diagnostics.filter(
+    (entry) =>
+      entry.reason ===
+      "scalarized non-escaping view into a packed pointer span",
+  ).length,
+  count,
+);
+console.log(`${count} distinct bindings retain packed spans`);

@@ -80,17 +80,17 @@ export class SourceClassTypes {
   private readonly visitingClasses = new Set<string>();
 
   constructor(private readonly source: Source) {
-    walk(source, (node) => {
-      if (!(node instanceof NamespaceDeclaration)) return;
-      const scope = this.namespaceAt(node.range.start);
-      this.namespaces.push({
-        name: scope ? `${scope}.${node.name.text}` : node.name.text,
-        start: node.range.start,
-        end: node.range.end,
-      });
-    });
+    // One pre-order pass: a namespace is always registered before the
+    // declarations inside it consult `namespaceAt`.
     walk(source, (node, ref) => {
-      if (node instanceof VariableDeclaration) {
+      if (node instanceof NamespaceDeclaration) {
+        const scope = this.namespaceAt(node.range.start);
+        this.namespaces.push({
+          name: scope ? `${scope}.${node.name.text}` : node.name.text,
+          start: node.range.start,
+          end: node.range.end,
+        });
+      } else if (node instanceof VariableDeclaration) {
         const scope = ref.grandparent;
         if (
           scope instanceof BlockStatement ||
@@ -102,46 +102,42 @@ export class SourceClassTypes {
           list.push({ declaration: node, scope });
           this.variables.set(node.name.text, list);
         }
+        if (
+          ref.grandparent === source ||
+          ref.grandparent instanceof NamespaceDeclaration
+        ) {
+          const namespace = this.namespaceAt(node.range.start);
+          this.globals.set(
+            namespace ? `${namespace}.${node.name.text}` : node.name.text,
+            node,
+          );
+        }
+      } else if (node instanceof FunctionExpression) {
+        // Block-local declarations are parsed as expression statements.
+        if (
+          ref.parent instanceof ExpressionStatement &&
+          (ref.grandparent instanceof BlockStatement ||
+            ref.grandparent instanceof SwitchCase)
+        )
+          this.lexicalFunctions.push({
+            declaration: node.declaration,
+            scope: ref.grandparent,
+          });
+      } else if (node instanceof FunctionDeclaration) {
+        if (
+          ref.parent === source ||
+          ref.parent instanceof NamespaceDeclaration
+        ) {
+          const scope = this.namespaceAt(node.range.start);
+          const name = scope ? `${scope}.${node.name.text}` : node.name.text;
+          this.functions.set(name, this.functions.has(name) ? null : node);
+        }
+      } else if (node instanceof ClassDeclaration) {
+        const scope = this.namespaceAt(node.range.start);
+        const owner = scope ? `${scope}.${node.name.text}` : node.name.text;
+        if (this.classes.has(owner)) this.ambiguous.add(owner);
+        this.registerClass(node, owner);
       }
-      if (
-        !(node instanceof VariableDeclaration) ||
-        (ref.grandparent !== source &&
-          !(ref.grandparent instanceof NamespaceDeclaration))
-      )
-        return;
-      const scope = this.namespaceAt(node.range.start);
-      this.globals.set(
-        scope ? `${scope}.${node.name.text}` : node.name.text,
-        node,
-      );
-    });
-    walk(source, (node, ref) => {
-      // Block-local declarations are parsed as expression statements.
-      if (
-        node instanceof FunctionExpression &&
-        ref.parent instanceof ExpressionStatement &&
-        (ref.grandparent instanceof BlockStatement ||
-          ref.grandparent instanceof SwitchCase)
-      )
-        this.lexicalFunctions.push({
-          declaration: node.declaration,
-          scope: ref.grandparent,
-        });
-      if (
-        !(node instanceof FunctionDeclaration) ||
-        (ref.parent !== source && !(ref.parent instanceof NamespaceDeclaration))
-      )
-        return;
-      const scope = this.namespaceAt(node.range.start);
-      const name = scope ? `${scope}.${node.name.text}` : node.name.text;
-      this.functions.set(name, this.functions.has(name) ? null : node);
-    });
-    walk(source, (node) => {
-      if (!(node instanceof ClassDeclaration)) return;
-      const scope = this.namespaceAt(node.range.start);
-      const owner = scope ? `${scope}.${node.name.text}` : node.name.text;
-      if (this.classes.has(owner)) this.ambiguous.add(owner);
-      this.registerClass(node, owner);
     });
     for (const owner of this.classes.keys()) this.inheritClass(owner);
   }
@@ -239,6 +235,15 @@ export class SourceClassTypes {
       return undefined;
     const key = this.runtimeKey(expression.text, expression.range.start);
     return key ? this.globals.get(key) : undefined;
+  }
+
+  /** A concrete class, including `this` and inferred constructor results. */
+  classDeclarationOf(
+    expression: Expression,
+    context: FunctionContext,
+  ): ClassDeclaration | null {
+    const owner = this.classOf(expression, context, new Set());
+    return owner ? (this.classes.get(owner)?.declaration ?? null) : null;
   }
 
   propertyOf(

@@ -1,5 +1,6 @@
 import {
   Expression,
+  Token,
   IdentifierExpression,
   NamedTypeNode,
   Node,
@@ -7,11 +8,30 @@ import {
   Source,
   Tokenizer,
   TypeNode,
+  VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { arrayElementType, stringRepresentation } from "./type-resolution.js";
 import { requestViewTypeAlias } from "./view-aliases.js";
 
 export type Representation = "native" | "view" | "unknown";
+
+/** View snapshots must keep their own backing-data root after Str.set(). */
+export const retainedViewSnapshots = new WeakSet<VariableDeclaration>();
+
+// Native String#trim in affected compilers shrinks size while advancing offset.
+// Key by source so separate compiler runs cannot leak compatibility decisions.
+export const legacyNativeTrimSources = new WeakSet<Source>();
+
+/**
+ * Types the optimizer writes onto rewritten declarations. Semantic analysis of
+ * a preliminarily rewritten program must not report them as source types.
+ */
+export const generatedTypes = new WeakSet<TypeNode>();
+
+function generated<T extends TypeNode>(type: T): T {
+  generatedTypes.add(type);
+  return type;
+}
 
 export function typeName(type: TypeNode | null): string | null {
   if (!(type instanceof NamedTypeNode)) return null;
@@ -44,31 +64,37 @@ export function viewType(range: Source["range"]): NamedTypeNode {
     false,
     range,
   );
-  return stringRepresentation(type) === "view"
-    ? type
-    : Node.createNamedType(
-        Node.createSimpleTypeName(requestViewTypeAlias(range.source), range),
-        null,
-        false,
-        range,
-      );
+  return generated(
+    stringRepresentation(type) === "view"
+      ? type
+      : Node.createNamedType(
+          Node.createSimpleTypeName(requestViewTypeAlias(range.source), range),
+          null,
+          false,
+          range,
+        ),
+  );
 }
 
 export function i32Type(range: Source["range"]): NamedTypeNode {
-  return Node.createNamedType(
-    Node.createSimpleTypeName("i32", range),
-    null,
-    false,
-    range,
+  return generated(
+    Node.createNamedType(
+      Node.createSimpleTypeName("i32", range),
+      null,
+      false,
+      range,
+    ),
   );
 }
 
 export function u64Type(range: Source["range"]): NamedTypeNode {
-  return Node.createNamedType(
-    Node.createSimpleTypeName("u64", range),
-    null,
-    false,
-    range,
+  return generated(
+    Node.createNamedType(
+      Node.createSimpleTypeName("u64", range),
+      null,
+      false,
+      range,
+    ),
   );
 }
 
@@ -85,6 +111,19 @@ export function identifier(
   return Node.createIdentifierExpression(name, range, false);
 }
 
+/**
+ * Runtime helper calls the rewriter emits. A later optimization round must not
+ * read their arguments as view boundaries of the source program.
+ */
+export const generatedCalls = new WeakSet<Expression>();
+
+/**
+ * Calls to functions that return a packed span of one argument, by that
+ * argument's index, and the calls already lowered into a span position.
+ */
+export const spanReturnCalls = new WeakMap<Expression, number>();
+export const loweredSpanCalls = new WeakSet<Expression>();
+
 export function staticViewCall(
   method: string,
   receiver: Expression,
@@ -97,7 +136,7 @@ export function staticViewCall(
       : method === "trimRight"
         ? "trimEnd"
         : method;
-  return Node.createCallExpression(
+  const call = Node.createCallExpression(
     Node.createPropertyAccessExpression(
       identifier("str", range),
       identifier(staticMethod, range),
@@ -107,6 +146,8 @@ export function staticViewCall(
     [receiver, ...args],
     range,
   );
+  generatedCalls.add(call);
+  return call;
 }
 
 export function wrapAsView(expression: Expression): Expression {
@@ -155,4 +196,22 @@ export function parseExpression(text: string): Expression {
   if (!expression)
     throw new Error(`[as-str] unable to parse expression: ${text}`);
   return expression;
+}
+
+// AssemblyScript installs its portable 64-bit integer constructor globally.
+function i64(value: number): ReturnType<typeof i64_new> {
+  return (globalThis as unknown as { i64_new: typeof i64_new }).i64_new(
+    value,
+    0,
+  );
+}
+
+export function integer(value: number, expression: Expression): Expression {
+  return value < 0
+    ? Node.createUnaryPrefixExpression(
+        Token.Minus,
+        Node.createIntegerLiteralExpression(i64(-value), expression.range),
+        expression.range,
+      )
+    : Node.createIntegerLiteralExpression(i64(value), expression.range);
 }

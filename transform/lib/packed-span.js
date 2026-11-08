@@ -2,15 +2,23 @@ import {
   BinaryExpression,
   BlockStatement,
   CallExpression,
+  ElementAccessExpression,
   ExpressionStatement,
   IdentifierExpression,
   Node,
+  ParenthesizedExpression,
+  IntegerLiteralExpression,
   PropertyAccessExpression,
   StringLiteralExpression,
+  TernaryExpression,
 } from "assemblyscript/dist/assemblyscript.js";
 import {
   identifier,
+  integer,
+  legacyNativeTrimSources,
   expressionRangeKey,
+  loweredSpanCalls,
+  spanReturnCalls,
   representationOfType,
   staticViewCall,
   u64Type,
@@ -22,7 +30,7 @@ import {
   propertyCall,
   walk,
 } from "./visitor.js";
-function viewCallParts(expression) {
+export function viewCallParts(expression) {
   const property = propertyCall(expression);
   if (!property) return null;
   if (isStrStaticCall(expression) && expression.args.length > 0) {
@@ -215,10 +223,192 @@ export function planPackedSpanParameters(context, signature) {
     },
   };
 }
+export function splitField(expression) {
+  if (!(expression instanceof ElementAccessExpression)) return null;
+  const split = expression.expression;
+  if (!(split instanceof CallExpression) || isStrStaticCall(split)) return null;
+  const property = propertyCall(split);
+  const separator = split.args[0];
+  let index = expression.elementExpression;
+  while (index instanceof ParenthesizedExpression) index = index.expression;
+  if (
+    !(
+      index instanceof IntegerLiteralExpression ||
+      index instanceof IdentifierExpression
+    )
+  )
+    return null;
+  if (
+    property?.property.text !== "split" ||
+    split.args.length !== 1 ||
+    split.typeArguments?.length ||
+    !(separator instanceof StringLiteralExpression) ||
+    !separator.value.length
+  )
+    return null;
+  return {
+    receiver: property.expression,
+    separator,
+    index: expression.elementExpression,
+  };
+}
+export function spanReturnCall(expression) {
+  return expression instanceof CallExpression && spanReturnCalls.has(expression)
+    ? expression
+    : null;
+}
+export function isSpanLink(expression) {
+  return (
+    isSpanCall(expression) ||
+    !!splitField(expression) ||
+    !!spanReturnCall(expression)
+  );
+}
+export function spanLinkReceiver(expression) {
+  const field = splitField(expression);
+  if (field) return field.receiver;
+  const returned = spanReturnCall(expression);
+  if (returned) return returned.args[spanReturnCalls.get(returned)];
+  if (!(expression instanceof CallExpression)) return null;
+  const parts = viewCallParts(expression);
+  return parts && operationSemantics(parts.method).spanProducing
+    ? parts.receiver
+    : null;
+}
+function isEmptyLiteral(expression) {
+  return (
+    expression instanceof StringLiteralExpression && !expression.value.length
+  );
+}
+export function spanTernary(expression) {
+  if (!(expression instanceof TernaryExpression)) return null;
+  const branches = [expression.ifThen, expression.ifElse];
+  if (
+    !branches.some(isSpanLink) ||
+    !branches.every(
+      (branch) =>
+        isSpanLink(branch) ||
+        branch instanceof IdentifierExpression ||
+        branch instanceof StringLiteralExpression,
+    )
+  )
+    return null;
+  if (branches.some(isEmptyLiteral)) return expression;
+  const [left, right] = branches.map((branch) => spanChainRoot(branch));
+  return (left instanceof IdentifierExpression &&
+    right instanceof IdentifierExpression &&
+    left.text === right.text) ||
+    (left instanceof StringLiteralExpression &&
+      right instanceof StringLiteralExpression &&
+      left.value === right.value)
+    ? expression
+    : null;
+}
+export function spanChainRoot(expression) {
+  const ternary = spanTernary(expression);
+  if (ternary)
+    return spanChainRoot(
+      isEmptyLiteral(ternary.ifThen) ? ternary.ifElse : ternary.ifThen,
+    );
+  let current = expression;
+  for (
+    let receiver = spanLinkReceiver(current);
+    receiver;
+    receiver = spanLinkReceiver(current)
+  )
+    current = receiver;
+  return current;
+}
+export function spanChainOwner(expression, context) {
+  const root = spanChainRoot(expression);
+  if (root instanceof StringLiteralExpression) return root;
+  if (!(root instanceof IdentifierExpression)) return null;
+  const binding = context.classes.bindingOf(root, context);
+  return binding?.scalarizedSpan && binding.packedSpan
+    ? spanOwnerExpression(binding.packedSpan.owner, root.range)
+    : root;
+}
+export function isSpanCall(expression) {
+  if (!(expression instanceof CallExpression)) return false;
+  const parts = viewCallParts(expression);
+  return !!parts && operationSemantics(parts.method).spanProducing;
+}
+function nativeTrim(expression, context) {
+  const parts = viewCallParts(expression);
+  return (
+    !!parts &&
+    parts.method === "trim" &&
+    legacyNativeTrimSources.has(expression.range.source) &&
+    !isStrStaticCall(expression) &&
+    !context.originalViewReceivers?.has(expressionRangeKey(parts.receiver))
+  );
+}
 export function lowerPackedSpanInitializer(expression, context) {
+  const ternary = spanTernary(expression);
+  if (ternary) {
+    const root = spanChainRoot(ternary);
+    const packed = (value) =>
+      value instanceof IdentifierExpression &&
+      !!context.classes.bindingOf(value, context)?.scalarizedSpan;
+    const empty = (range) => {
+      const copy =
+        root instanceof IdentifierExpression
+          ? identifier(root.text, range)
+          : Node.createStringLiteralExpression(root.value, range);
+      const zero = () => integer(0, copy);
+      return packed(root)
+        ? staticViewCall("sliceSpanOf", copy, [zero(), zero()])
+        : staticViewCall("sliceSpan", copy, [zero(), zero()]);
+    };
+    const branch = (value) =>
+      isSpanLink(value)
+        ? lowerPackedSpanInitializer(value, context)
+        : isEmptyLiteral(value)
+          ? empty(value.range)
+          : packed(value)
+            ? value
+            : staticViewCall("wholeSpan", value, []);
+    return Node.createTernaryExpression(
+      ternary.condition,
+      branch(ternary.ifThen),
+      branch(ternary.ifElse),
+      ternary.range,
+    );
+  }
+  const returned = spanReturnCall(expression);
+  if (returned) {
+    loweredSpanCalls.add(returned);
+    return returned;
+  }
+  const field = splitField(expression);
+  if (field) {
+    const args = [field.separator, field.index];
+    if (isSpanLink(field.receiver))
+      return staticViewCall(
+        "splitFieldSpanOf",
+        lowerPackedSpanInitializer(field.receiver, context),
+        args,
+      );
+    if (
+      field.receiver instanceof IdentifierExpression &&
+      context.classes.bindingOf(field.receiver, context)?.scalarizedSpan
+    )
+      return staticViewCall("splitFieldSpanOf", field.receiver, args);
+    return staticViewCall("splitFieldSpan", field.receiver, args);
+  }
+  if (!(expression instanceof CallExpression)) return expression;
   const parts = viewCallParts(expression);
   if (!parts) return expression;
-  const method = operationSemantics(parts.method).normalizedSpanName;
+  const method = nativeTrim(expression, context)
+    ? "nativeTrim"
+    : operationSemantics(parts.method).normalizedSpanName;
+  if (isSpanLink(parts.receiver)) {
+    return staticViewCall(
+      `${method}SpanOf`,
+      lowerPackedSpanInitializer(parts.receiver, context),
+      parts.args,
+    );
+  }
   if (
     parts.receiver instanceof IdentifierExpression &&
     context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan
@@ -233,21 +423,18 @@ export function lowerPackedLengthInitializer(expression, context) {
     return expression;
   }
   if (
-    parts.receiver instanceof IdentifierExpression &&
-    context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan
+    (parts.receiver instanceof IdentifierExpression &&
+      context.classes.bindingOf(parts.receiver, context)?.scalarizedSpan) ||
+    (isSpanCall(expression) && isSpanLink(parts.receiver))
   ) {
-    const receiver = context.classes.bindingOf(parts.receiver, context);
-    const span = staticViewCall(
-      `${operationSemantics(parts.method).normalizedSpanName}SpanOf`,
-      parts.receiver,
-      parts.args,
-    );
-    return staticViewCall(
-      "spanLength",
-      spanOwnerExpression(receiver.packedSpan.owner, expression.range),
-      [span],
-    );
+    const owner = spanChainOwner(expression, context);
+    if (owner)
+      return staticViewCall("spanLength", owner, [
+        lowerPackedSpanInitializer(expression, context),
+      ]);
   }
+  if (nativeTrim(expression, context))
+    return staticViewCall("nativeTrimLength", parts.receiver, parts.args);
   const method =
     parts.method === "at" &&
     !isStrStaticCall(expression) &&

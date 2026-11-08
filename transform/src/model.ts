@@ -1,4 +1,5 @@
 import {
+  CallExpression,
   FunctionDeclaration,
   Expression,
   Source,
@@ -28,6 +29,10 @@ export interface FunctionSignature {
   spanParameters: Map<number, string>;
   lowercaseSpanParameters: Set<number>;
   spanAppliedDeclarations: Set<FunctionDeclaration>;
+  /** Index of the parameter whose span every return narrows. */
+  spanReturn?: number;
+  /** Direct calls seen while counting, with the context of each caller. */
+  callSites?: { call: CallExpression; context: FunctionContext }[];
 }
 
 export interface Binding {
@@ -50,6 +55,12 @@ export interface Binding {
 export interface FunctionContext {
   declaration: FunctionDeclaration | null;
   temporaryOwners?: VariableStatement[];
+  /** This function returns a packed span of the given parameter. */
+  spanReturn?: number;
+  /** Splits whose array is only indexed or measured, read in place. */
+  inPlaceSplits?: Set<CallExpression>;
+  /** Constants hoisted to the top of the source, shared by every function. */
+  moduleConstants?: VariableStatement[];
   bindings: Map<string, Binding>;
   parameters: Map<string, Representation>;
   parameterSpans: Map<string, PackedSpanLink>;
@@ -63,6 +74,8 @@ export interface FunctionContext {
   representationSensitive?: boolean;
   resolvingTypeInitializers?: Set<Expression>;
   duplicateNames: Set<string>;
+  /** Names assigned in this function, indexed while collecting its bindings. */
+  assignedNames?: ReadonlySet<string>;
 }
 
 export interface ParameterPromotion {

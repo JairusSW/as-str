@@ -8,12 +8,14 @@ import {
   Property,
   Source,
   Type,
+  VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 import { readFileSync, readdirSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { URL } from "url";
 import { version as compilerVersion } from "assemblyscript/dist/asc.js";
-import { Representation } from "./ast.js";
+import { generatedTypes, Representation } from "./ast.js";
+import { walk } from "./visitor.js";
 import { admitSource } from "./source-admission.js";
 import { isPackageSource } from "./source-identity.js";
 
@@ -173,6 +175,22 @@ function representationOfResolvedType(type: Type): Representation {
   return "unknown";
 }
 
+function localDeclarations(
+  element: ASFunction,
+): Map<string, VariableDeclaration[]> {
+  const declarations = new Map<string, VariableDeclaration[]>();
+  const declaration = element.prototype.declaration as FunctionDeclaration;
+  walk(declaration.body, (node): boolean | void => {
+    // Nested functions are compiled separately with their own locals.
+    if (node instanceof FunctionDeclaration) return false;
+    if (!(node instanceof VariableDeclaration)) return;
+    const list = declarations.get(node.name.text) ?? [];
+    list.push(node);
+    declarations.set(node.name.text, list);
+  });
+  return declarations;
+}
+
 export function buildSemanticManifest(program: Program): SemanticManifest {
   const factsByKey = new Map<string, SemanticFact>();
   const conflicts = new Set<string>();
@@ -267,9 +285,28 @@ export function buildSemanticManifest(program: Program): SemanticManifest {
       });
     });
 
+    const declarations = localDeclarations(element);
+    const localCounts = new Map<string, number>();
+    for (const local of element.localsByIndex)
+      if (local instanceof Local)
+        localCounts.set(local.name, (localCounts.get(local.name) ?? 0) + 1);
     for (const local of element.localsByIndex) {
-      if (!(local instanceof Local) || !local.declaration) continue;
-      const range = local.declaration.range;
+      if (!(local instanceof Local)) continue;
+      // Compiled locals carry a synthetic declaration. Recover the source one
+      // when its name identifies a single declaration and a single local.
+      const candidates = declarations.get(local.name);
+      const declaration =
+        candidates?.length === 1 && localCounts.get(local.name) === 1
+          ? candidates[0]
+          : null;
+      // A type the preliminary rewrite assigned is not the source's type.
+      if (
+        !declaration ||
+        local.name.startsWith("__as_str_") ||
+        (declaration.type && generatedTypes.has(declaration.type))
+      )
+        continue;
+      const range = declaration.range;
       const source = range.source;
       if (!includes(source)) continue;
       const resolvedType = local.type.toString();

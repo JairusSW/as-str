@@ -68,7 +68,7 @@ assert.match(
 );
 assert.match(
   local.output,
-  /internalSliceReturn return -> native: class-backed return only substitutes a wrapper allocation/,
+  /internalSliceReturn return -> view: returns a packed span of input/,
 );
 assert.match(
   local.output,
@@ -156,7 +156,9 @@ const slicedNativeLowercase = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/slicedNativeLowercase",
 );
-assert.match(slicedNativeLowercase, /call \$~lib\/string\/String#toLowerCase/);
+// The slice narrows a span and the lowercase copy is the only allocation.
+assert.match(slicedNativeLowercase, /Str\.toLowerCaseSpan/);
+assert.doesNotMatch(slicedNativeLowercase, /String#slice/);
 assert.doesNotMatch(slicedNativeLowercase, /Str\.toLowerCaseIfNeeded/);
 
 const viewLowercase = functionBody(
@@ -232,7 +234,9 @@ const internalReturn = functionBody(
   local.wat,
   "transform/__tests__/fixtures/local-promotion/internalSliceReturn",
 );
-assert.match(internalReturn, /call \$~lib\/string\/String#slice/);
+// Every caller reads the result in place, so the helper returns a span.
+assert.doesNotMatch(internalReturn, /call \$~lib\/string\/String#slice/);
+assert.match(internalReturn, /\(result i64\)/);
 
 const directTemporary = functionBody(
   local.wat,
@@ -464,7 +468,9 @@ for (const method of [
 ]) {
   assert.match(
     allViewOperations,
-    new RegExp(`assembly\\/str\\/Str\\.${method}Length<`),
+    new RegExp(
+      `assembly\\/str\\/Str\\.${method === "trim" ? "(?:trim|nativeTrim)" : method}Length<`,
+    ),
     `missing allocation-free ${method} length specialization`,
   );
 }

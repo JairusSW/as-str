@@ -1,4 +1,9 @@
 import {
+  BinaryExpression,
+  ParenthesizedExpression,
+  UnaryPrefixExpression,
+  UnaryPostfixExpression,
+  Token,
   ClassDeclaration,
   Expression,
   FunctionDeclaration,
@@ -11,6 +16,37 @@ import {
   VariableDeclaration,
 } from "assemblyscript/dist/assemblyscript.js";
 
+const ASSIGNMENTS = new Set([
+  Token.Equals,
+  Token.Plus_Equals,
+  Token.Minus_Equals,
+  Token.Asterisk_Equals,
+  Token.Asterisk_Asterisk_Equals,
+  Token.Slash_Equals,
+  Token.Percent_Equals,
+  Token.LessThan_LessThan_Equals,
+  Token.GreaterThan_GreaterThan_Equals,
+  Token.GreaterThan_GreaterThan_GreaterThan_Equals,
+  Token.Ampersand_Equals,
+  Token.Bar_Equals,
+  Token.Caret_Equals,
+]);
+
+/** The assigned location is unchanged by any number of parentheses. */
+export function writeTarget(node: Node): Expression | null {
+  let target: Expression | null =
+    node instanceof BinaryExpression && ASSIGNMENTS.has(node.operator)
+      ? node.left
+      : (node instanceof UnaryPrefixExpression ||
+            node instanceof UnaryPostfixExpression) &&
+          (node.operator === Token.Plus_Plus ||
+            node.operator === Token.Minus_Minus)
+        ? node.operand
+        : null;
+  while (target instanceof ParenthesizedExpression) target = target.expression;
+  return target;
+}
+
 export interface WalkRef {
   parent: Node | null;
   key: string | null;
@@ -19,6 +55,28 @@ export interface WalkRef {
 
 function isNode(value: unknown): value is Node {
   return !!value && typeof value === "object" && "kind" in value;
+}
+
+// Every AST class assigns the same own properties in its constructor, so the
+// properties that can hold children are computed once per class.
+const childKeys = new Map<unknown, string[]>();
+
+function childKeysOf(node: Node): string[] {
+  let keys = childKeys.get(node.constructor);
+  if (!keys) {
+    const record = node as unknown as Record<string, unknown>;
+    keys = Object.keys(node).filter(
+      (key) =>
+        key !== "range" &&
+        key !== "implicitFieldDeclaration" &&
+        key !== "kind" &&
+        (record[key] === null ||
+          record[key] === undefined ||
+          typeof record[key] === "object"),
+    );
+    childKeys.set(node.constructor, keys);
+  }
+  return keys;
 }
 
 /** Lightweight recursive visitor following the source-first json-as pattern. */
@@ -33,27 +91,19 @@ export function walk(
   if (visitor(node, { parent, key, grandparent }) === false) return;
 
   // Snapshot values before visiting children: a visitor may replace a sibling.
-  // Separate key/value arrays avoid allocating a pair for every AST property.
-  const keys = Object.keys(node);
+  const keys = childKeysOf(node);
   const values: unknown[] = new Array(keys.length);
   for (let i = 0; i < keys.length; i++)
     values[i] = (node as unknown as Record<string, unknown>)[keys[i]];
   for (let i = 0; i < keys.length; i++) {
-    const childKey = keys[i];
     const value = values[i];
-    if (
-      childKey === "range" ||
-      childKey === "implicitFieldDeclaration" ||
-      childKey === "kind"
-    ) {
-      continue;
-    }
-    if (isNode(value)) {
-      walk(value, visitor, node, childKey, parent);
-    } else if (Array.isArray(value)) {
+    if (value === null || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
       for (const child of value) {
-        if (isNode(child)) walk(child, visitor, node, childKey, parent);
+        if (isNode(child)) walk(child, visitor, node, keys[i], parent);
       }
+    } else if (isNode(value)) {
+      walk(value, visitor, node, keys[i], parent);
     }
   }
 }

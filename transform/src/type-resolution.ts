@@ -156,17 +156,32 @@ function index(source: Source): SourceTypes {
   return result;
 }
 
+// Library sources are parsed again for the semantic pass but never rewritten,
+// so their binding names carry over between programs by text.
+const libraryBindingNames = new Map<string, Set<string>>();
+
 /** Source-wide generated helper names must survive every lexical value scope. */
 export function sourceBindsName(source: Source, name: string): boolean {
-  return index(source).bindingNames.has(name);
+  if (!source.isLibrary || indexes.has(source))
+    return index(source).bindingNames.has(name);
+  let names = libraryBindingNames.get(source.text);
+  if (!names) {
+    names = index(source).bindingNames;
+    libraryBindingNames.set(source.text, names);
+  }
+  return names.has(name);
 }
 
 function importedSource(
   source: Source,
   internalPath: string | null,
 ): Source | undefined {
-  return sourcesFor(source).find(
-    (candidate) => candidate.internalPath === internalPath,
+  const sources = sourcesFor(source);
+  return (
+    sources.find((candidate) => candidate.internalPath === internalPath) ??
+    sources.find(
+      (candidate) => candidate.internalPath === `${internalPath}/index`,
+    )
   );
 }
 

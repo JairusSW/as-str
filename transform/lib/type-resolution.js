@@ -125,12 +125,24 @@ function index(source) {
   indexes.set(source, result);
   return result;
 }
+const libraryBindingNames = new Map();
 export function sourceBindsName(source, name) {
-  return index(source).bindingNames.has(name);
+  if (!source.isLibrary || indexes.has(source))
+    return index(source).bindingNames.has(name);
+  let names = libraryBindingNames.get(source.text);
+  if (!names) {
+    names = index(source).bindingNames;
+    libraryBindingNames.set(source.text, names);
+  }
+  return names.has(name);
 }
 function importedSource(source, internalPath) {
-  return sourcesFor(source).find(
-    (candidate) => candidate.internalPath === internalPath,
+  const sources = sourcesFor(source);
+  return (
+    sources.find((candidate) => candidate.internalPath === internalPath) ??
+    sources.find(
+      (candidate) => candidate.internalPath === `${internalPath}/index`,
+    )
   );
 }
 function namespaceMember(symbol, name, seen, value = false) {

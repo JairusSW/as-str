@@ -7,6 +7,13 @@ import {
 } from "assemblyscript/dist/assemblyscript.js";
 import { arrayElementType, stringRepresentation } from "./type-resolution.js";
 import { requestViewTypeAlias } from "./view-aliases.js";
+export const retainedViewSnapshots = new WeakSet();
+export const legacyNativeTrimSources = new WeakSet();
+export const generatedTypes = new WeakSet();
+function generated(type) {
+  generatedTypes.add(type);
+  return type;
+}
 export function typeName(type) {
   if (!(type instanceof NamedTypeNode)) return null;
   const parts = [];
@@ -30,29 +37,35 @@ export function viewType(range) {
     false,
     range,
   );
-  return stringRepresentation(type) === "view"
-    ? type
-    : Node.createNamedType(
-        Node.createSimpleTypeName(requestViewTypeAlias(range.source), range),
-        null,
-        false,
-        range,
-      );
+  return generated(
+    stringRepresentation(type) === "view"
+      ? type
+      : Node.createNamedType(
+          Node.createSimpleTypeName(requestViewTypeAlias(range.source), range),
+          null,
+          false,
+          range,
+        ),
+  );
 }
 export function i32Type(range) {
-  return Node.createNamedType(
-    Node.createSimpleTypeName("i32", range),
-    null,
-    false,
-    range,
+  return generated(
+    Node.createNamedType(
+      Node.createSimpleTypeName("i32", range),
+      null,
+      false,
+      range,
+    ),
   );
 }
 export function u64Type(range) {
-  return Node.createNamedType(
-    Node.createSimpleTypeName("u64", range),
-    null,
-    false,
-    range,
+  return generated(
+    Node.createNamedType(
+      Node.createSimpleTypeName("u64", range),
+      null,
+      false,
+      range,
+    ),
   );
 }
 export function expressionRangeKey(expression) {
@@ -62,6 +75,9 @@ export function expressionRangeKey(expression) {
 export function identifier(name, range) {
   return Node.createIdentifierExpression(name, range, false);
 }
+export const generatedCalls = new WeakSet();
+export const spanReturnCalls = new WeakMap();
+export const loweredSpanCalls = new WeakSet();
 export function staticViewCall(method, receiver, args) {
   const range = receiver.range;
   const staticMethod =
@@ -70,7 +86,7 @@ export function staticViewCall(method, receiver, args) {
       : method === "trimRight"
         ? "trimEnd"
         : method;
-  return Node.createCallExpression(
+  const call = Node.createCallExpression(
     Node.createPropertyAccessExpression(
       identifier("str", range),
       identifier(staticMethod, range),
@@ -80,6 +96,8 @@ export function staticViewCall(method, receiver, args) {
     [receiver, ...args],
     range,
   );
+  generatedCalls.add(call);
+  return call;
 }
 export function wrapAsView(expression) {
   const range = expression.range;
@@ -123,4 +141,16 @@ export function parseExpression(text) {
   if (!expression)
     throw new Error(`[as-str] unable to parse expression: ${text}`);
   return expression;
+}
+function i64(value) {
+  return globalThis.i64_new(value, 0);
+}
+export function integer(value, expression) {
+  return value < 0
+    ? Node.createUnaryPrefixExpression(
+        82,
+        Node.createIntegerLiteralExpression(i64(-value), expression.range),
+        expression.range,
+      )
+    : Node.createIntegerLiteralExpression(i64(value), expression.range);
 }

@@ -1,9 +1,12 @@
 import {
   CallExpression,
+  ElementAccessExpression,
   IdentifierExpression,
   ParenthesizedExpression,
+  StringLiteralExpression,
   TernaryExpression,
 } from "assemblyscript/dist/assemblyscript.js";
+import { spanReturnCalls } from "./ast.js";
 import { operationSemantics } from "./operations.js";
 import { calleeName, propertyCall } from "./visitor.js";
 export function expressionCanProduceView(expression) {
@@ -17,7 +20,18 @@ export function expressionCanProduceView(expression) {
       expressionCanProduceView(expression.ifElse)
     );
   }
+  if (expression instanceof ElementAccessExpression) {
+    const split = expression.expression;
+    return (
+      split instanceof CallExpression &&
+      propertyCall(split)?.property.text === "split" &&
+      split.args.length === 1 &&
+      split.args[0] instanceof StringLiteralExpression &&
+      split.args[0].value.length > 0
+    );
+  }
   if (!(expression instanceof CallExpression)) return false;
+  if (spanReturnCalls.has(expression)) return true;
   if (calleeName(expression.expression) === "str") return true;
   const property = propertyCall(expression);
   if (!property) return false;
