@@ -13,6 +13,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Keep loop and switch-case bindings inside their lexical scopes during call
+  resolution.
+- Propagate cross-module parameter and signature changes to a fixed point
+  before accepting rewritten call sites, independent of import order or call
+  depth.
+- Describe the injected `Str` value/type and UTF-8 error-mode namespace in the
+  global editor declarations.
 - Infer derived type arguments from the effective inherited constructor after
   applying `extends` substitutions, while retaining defaults for unrelated
   base parameters.

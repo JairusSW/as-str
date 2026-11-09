@@ -100,6 +100,17 @@ await checkFixture("review-generic-static", {
   inferredControl: 1,
   uppercaseControl: 1,
 });
+await checkFixture("review-lexical-call-scopes", {
+  loop: 3,
+  loopRenamed: 3,
+  loopBlock: 3,
+  switchCase: 3,
+  switchRenamed: 3,
+});
+await checkFixture("review-parameter-propagation", { run: 14 });
+await checkFixture("review-parameter-propagation-three", { run: 28 });
+await checkFixture("review-parameter-propagation-first", { run: 14 });
+await checkFixture("review-parameter-propagation-branch", { run: 14 });
 await checkFixture("review-accessor-write-type", {
   differentTypes: 2,
   setterOnly: 2,

@@ -379,6 +379,48 @@ try {
     },
   );
   assert.equal(dependencyModule.instance.exports.checkDependency(), 3);
+  const editorInput = path.join(scratch, "editor.ts");
+  const editorConfig = path.join(scratch, "tsconfig.json");
+  writeFileSync(
+    editorInput,
+    [
+      "export function upper(value: Str): i32 {",
+      "  return value.length;",
+      "}",
+      "export function upperFactory(): i32 {",
+      '  return Str.from("abc").length;',
+      "}",
+      "export function encodingMode(value: str.UTF8.ErrorMode): i32 {",
+      "  return value;",
+      "}",
+      "export function upperEncodingMode(value: Str.UTF8.ErrorMode): i32 {",
+      "  return value;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
+    editorConfig,
+    JSON.stringify({
+      extends: ["assemblyscript/std/assembly.json", "as-str/globals.json"],
+      include: ["./editor.ts"],
+      compilerOptions: { noEmit: true },
+    }),
+  );
+  const editorResult = spawnSync(
+    process.execPath,
+    [
+      path.join(repo, "node_modules/typescript/bin/tsc"),
+      "--project",
+      editorConfig,
+    ],
+    { cwd: scratch, encoding: "utf8", env: { ...process.env } },
+  );
+  // AssemblyScript sources use syntax and intrinsics that plain tsc cannot
+  // validate. The editor contract is that the consumer file itself resolves
+  // every injected global type, value and namespace without diagnostics.
+  const editorDiagnostics = editorResult.stdout + editorResult.stderr;
+  assert.doesNotMatch(editorDiagnostics, /editor\.ts\(/, editorDiagnostics);
   const packedTransformFiles = readdirSync(
     path.join(scratch, "node_modules/as-str/transform/lib"),
   );

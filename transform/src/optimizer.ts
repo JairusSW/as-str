@@ -2674,19 +2674,84 @@ export function optimizeSources(
         callParents,
       );
 
-  // Two rounds let parameter decisions made in imported modules flow back to
-  // callers that were parsed earlier. Rewrites are deliberately idempotent.
-  for (let round = 0; round < 2; round++) {
-    for (const source of userSources) {
-      const result = optimizeSource(
-        source,
-        manifest,
-        sharedSignatures,
-        sensitiveDeclarations,
-      );
-      for (const changed of result.changedSources) changedSources.add(changed);
-      if (round === 0) diagnostics.push(...result.diagnostics);
+  const boundarySignatures = new Set<FunctionSignature>(
+    sharedSignatures.values(),
+  );
+  for (const declaration of functionContexts.keys()) {
+    const signature = sharedSignatures.forDeclaration(declaration);
+    if (signature) boundarySignatures.add(signature);
+  }
+  const signatureState = (signature: FunctionSignature): string =>
+    [
+      signature.parameters.join(","),
+      signature.result,
+      [...signature.spanParameters.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([index, owner]) => `${index}:${owner}`)
+        .join(","),
+      [...signature.lowercaseSpanParameters].sort((a, b) => a - b).join(","),
+      signature.spanReturn ?? "",
+    ].join("|");
+  const userSourceSet = new Set(userSources);
+  const sourceSignatures = new Map<Source, Set<FunctionSignature>>();
+  for (const signature of boundarySignatures) {
+    for (const declaration of signature.declarations) {
+      const source = declaration.range.source;
+      if (!userSourceSet.has(source)) continue;
+      const entries = sourceSignatures.get(source) ?? new Set();
+      entries.add(signature);
+      sourceSignatures.set(source, entries);
     }
+  }
+  const signatureStates = new Map(
+    [...boundarySignatures].map((signature) => [
+      signature,
+      signatureState(signature),
+    ]),
+  );
+  const queue = [...userSources];
+  const queued = new Set(queue);
+  const diagnosed = new Set<Source>();
+  const enqueue = (source: Source | undefined): void => {
+    if (!source || !userSourceSet.has(source) || queued.has(source)) return;
+    queued.add(source);
+    queue.push(source);
+  };
+
+  // Boundary decisions are monotonic. Revisit only the source that changed
+  // and the recorded callers of its changed signatures until the worklist is
+  // empty, then reconcile every call once against the stable signatures.
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const source = queue[cursor];
+    queued.delete(source);
+    const result = optimizeSource(
+      source,
+      manifest,
+      sharedSignatures,
+      sensitiveDeclarations,
+    );
+    for (const changed of result.changedSources) changedSources.add(changed);
+    if (!diagnosed.has(source)) {
+      diagnosed.add(source);
+      diagnostics.push(...result.diagnostics);
+    }
+    for (const signature of sourceSignatures.get(source) ?? []) {
+      const nextState = signatureState(signature);
+      if (nextState === signatureStates.get(signature)) continue;
+      signatureStates.set(signature, nextState);
+      enqueue(source);
+      for (const site of signature.callSites ?? [])
+        enqueue(site.context.declaration?.range.source);
+    }
+  }
+  for (const source of userSources) {
+    const result = optimizeSource(
+      source,
+      manifest,
+      sharedSignatures,
+      sensitiveDeclarations,
+    );
+    for (const changed of result.changedSources) changedSources.add(changed);
   }
   return { changedSources, diagnostics, summary: summarize(diagnostics) };
 }

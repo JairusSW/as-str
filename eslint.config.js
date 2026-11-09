@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       "assembly/**",
       "scripts/fixtures/*.ts",
+      "transform/__tests__/fixtures/parameter-propagation/**",
       "build/**",
       ".as-test/**",
       "**/*.tmp.ts",

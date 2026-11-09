@@ -8,6 +8,8 @@ import {
   ExportStatement,
   FunctionDeclaration,
   FunctionExpression,
+  ForOfStatement,
+  ForStatement,
   IdentifierExpression,
   PropertyAccessExpression,
   FunctionTypeNode,
@@ -16,6 +18,7 @@ import {
   NewExpression,
   NamespaceDeclaration,
   Node,
+  SwitchCase,
   TypeDeclaration,
   TypeParameterNode,
   VariableDeclaration,
@@ -94,7 +97,10 @@ function index(source) {
       node instanceof EnumDeclaration ||
       node instanceof TypeDeclaration ||
       node instanceof NamespaceDeclaration ||
-      node instanceof FunctionDeclaration
+      node instanceof FunctionDeclaration ||
+      node instanceof ForStatement ||
+      node instanceof ForOfStatement ||
+      node instanceof SwitchCase
     ) {
       const merged =
         node instanceof NamespaceDeclaration
@@ -248,6 +254,15 @@ function scopeAt(source, range) {
   let result = info.root;
   for (let i = info.scopes.length - 1; i >= 0; i--) {
     const scope = info.scopes[i];
+    if (
+      (scope.node instanceof SwitchCase &&
+        range.start <
+          (scope.node.statements[0]?.range.start ?? scope.node.range.end)) ||
+      (scope.node instanceof ForOfStatement &&
+        scope.node.iterable.range.start <= range.start &&
+        scope.node.iterable.range.end >= range.end)
+    )
+      continue;
     if (
       scope.node.range.start <= range.start &&
       scope.node.range.end >= range.end
