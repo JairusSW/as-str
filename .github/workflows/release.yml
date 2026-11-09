@@ -16,9 +16,6 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -36,7 +33,7 @@ jobs:
           NODE
 
       - name: Install Dependencies
-        run: bun install --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Install Wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
@@ -47,19 +44,19 @@ jobs:
         run: wasmtime --version
 
       - name: Run Checks
-        run: bun run check
+        run: npm run check
 
       - name: Run Tests
-        run: bun run test:ci
+        run: npm run test:ci
 
       - name: Run Fuzz Tests
-        run: bun run test:fuzz
+        run: npm run test:fuzz
 
       - name: Run Transform Tests
-        run: bun run test:transform
+        run: npm run test:transform
 
       - name: Test Clean Consumer Package
-        run: bun run test:consumer
+        run: npm run test:consumer
 
   # Create the GitHub Release with auto-generated notes.
   release:

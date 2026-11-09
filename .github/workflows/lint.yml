@@ -9,11 +9,13 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Install Dependencies
-        run: bun install --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Lint
-        run: bun run check
+        run: npm run check
