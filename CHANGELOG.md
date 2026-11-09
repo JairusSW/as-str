@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-09
+
 ### Changed
 
 - Update `utf-as` to the 0.4 release line and align the minimum supported

@@ -1,6 +1,6 @@
 {
   "name": "as-str",
-  "version": "0.7.0",
+  "version": "1.0.0",
   "author": "Jairus Tanaka <me@jairus.dev>",
   "description": "Virtual, zero-copy strings for AssemblyScript - slice, trim and search without copying character data",
   "types": "assembly/index.ts",
