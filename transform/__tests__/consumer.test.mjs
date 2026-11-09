@@ -232,7 +232,7 @@ try {
   ]);
   assert.match(
     bareResult.stderr,
-    /Cannot find module|ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING|Transform must be a class/,
+    /Cannot find module|ERR_MODULE_NOT_FOUND|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING|Transform must be a class/,
     "bare as-str must not resolve as a transform",
   );
 
