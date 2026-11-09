@@ -1,5 +1,5 @@
 import { ImportStatement, Node } from "assemblyscript/dist/assemblyscript.js";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { scalarTypeAliases, viewTypeAlias } from "./view-aliases.js";
@@ -40,6 +40,17 @@ export function computeImportBaseRel(fromDir, packageDir, p = path) {
     path.posix.join(...p.relative(fromDir, packageDir).split(p.sep)),
   );
 }
+function packageResolvesTo(fromDir, packageDir, packageName = PACKAGE_NAME) {
+  try {
+    const require = createRequire(path.join(fromDir, "__as_str_resolve__.cjs"));
+    const resolved = path.dirname(
+      require.resolve(`${packageName}/package.json`),
+    );
+    return realpathSync(resolved) === realpathSync(packageDir);
+  } catch {
+    return false;
+  }
+}
 function parseIfMissing(parser, file, internalPath) {
   const normalizedInternal = internalPath.replace(/\.ts$/, "");
   if (
@@ -63,7 +74,7 @@ function seedAsStrSources(parser, packageDir, rootInternal) {
     );
   }
 }
-function seedUtfAsSources(parser) {
+function seedUtfAsSources(parser, rootInternal) {
   const require = createRequire(import.meta.url);
   let utfPackage;
   try {
@@ -89,7 +100,15 @@ function seedUtfAsSources(parser) {
     parseIfMissing(
       parser,
       path.join(utfDir, ...relative.split("/")),
-      path.posix.join("~lib/utf-as", relative),
+      path.posix.join(rootInternal, "node_modules/utf-as", relative),
+    );
+  }
+  const packageImport = path.posix.join(rootInternal, "node_modules/utf-as");
+  if (!parser.sources.some((source) => source.internalPath === packageImport)) {
+    parser.parseFile(
+      'export * from "./utf-as/index";',
+      packageImport + ".ts",
+      false,
     );
   }
 }
@@ -140,10 +159,16 @@ export function injectViewImports(parser, options) {
         options.baseCWD,
         source.normalizedPath.replaceAll("/", path.sep),
       );
-      const baseRel = computeImportBaseRel(
-        path.dirname(fromPath),
-        options.packageDir,
-      );
+      const fromDir = path.dirname(fromPath);
+      const relativeToPackage = path.relative(options.packageDir, fromDir);
+      const sourceInsidePackage =
+        relativeToPackage === "" ||
+        (!relativeToPackage.startsWith("..") &&
+          !path.isAbsolute(relativeToPackage));
+      const baseRel =
+        !sourceInsidePackage && packageResolvesTo(fromDir, options.packageDir)
+          ? PACKAGE_NAME
+          : computeImportBaseRel(fromDir, options.packageDir);
       specifier =
         baseRel === PACKAGE_NAME
           ? PACKAGE_NAME
@@ -206,7 +231,9 @@ export function injectViewImports(parser, options) {
       packageRootInternal(item.source, item.specifier),
     );
   }
-  if (injected.length) seedUtfAsSources(parser);
+  for (const item of injected) {
+    seedUtfAsSources(parser, packageRootInternal(item.source, item.specifier));
+  }
   for (const specifier of specifiers) {
     if (
       specifier !== PACKAGE_NAME &&

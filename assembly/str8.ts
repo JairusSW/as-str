@@ -26,7 +26,7 @@ import {
   utf8SeqLen,
   widthOf,
 } from "./util8";
-import { UTF8 as U8, UTF16 as U16 } from "utf-as";
+import { UTF8 as U8, UTF16 as U16 } from "../node_modules/utf-as";
 import { Str } from "./str";
 
 /**

@@ -10,7 +10,7 @@ declare global {
   interface str extends _Str {}
   /** The `str` value: callable as a converter (`str(x)`) AND the static
    *  free-function / encoding API (`str.from`, `str.slice`, `str.UTF8`, …). */
-  const str: typeof _str & typeof _Str;
+  const str: typeof _str;
 
   /** Uppercase class type injected by global mode. */
   interface Str extends _Str {}

@@ -4,6 +4,7 @@ import {
   classMemberType,
   constructedType,
   declaredValueType,
+  declaredVariableType,
   expandedType,
   functionDeclarationOfName,
   functionCallType,
@@ -268,19 +269,26 @@ export class SourceClassTypes {
     globalScope,
     declaration = this.callableOf(call.expression, context),
   ) {
-    if (call.expression instanceof IdentifierExpression) {
+    let declaredCallee = call.expression;
+    while (declaredCallee instanceof ParenthesizedExpression)
+      declaredCallee = declaredCallee.expression;
+    if (declaredCallee instanceof IdentifierExpression) {
       const local = this.localVariable(
-        call.expression.text,
-        call.expression.range.start,
+        declaredCallee.text,
+        declaredCallee.range.start,
         context,
       );
       const path = local
         ? null
-        : this.unshadowedPath(call.expression, context, globalScope);
+        : this.unshadowedPath(declaredCallee, context, globalScope);
       const global = path
-        ? this.globals.get(this.runtimeKey(path, call.expression.range.start))
+        ? this.globals.get(this.runtimeKey(path, declaredCallee.range.start))
         : undefined;
-      const explicit = expandedType(local?.type ?? global?.type ?? null);
+      const explicit = expandedType(
+        local?.type ??
+          global?.type ??
+          (path ? declaredVariableType(path, declaredCallee.range) : null),
+      );
       if (explicit instanceof FunctionTypeNode) return explicit;
     }
     if (declaration) {

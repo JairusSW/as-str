@@ -400,6 +400,16 @@ export function declaredValueType(
   return null;
 }
 
+/** The declared contract of a variable, without borrowing a function's ABI. */
+export function declaredVariableType(
+  name: string,
+  range: Source["range"],
+): TypeNode | null {
+  const source = range.source;
+  const symbol = lookup(source, name, scopeAt(source, range), new Set(), true);
+  return symbol instanceof VariableDeclaration ? symbol.type : null;
+}
+
 interface ResolvedType {
   type: TypeNode;
   nullable: boolean;

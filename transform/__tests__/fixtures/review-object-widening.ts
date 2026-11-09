@@ -16,6 +16,11 @@ function compareLocalCallback(other: Object): bool {
   return callback() === other;
 }
 
+function compareParenthesizedCallback(other: Object): bool {
+  const callback: () => Object = makeView;
+  return callback() === other;
+}
+
 function compareModuleCallback(other: Object): bool {
   return callbackAtModule() === other;
 }
@@ -41,6 +46,10 @@ function compareWidenedTarget(other: Object): bool {
 
 export function localCallback(): i32 {
   return compareLocalCallback(str.from("abc")) ? 1 : 0;
+}
+
+export function parenthesizedCallback(): i32 {
+  return compareParenthesizedCallback(str.from("abc")) ? 1 : 0;
 }
 
 export function moduleCallback(): i32 {

@@ -81,6 +81,47 @@ try {
     "--no-package-lock",
     tarball,
   ]);
+  for (const mode of ["global", "single", "auto"]) {
+    const specifier = `as-str/${mode}`;
+    run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import Transform from ${JSON.stringify(specifier)}; if (typeof Transform !== "function") throw new Error("invalid transform export");`,
+    ]);
+    run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `const { default: Transform } = await import(${JSON.stringify(specifier)}); if (typeof Transform !== "function") throw new Error("invalid transform export");`,
+    ]);
+    run(process.execPath, [
+      "--eval",
+      `import(${JSON.stringify(specifier)}).then(({ default: Transform }) => { if (typeof Transform !== "function") throw new Error("invalid transform export"); });`,
+    ]);
+  }
+  const installedGlobals = readFileSync(
+    path.join(scratch, "node_modules/as-str/globals.json"),
+    "utf8",
+  );
+  assert.match(installedGlobals, /--transform as-str\/global/);
+  assert.doesNotMatch(installedGlobals, /--transform as-str\/transform/);
+  for (const [name, specifier] of [
+    ["root", "as-str"],
+    ["root-index", "as-str/index"],
+    ["assembly-index", "as-str/assembly/index"],
+    ["runtime", "as-str/assembly/str"],
+    ["runtime-extension", "as-str/assembly/str.ts"],
+  ]) {
+    const exportInput = path.join(scratch, `export-${name}.ts`);
+    writeFileSync(
+      exportInput,
+      `import { str } from ${JSON.stringify(specifier)}; export function check(): i32 { return str.from("abc").length; }\n`,
+    );
+    run(process.execPath, [
+      path.join(scratch, "node_modules/assemblyscript/bin/asc.js"),
+      exportInput,
+      "--noEmit",
+    ]);
+  }
   const input = path.join(scratch, "index.ts");
   writeFileSync(path.join(scratch, "types.ts"), "export type Text = string;\n");
   writeFileSync(
@@ -191,7 +232,7 @@ try {
   ]);
   assert.match(
     bareResult.stderr,
-    /Cannot find module|ERR_MODULE_NOT_FOUND|Transform must be a class/,
+    /Cannot find module|ERR_MODULE_NOT_FOUND|ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING|Transform must be a class/,
     "bare as-str must not resolve as a transform",
   );
 
@@ -395,6 +436,15 @@ try {
       "}",
       "export function upperEncodingMode(value: Str.UTF8.ErrorMode): i32 {",
       "  return value;",
+      "}",
+      "export function enumValue(): i32 {",
+      "  return str.UTF8.ErrorMode.ERROR;",
+      "}",
+      "export function encodeWithLowerEnum(): usize {",
+      '  return str.UTF8.encode("é😀", false, str.UTF8.ErrorMode.ERROR).byteLength;',
+      "}",
+      "export function encodeWithUpperEnum(): usize {",
+      '  return Str.UTF8.encode("é😀", false, Str.UTF8.ErrorMode.ERROR).byteLength;',
       "}",
       "",
     ].join("\n"),

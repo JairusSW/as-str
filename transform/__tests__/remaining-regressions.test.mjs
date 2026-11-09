@@ -123,11 +123,15 @@ await checkFixture("review-import-demand", {
 });
 await checkFixture("review-object-widening", {
   localCallback: 0,
+  parenthesizedCallback: 0,
   moduleCallback: 0,
   asserted: 0,
   annotatedLocal: 0,
   mutableControl: 0,
   widenedTargetControl: 0,
+});
+await checkFixture("review-imported-object-widening", {
+  importedCallback: 0,
 });
 await checkFixture("review-accessor-write-type", {
   differentTypes: 2,

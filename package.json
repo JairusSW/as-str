@@ -15,6 +15,32 @@
   "homepage": "https://docs.jairus.dev/as-str",
   "license": "MIT",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./assembly/index.ts",
+      "default": "./index.ts"
+    },
+    "./global": "./transform/lib/index.js",
+    "./single": "./transform/lib/single.js",
+    "./auto": "./transform/lib/auto.js",
+    "./index": "./index.ts",
+    "./index.ts": "./index.ts",
+    "./assembly/index": "./assembly/index.ts",
+    "./assembly/index.ts": "./assembly/index.ts",
+    "./assembly/str": "./assembly/str.ts",
+    "./assembly/str.ts": "./assembly/str.ts",
+    "./assembly/str8": "./assembly/str8.ts",
+    "./assembly/str8.ts": "./assembly/str8.ts",
+    "./assembly/util": "./assembly/util.ts",
+    "./assembly/util.ts": "./assembly/util.ts",
+    "./assembly/util8": "./assembly/util8.ts",
+    "./assembly/util8.ts": "./assembly/util8.ts",
+    "./assembly/tsconfig.json": "./assembly/tsconfig.json",
+    "./transform/lib/*": "./transform/lib/*",
+    "./globals.json": "./globals.json",
+    "./globals/*": "./globals/*",
+    "./package.json": "./package.json"
+  },
   "keywords": [
     "assemblyscript",
     "string",
@@ -60,7 +86,7 @@
     "build:transform": "tsc -p ./transform && prettier --write transform/lib",
     "build": "npm run build:transform",
     "test:transform": "npm run build && node transform/__tests__/remaining-regressions.test.mjs && node transform/__tests__/review-regressions.test.mjs && node transform/__tests__/lowering-safety.test.mjs && node transform/__tests__/analysis-scaling.test.mjs && node transform/__tests__/external-effects.test.mjs && node transform/__tests__/imports.test.mjs && node transform/__tests__/visitor.test.mjs && node transform/__tests__/source-admission.test.mjs && node transform/__tests__/type-resolution.test.mjs && node transform/__tests__/enum-types.test.mjs && node transform/__tests__/native-allocation-bounds.test.mjs && node transform/__tests__/raw-string-identity.test.mjs && node transform/__tests__/captured-owner-contexts.test.mjs && node transform/__tests__/span-owner-stability.test.mjs && node transform/__tests__/view-mutation-owners.test.mjs && node transform/__tests__/char-comparisons.test.mjs && node transform/__tests__/span-chains.test.mjs && node transform/__tests__/span-cursors.test.mjs && node transform/__tests__/split-fields.test.mjs && node transform/__tests__/span-returns.test.mjs && node transform/__tests__/native-view-search.test.mjs && node transform/__tests__/long-ordering.test.mjs && node transform/__tests__/manifest.test.mjs && node transform/__tests__/optimizer.test.mjs && node transform/__tests__/differential.test.mjs && node transform/__tests__/receiver-effects.test.mjs && node transform/__tests__/allocation-report.mjs",
-    "test:consumer": "npm run build && node transform/__tests__/consumer.test.mjs",
+    "test:consumer": "npm run build && node transform/__tests__/consumer.test.mjs && node transform/__tests__/pnpm-consumer.test.mjs",
     "test:differential": "npm run build && node transform/__tests__/differential.test.mjs",
     "bench:transform": "npm run build && node transform/__tests__/allocation-report.mjs",
     "prepublishOnly": "npm run check && npm run test:ci && npm run test:transform && npm run test:consumer",
@@ -95,6 +121,7 @@
     "eslint": "^10.4.1",
     "husky": "^9.1.7",
     "prettier": "3.8.3",
+    "pnpm": "11.25.0",
     "serve": "^14.2.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.1"
@@ -105,6 +132,9 @@
   "dependencies": {
     "utf-as": "^0.4.0"
   },
+  "bundledDependencies": [
+    "utf-as"
+  ],
   "peerDependencies": {
     "assemblyscript": ">=0.28.19"
   }

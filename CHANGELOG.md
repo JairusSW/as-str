@@ -13,6 +13,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Bundle `utf-as` and resolve it from the package-local runtime tree so default
+  isolated pnpm consumers compile without declaring the transitive dependency.
+- Keep generated runtime imports on the canonical `as-str` package identity
+  across workspace symlinks whose physical directory has a different name.
+- Preserve explicitly widened callback return types through parenthesized and
+  imported callback calls.
+- Give the public UTF-8 error-mode enums one consistent editor type, without
+  reducing the global lowercase namespace to `never`.
+- Export `as-str/global`, `as-str/single`, and `as-str/auto` as direct ESM
+  transform entry points, and correct the global preset's CLI example.
 - Make global import demand binding-aware across type and expression syntax,
   local shadows, comments, and application-defined `@global` names.
 - Preserve explicit `Object` and other non-string type boundaries on callback

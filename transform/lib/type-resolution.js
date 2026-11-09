@@ -322,6 +322,11 @@ export function declaredValueType(name, range) {
     return functionDeclarationOfName(name, range)?.signature ?? null;
   return null;
 }
+export function declaredVariableType(name, range) {
+  const source = range.source;
+  const symbol = lookup(source, name, scopeAt(source, range), new Set(), true);
+  return symbol instanceof VariableDeclaration ? symbol.type : null;
+}
 function resolve(type, substitutions = new Map(), depth = 0) {
   const unknown = {
     type,

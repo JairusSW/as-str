@@ -30,8 +30,12 @@ function libraryPrefixes() {
     .filter(Boolean);
 }
 function sourceIsConfigured(source) {
+  const dependencySource =
+    source.internalPath.startsWith("~lib") ||
+    source.internalPath.startsWith("node_modules/") ||
+    source.internalPath.includes("/node_modules/");
   return (
-    (!source.isLibrary && !source.internalPath.startsWith("~lib")) ||
+    (!source.isLibrary && !dependencySource) ||
     libraryPrefixes().some((prefix) => source.internalPath.startsWith(prefix))
   );
 }

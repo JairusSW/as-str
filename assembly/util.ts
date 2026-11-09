@@ -1,6 +1,6 @@
 // Low-level UTF-16 helpers for `str`. Scans use SIMD, SWAR, then scalar tails.
 import { OBJECT_MAXSIZE } from "rt/common";
-import { UTF8 as U8 } from "utf-as";
+import { UTF8 as U8 } from "../node_modules/utf-as";
 import { isSpace } from "util/string";
 
 // Per-16-bit-lane constants for the SWAR zero/diff detection (Mycroft's trick).

@@ -17,7 +17,7 @@ import {
   repeatBytes,
   unitLength,
 } from "./util";
-import { UTF8 as U8, UTF16 as U16 } from "utf-as";
+import { UTF8 as U8, UTF16 as U16 } from "../node_modules/utf-as";
 import { Str8 } from "./str8";
 
 /**
@@ -2458,7 +2458,7 @@ export namespace Str {
     export function encode<T>(
       s: T,
       nullTerminated: bool = false,
-      errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+      errorMode: ErrorMode = ErrorMode.WTF8,
     ): ArrayBuffer {
       const start = bStart(s);
       const len = unitLength(start, bEnd(s));
@@ -2482,7 +2482,7 @@ export namespace Str {
       len: i32,
       buf: usize,
       nullTerminated: bool = false,
-      errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+      errorMode: ErrorMode = ErrorMode.WTF8,
     ): usize {
       return U8.encodeUnsafe(Str, len, buf, nullTerminated, errorMode);
     }
@@ -2797,7 +2797,7 @@ export namespace str {
     export function encode<T>(
       s: T,
       nullTerminated: bool = false,
-      errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+      errorMode: ErrorMode = ErrorMode.WTF8,
     ): ArrayBuffer {
       return Str.UTF8.encode<T>(s, nullTerminated, errorMode);
     }
@@ -2807,7 +2807,7 @@ export namespace str {
       len: i32,
       buf: usize,
       nullTerminated: bool = false,
-      errorMode: U8.ErrorMode = U8.ErrorMode.WTF8,
+      errorMode: ErrorMode = ErrorMode.WTF8,
     ): usize {
       return Str.UTF8.encodeUnsafe(ptr, len, buf, nullTerminated, errorMode);
     }
