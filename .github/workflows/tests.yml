@@ -20,7 +20,7 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts --no-package-lock
 
       - name: Install Wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
@@ -62,10 +62,10 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts --no-package-lock
 
       - name: Select AssemblyScript Version
-        run: npm install --no-save --ignore-scripts assemblyscript@${{ matrix.assemblyscript }}
+        run: npm install --no-save --ignore-scripts --no-package-lock assemblyscript@${{ matrix.assemblyscript }}
 
       - name: Run Transform Compatibility Tests
         run: npm run test:transform

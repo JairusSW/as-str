@@ -33,7 +33,7 @@ jobs:
           NODE
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts --no-package-lock
 
       - name: Install Wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1

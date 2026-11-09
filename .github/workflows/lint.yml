@@ -15,7 +15,7 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: npm ci --ignore-scripts
+        run: npm install --ignore-scripts --no-package-lock
 
       - name: Lint
         run: npm run check
