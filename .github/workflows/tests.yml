@@ -23,7 +23,7 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --ignore-scripts
 
       - name: Install Wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
@@ -68,10 +68,10 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --ignore-scripts
 
       - name: Select AssemblyScript Version
-        run: bun add --dev assemblyscript@${{ matrix.assemblyscript }}
+        run: bun add --dev --ignore-scripts assemblyscript@${{ matrix.assemblyscript }}
 
       - name: Run Transform Compatibility Tests
         run: bun run test:transform

@@ -36,7 +36,7 @@ jobs:
           NODE
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --ignore-scripts
 
       - name: Install Wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
