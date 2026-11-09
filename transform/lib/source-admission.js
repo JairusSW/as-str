@@ -1,6 +1,20 @@
-import { ImportStatement, Node } from "assemblyscript/dist/assemblyscript.js";
-import { isPackageSource } from "./source-identity.js";
-import { sourceBindsName, stringRepresentation } from "./type-resolution.js";
+import {
+  ClassDeclaration,
+  DecoratorKind,
+  FunctionDeclaration,
+  IdentifierExpression,
+  ImportStatement,
+  Node,
+  TypeName,
+  VariableStatement,
+} from "assemblyscript/dist/assemblyscript.js";
+import { isPackageSource, sourcesFor } from "./source-identity.js";
+import {
+  sourceBindsName,
+  sourceNameIsUnbound,
+  stringRepresentation,
+} from "./type-resolution.js";
+import { isDeclarationIdentifier, walk } from "./visitor.js";
 export {
   PACKAGE_NAME,
   PACKAGE_SOURCE_FILES,
@@ -9,10 +23,6 @@ export {
 } from "./source-identity.js";
 export const VIEW_NAME = "str";
 export const VIEW_CLASS_NAME = "Str";
-const VIEW_USES =
-  /(?:\bstr\s*[.(]|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
-const VIEW_CLASS_USES =
-  /(?:\bStr\s*\.|:\s*Str\b|\bnew\s+Str\b|<\s*Str\s*>|\bStr\s*\[\s*\])/;
 function libraryPrefixes() {
   return (process.env["AS_STR_LIBRARY_PREFIXES"] ?? "")
     .split(",")
@@ -38,14 +48,70 @@ function importedNames(source) {
   }
   return names;
 }
+function requestsUnboundName(source, name) {
+  let requested = false;
+  walk(source, (node, ref) => {
+    if (
+      requested ||
+      !(node instanceof IdentifierExpression) ||
+      node.text !== name ||
+      isDeclarationIdentifier(node, ref)
+    )
+      return;
+    const typeName = ref.parent instanceof TypeName ? ref.parent : null;
+    if (typeName && ref.grandparent instanceof TypeName) return;
+    if (sourceNameIsUnbound(source, name, node.range, typeName === null))
+      requested = true;
+  });
+  return requested;
+}
+function hasGlobalBinding(source, name) {
+  for (const candidate of sourcesFor(source)) {
+    for (const statement of candidate.statements) {
+      if (
+        (statement instanceof FunctionDeclaration ||
+          statement instanceof ClassDeclaration) &&
+        statement.name.text === name &&
+        statement.decorators?.some(
+          (decorator) => decorator.decoratorKind === DecoratorKind.Global,
+        )
+      )
+        return true;
+      if (
+        statement instanceof VariableStatement &&
+        statement.decorators?.some(
+          (decorator) => decorator.decoratorKind === DecoratorKind.Global,
+        ) &&
+        statement.declarations.some(
+          (declaration) => declaration.name.text === name,
+        )
+      )
+        return true;
+    }
+  }
+  return false;
+}
+function moduleNameIsUnbound(source, name) {
+  return (
+    sourceNameIsUnbound(source, name, source.range, false) &&
+    sourceNameIsUnbound(source, name, source.range, true)
+  );
+}
 export function admitSource(source, forcedImport = false) {
   const semanticFacts = sourceIsConfigured(source);
   const packageSource = isPackageSource(source);
   const already = importedNames(source);
+  const globalViewBinding = hasGlobalBinding(source, VIEW_NAME);
+  const globalClassBinding = hasGlobalBinding(source, VIEW_CLASS_NAME);
   const requestsView =
-    !already.has(VIEW_NAME) && (forcedImport || VIEW_USES.test(source.text));
+    !already.has(VIEW_NAME) &&
+    !globalViewBinding &&
+    moduleNameIsUnbound(source, VIEW_NAME) &&
+    (forcedImport || requestsUnboundName(source, VIEW_NAME));
   const viewNameAvailable =
     ((semanticFacts && !packageSource) || requestsView) &&
+    !globalViewBinding &&
+    !globalClassBinding &&
     !sourceBindsName(source, VIEW_NAME) &&
     (!already.has(VIEW_NAME) ||
       stringRepresentation(
@@ -57,13 +123,14 @@ export function admitSource(source, forcedImport = false) {
         ),
       ) === "view");
   const requestedViewNames = [];
-  if (requestsView && viewNameAvailable) {
+  if (requestsView) {
     requestedViewNames.push(VIEW_NAME);
   }
   if (
     !already.has(VIEW_CLASS_NAME) &&
-    VIEW_CLASS_USES.test(source.text) &&
-    !sourceBindsName(source, VIEW_CLASS_NAME)
+    !globalClassBinding &&
+    moduleNameIsUnbound(source, VIEW_CLASS_NAME) &&
+    requestsUnboundName(source, VIEW_CLASS_NAME)
   ) {
     requestedViewNames.push(VIEW_CLASS_NAME);
   }

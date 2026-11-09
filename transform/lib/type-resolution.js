@@ -142,6 +142,11 @@ export function sourceBindsName(source, name) {
   }
   return names.has(name);
 }
+export function sourceNameIsUnbound(source, name, range, value) {
+  return (
+    lookup(source, name, scopeAt(source, range), new Set(), value) === undefined
+  );
+}
 function importedSource(source, internalPath) {
   const sources = sourcesFor(source);
   return (

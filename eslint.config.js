@@ -10,6 +10,7 @@ export default tseslint.config(
       "assembly/**",
       "scripts/fixtures/*.ts",
       "transform/__tests__/fixtures/parameter-propagation/**",
+      "transform/__tests__/fixtures/global-collisions/**",
       "build/**",
       ".as-test/**",
       "**/*.tmp.ts",

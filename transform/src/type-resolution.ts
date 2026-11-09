@@ -178,6 +178,18 @@ export function sourceBindsName(source: Source, name: string): boolean {
   return names.has(name);
 }
 
+/** Whether a value or type reference has no lexical or imported declaration. */
+export function sourceNameIsUnbound(
+  source: Source,
+  name: string,
+  range: Source["range"],
+  value: boolean,
+): boolean {
+  return (
+    lookup(source, name, scopeAt(source, range), new Set(), value) === undefined
+  );
+}
+
 function importedSource(
   source: Source,
   internalPath: string | null,

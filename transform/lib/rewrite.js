@@ -204,10 +204,7 @@ export function expressionRepresentation(expression, context, signatures) {
       : "unknown";
   }
   if (expression instanceof AssertionExpression) {
-    const asserted = representationOfType(expression.toType);
-    return asserted === "unknown"
-      ? expressionRepresentation(expression.expression, context, signatures)
-      : asserted;
+    return representationOfType(expression.toType);
   }
   if (expression instanceof TernaryExpression) {
     const left = expressionRepresentation(

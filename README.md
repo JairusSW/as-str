@@ -372,6 +372,25 @@ str.toUpperCase("hello"); // "HELLO" (allocates)
 Convert a `string` to a view with **`str.from(s)`** (or `new str(data, start,
 end)` from explicit bounds).
 
+### Collection Compatibility
+
+Use native `string` keys for `Map` and `Set` when equality should be based on
+text. AssemblyScript hashes class references by identity even when their `==`
+operator compares contents, so two distinct content-equal `str` or `str8`
+objects are not reliable interchangeable keys. Materialize consistently with
+`.toString()` for insertion and lookup. Views remain safe as map values.
+
+The AssemblyScript 0.28 standard library also cannot directly compile
+`Array<str | null>.join(...)` or `Array<str8 | null>.join(...)` because its
+nullable check does not narrow classes with overloaded equality. Convert the
+elements to native strings first, using an explicit non-null assertion after
+the guard:
+
+```ts
+const value = values[i];
+strings.push(value === null ? "" : value!.toString());
+```
+
 ### str8 - UTF-8 Views (byte-indexed)
 
 `str8` is the UTF-8 sibling of `str`, for text that already lives as UTF-8 bytes

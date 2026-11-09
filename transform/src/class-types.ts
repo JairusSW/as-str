@@ -348,6 +348,23 @@ export class SourceClassTypes {
     globalScope: boolean,
     declaration = this.callableOf(call.expression, context),
   ): FunctionTypeNode | null {
+    if (call.expression instanceof IdentifierExpression) {
+      const local = this.localVariable(
+        call.expression.text,
+        call.expression.range.start,
+        context,
+      );
+      const path = local
+        ? null
+        : this.unshadowedPath(call.expression, context, globalScope);
+      const global = path
+        ? this.globals.get(this.runtimeKey(path, call.expression.range.start))
+        : undefined;
+      const explicit = expandedType(local?.type ?? global?.type ?? null);
+      // A callback variable's declared contract is the call boundary even when
+      // an immutable initializer resolves to a narrower function declaration.
+      if (explicit instanceof FunctionTypeNode) return explicit;
+    }
     if (declaration) {
       let signature = declaration.signature;
       let defaults: (TypeNode | null)[] | undefined;

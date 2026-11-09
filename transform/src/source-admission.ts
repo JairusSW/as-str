@@ -1,10 +1,21 @@
 import {
+  ClassDeclaration,
+  DecoratorKind,
+  FunctionDeclaration,
+  IdentifierExpression,
   ImportStatement,
   Node,
   Source,
+  TypeName,
+  VariableStatement,
 } from "assemblyscript/dist/assemblyscript.js";
-import { isPackageSource } from "./source-identity.js";
-import { sourceBindsName, stringRepresentation } from "./type-resolution.js";
+import { isPackageSource, sourcesFor } from "./source-identity.js";
+import {
+  sourceBindsName,
+  sourceNameIsUnbound,
+  stringRepresentation,
+} from "./type-resolution.js";
+import { isDeclarationIdentifier, walk } from "./visitor.js";
 export {
   PACKAGE_NAME,
   PACKAGE_SOURCE_FILES,
@@ -14,10 +25,6 @@ export {
 export const VIEW_NAME = "str";
 export const VIEW_CLASS_NAME = "Str";
 
-const VIEW_USES =
-  /(?:\bstr\s*[.(]|:\s*str\b|\bnew\s+str\b|<\s*str\s*>|\bstr\s*\[\s*\])/;
-const VIEW_CLASS_USES =
-  /(?:\bStr\s*\.|:\s*Str\b|\bnew\s+Str\b|<\s*Str\s*>|\bStr\s*\[\s*\])/;
 export interface SourceAdmission {
   readonly semanticFacts: boolean;
   readonly optimization: boolean;
@@ -55,6 +62,59 @@ function importedNames(source: Source): Set<string> {
   return names;
 }
 
+function requestsUnboundName(source: Source, name: string): boolean {
+  let requested = false;
+  walk(source, (node, ref): boolean | void => {
+    if (
+      requested ||
+      !(node instanceof IdentifierExpression) ||
+      node.text !== name ||
+      isDeclarationIdentifier(node, ref)
+    )
+      return;
+    const typeName = ref.parent instanceof TypeName ? ref.parent : null;
+    // Only the leading identifier of a qualified type names its binding.
+    if (typeName && ref.grandparent instanceof TypeName) return;
+    if (sourceNameIsUnbound(source, name, node.range, typeName === null))
+      requested = true;
+  });
+  return requested;
+}
+
+function hasGlobalBinding(source: Source, name: string): boolean {
+  for (const candidate of sourcesFor(source)) {
+    for (const statement of candidate.statements) {
+      if (
+        (statement instanceof FunctionDeclaration ||
+          statement instanceof ClassDeclaration) &&
+        statement.name.text === name &&
+        statement.decorators?.some(
+          (decorator) => decorator.decoratorKind === DecoratorKind.Global,
+        )
+      )
+        return true;
+      if (
+        statement instanceof VariableStatement &&
+        statement.decorators?.some(
+          (decorator) => decorator.decoratorKind === DecoratorKind.Global,
+        ) &&
+        statement.declarations.some(
+          (declaration) => declaration.name.text === name,
+        )
+      )
+        return true;
+    }
+  }
+  return false;
+}
+
+function moduleNameIsUnbound(source: Source, name: string): boolean {
+  return (
+    sourceNameIsUnbound(source, name, source.range, false) &&
+    sourceNameIsUnbound(source, name, source.range, true)
+  );
+}
+
 /**
  * Decides every source-participation question used by semantic analysis,
  * optimization, and import injection. Callers consume the decision rather
@@ -67,12 +127,19 @@ export function admitSource(
   const semanticFacts = sourceIsConfigured(source);
   const packageSource = isPackageSource(source);
   const already = importedNames(source);
+  const globalViewBinding = hasGlobalBinding(source, VIEW_NAME);
+  const globalClassBinding = hasGlobalBinding(source, VIEW_CLASS_NAME);
   const requestsView =
-    !already.has(VIEW_NAME) && (forcedImport || VIEW_USES.test(source.text));
+    !already.has(VIEW_NAME) &&
+    !globalViewBinding &&
+    moduleNameIsUnbound(source, VIEW_NAME) &&
+    (forcedImport || requestsUnboundName(source, VIEW_NAME));
   // Indexing a source's bindings walks all of it. Unconfigured library sources
   // rarely mention the view names, so only answer the question when it matters.
   const viewNameAvailable =
     ((semanticFacts && !packageSource) || requestsView) &&
+    !globalViewBinding &&
+    !globalClassBinding &&
     !sourceBindsName(source, VIEW_NAME) &&
     (!already.has(VIEW_NAME) ||
       stringRepresentation(
@@ -84,13 +151,14 @@ export function admitSource(
         ),
       ) === "view");
   const requestedViewNames: string[] = [];
-  if (requestsView && viewNameAvailable) {
+  if (requestsView) {
     requestedViewNames.push(VIEW_NAME);
   }
   if (
     !already.has(VIEW_CLASS_NAME) &&
-    VIEW_CLASS_USES.test(source.text) &&
-    !sourceBindsName(source, VIEW_CLASS_NAME)
+    !globalClassBinding &&
+    moduleNameIsUnbound(source, VIEW_CLASS_NAME) &&
+    requestsUnboundName(source, VIEW_CLASS_NAME)
   ) {
     requestedViewNames.push(VIEW_CLASS_NAME);
   }

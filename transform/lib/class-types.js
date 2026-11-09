@@ -268,6 +268,21 @@ export class SourceClassTypes {
     globalScope,
     declaration = this.callableOf(call.expression, context),
   ) {
+    if (call.expression instanceof IdentifierExpression) {
+      const local = this.localVariable(
+        call.expression.text,
+        call.expression.range.start,
+        context,
+      );
+      const path = local
+        ? null
+        : this.unshadowedPath(call.expression, context, globalScope);
+      const global = path
+        ? this.globals.get(this.runtimeKey(path, call.expression.range.start))
+        : undefined;
+      const explicit = expandedType(local?.type ?? global?.type ?? null);
+      if (explicit instanceof FunctionTypeNode) return explicit;
+    }
     if (declaration) {
       let signature = declaration.signature;
       let defaults;

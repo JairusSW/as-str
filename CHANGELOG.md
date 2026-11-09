@@ -13,6 +13,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Make global import demand binding-aware across type and expression syntax,
+  local shadows, comments, and application-defined `@global` names.
+- Preserve explicit `Object` and other non-string type boundaries on callback
+  aliases, assertions, and local declarations.
 - Keep loop and switch-case bindings inside their lexical scopes during call
   resolution.
 - Propagate cross-module parameter and signature changes to a fixed point

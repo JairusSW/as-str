@@ -801,11 +801,14 @@ function collectLocalBindings(
       const name = node.name.text;
       if (bindings.has(name) || parameters.has(name)) duplicateNames.add(name);
       const declared = representationOfType(node.type);
+      const explicitUnknown = node.type !== null && declared === "unknown";
       const fact = semanticFacts.get(`local:${node.range.start}`);
       const nullable = typeIsNullable(node.type) || fact?.nullable === true;
       const semantic = nullable
         ? "unknown"
-        : (fact?.representation ?? declared);
+        : explicitUnknown
+          ? "unknown"
+          : (fact?.representation ?? declared);
       const noView =
         hasDecorator(node.decorators, "noView") ||
         hasLocalPragma(node, "no-view");
@@ -814,10 +817,12 @@ function collectLocalBindings(
         hasLocalPragma(node, "prefer-view");
       const explicitView =
         !nullable &&
+        !explicitUnknown &&
         declared !== "native" &&
         expressionIsExplicitView(node.initializer);
       const candidate =
         !nullable &&
+        !explicitUnknown &&
         !noView &&
         !explicitView &&
         // An earlier round already lowered this declaration.

@@ -111,6 +111,24 @@ await checkFixture("review-parameter-propagation", { run: 14 });
 await checkFixture("review-parameter-propagation-three", { run: 28 });
 await checkFixture("review-parameter-propagation-first", { run: 14 });
 await checkFixture("review-parameter-propagation-branch", { run: 14 });
+await checkFixture("review-global-function-collision", { run: 4 });
+await checkFixture("review-global-class-collision", { run: 4 });
+await checkFixture("review-import-demand", {
+  localLower: 5,
+  localUpper: 5,
+  typeAlias: 0,
+  laterGeneric: 0,
+  commentedLower: 3,
+  commentedUpper: 3,
+});
+await checkFixture("review-object-widening", {
+  localCallback: 0,
+  moduleCallback: 0,
+  asserted: 0,
+  annotatedLocal: 0,
+  mutableControl: 0,
+  widenedTargetControl: 0,
+});
 await checkFixture("review-accessor-write-type", {
   differentTypes: 2,
   setterOnly: 2,
