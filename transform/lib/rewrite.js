@@ -961,6 +961,7 @@ function rewriteExpression(expression, expected, context, signatures) {
             : callbackType
               ? representationOfType(callArgumentType(callbackType, index))
               : index === 0 &&
+                  !expression.typeArguments?.length &&
                   staticMethod.endsWith("Length") &&
                   expressionCanProduceView(argument)
                 ? "view"

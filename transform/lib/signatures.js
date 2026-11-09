@@ -1,3 +1,4 @@
+import { PropertyAccessExpression } from "assemblyscript/dist/assemblyscript.js";
 import { calleeName, propertyCall } from "./visitor.js";
 import { representationOfType } from "./ast.js";
 import { callArgumentType } from "./type-resolution.js";
@@ -65,6 +66,7 @@ export function signatureForCall(call, context, signatures) {
   const declaration = context.classes.callableOf(call.expression, context);
   if (declaration === null) return undefined;
   if (declaration) return signatureForDeclaration(declaration, signatures);
+  if (call.expression instanceof PropertyAccessExpression) return undefined;
   const name = calleeName(call.expression) ?? propertyCall(call)?.property.text;
   return name ? signatures.get(name) : undefined;
 }

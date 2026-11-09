@@ -22,6 +22,22 @@ class Derived<T = string> extends Base {
   }
 }
 
+class GenericBase<T> {
+  constructor(public value: T) {}
+}
+
+class ViewDerived<T = string> extends GenericBase<T> {
+  put(value: T): void {
+    this.value = value;
+  }
+}
+
+class NativeDerived<T = str> extends GenericBase<T> {
+  put(value: T): void {
+    this.value = value;
+  }
+}
+
 export function rest(): i32 {
   const first: str[] = [str.from("abc")];
   const box = new Box(first);
@@ -46,4 +62,16 @@ export function inherited(): i32 {
 export function inheritedExplicit(): i32 {
   const box = new Derived<string>(str.from("abc"));
   return box.take("de");
+}
+
+export function inheritedGenericView(): i32 {
+  const box = new ViewDerived(str.from("abc"));
+  box.put(str.from("de"));
+  return box.value.length;
+}
+
+export function inheritedGenericNative(): i32 {
+  const box = new NativeDerived("abc");
+  box.put("de");
+  return box.value.length;
 }

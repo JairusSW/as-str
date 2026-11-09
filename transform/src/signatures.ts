@@ -3,6 +3,7 @@ import {
   FunctionDeclaration,
   FunctionTypeNode,
   ParameterKind,
+  PropertyAccessExpression,
 } from "assemblyscript/dist/assemblyscript.js";
 import { FunctionContext, FunctionSignature } from "./model.js";
 import { calleeName, propertyCall } from "./visitor.js";
@@ -104,6 +105,9 @@ export function signatureForCall(
   const declaration = context.classes.callableOf(call.expression, context);
   if (declaration === null) return undefined;
   if (declaration) return signatureForDeclaration(declaration, signatures);
+  // An unresolved member must not borrow an unrelated free function's
+  // signature by short property name.
+  if (call.expression instanceof PropertyAccessExpression) return undefined;
   const name = calleeName(call.expression) ?? propertyCall(call)?.property.text;
   return name ? signatures.get(name) : undefined;
 }

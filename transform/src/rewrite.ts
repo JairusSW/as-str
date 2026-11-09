@@ -1111,6 +1111,7 @@ function rewriteExpression(
             : callbackType
               ? representationOfType(callArgumentType(callbackType, index))
               : index === 0 &&
+                  !expression.typeArguments?.length &&
                   staticMethod.endsWith("Length") &&
                   expressionCanProduceView(argument)
                 ? "view"

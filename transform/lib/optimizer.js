@@ -289,6 +289,7 @@ function analyzeParameterPromotions(context, signature, signatures) {
     if (signature.spanParameters.has(index)) return;
     if (spanOwners.has(parameter.name.text)) return;
     if (representationOfType(parameter.type) !== "native") return;
+    if (parameter.initializer) return;
     const name = parameter.name.text;
     if (context.bindings.has(name)) return;
     let usedInDefault = false;
@@ -839,7 +840,8 @@ function expectedCallArgument(call, index, signatures, context) {
     const expected = representationOfType(callArgumentType(callback, index));
     if (expected !== "unknown") return expected;
   }
-  if (isStrStaticCall(call)) return index === 0 ? "view" : "unknown";
+  if (isStrStaticCall(call))
+    return index === 0 && !call.typeArguments?.length ? "view" : "unknown";
   const property =
     call.expression instanceof PropertyAccessExpression
       ? call.expression
@@ -2130,6 +2132,35 @@ export function optimizeSources(sources, manifest = null) {
   const functionContexts = new Map();
   const callParents = new Map();
   const userPaths = new Set(userSources.map((source) => source.internalPath));
+  const exposedPaths = new Set(userPaths);
+  const moduleKey = (path) =>
+    path.endsWith("/index") ? path.slice(0, -"/index".length) : path;
+  const importers = new Map();
+  for (const source of sources) {
+    for (const statement of source.statements) {
+      if (
+        !(statement instanceof ImportStatement) &&
+        !(statement instanceof ExportStatement)
+      )
+        continue;
+      if (statement.internalPath === null) continue;
+      const target = moduleKey(statement.internalPath);
+      const incoming = importers.get(target) ?? [];
+      incoming.push(source);
+      importers.set(target, incoming);
+    }
+  }
+  const exposedQueue = [...userPaths].map(moduleKey);
+  const exposedModules = new Set(exposedQueue);
+  for (let i = 0; i < exposedQueue.length; i++) {
+    for (const source of importers.get(exposedQueue[i]) ?? []) {
+      const sourceKey = moduleKey(source.internalPath);
+      if (exposedModules.has(sourceKey)) continue;
+      exposedModules.add(sourceKey);
+      exposedPaths.add(source.internalPath);
+      exposedQueue.push(sourceKey);
+    }
+  }
   const userGlobals = userSources.some((source) =>
     /@global\b/.test(source.text),
   );
@@ -2137,7 +2168,7 @@ export function optimizeSources(sources, manifest = null) {
     const userSource = userSources.includes(source);
     if (
       !userSource &&
-      ((!userGlobals && !importsAny(source, userPaths)) ||
+      ((!userGlobals && !importsAny(source, exposedPaths)) ||
         !mentionsAnyName(source.text, sharedSignatures))
     )
       continue;

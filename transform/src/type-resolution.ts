@@ -696,33 +696,64 @@ export function constructedType(
     type.typeArguments?.length === declaration.typeParameters.length
   )
     return type;
-  const constructor = declaration.members.find(
-    (member) =>
-      member instanceof FunctionDeclaration &&
-      member.name.text === "constructor",
-  ) as FunctionDeclaration | undefined;
-  const patterns = constructor
+  let constructor: FunctionDeclaration | undefined;
+  let constructorOwner: ClassDeclaration | null = declaration;
+  const seenOwners = new Set<ClassDeclaration>();
+  while (constructorOwner && !seenOwners.has(constructorOwner)) {
+    seenOwners.add(constructorOwner);
+    constructor = constructorOwner.members.find(
+      (member) =>
+        member instanceof FunctionDeclaration &&
+        member.name.text === "constructor",
+    ) as FunctionDeclaration | undefined;
+    if (constructor) break;
+    constructorOwner = classDeclarationOfType(constructorOwner.extendsType);
+  }
+  const receiver = Node.createNamedType(
+    type.name,
+    declaration.typeParameters.map(
+      (parameter, index) =>
+        type.typeArguments?.[index] ??
+        Node.createNamedType(
+          Node.createSimpleTypeName(parameter.name.text, parameter.range),
+          null,
+          false,
+          parameter.range,
+        ),
+    ),
+    type.isNullable,
+    type.range,
+  );
+  const constructorSignature =
+    constructor && constructorOwner && constructorOwner !== declaration
+      ? (classMemberType(
+          receiver,
+          constructorOwner,
+          constructor.signature,
+        ) as FunctionTypeNode)
+      : constructor?.signature;
+  const patterns = constructorSignature
     ? Array.from(
         {
           length: Math.max(
             actual.length,
-            constructor.signature.parameters.length,
+            constructorSignature.parameters.length,
           ),
         },
-        (_, index) => callArgumentType(constructor.signature, index)!,
+        (_, index) => callArgumentType(constructorSignature, index)!,
       )
     : [];
   const inputs = [...actual];
   const defaultArguments = new Set<number>();
   for (
     let i = inputs.length;
-    i < (constructor?.signature.parameters.length ?? 0);
+    i < (constructorSignature?.parameters.length ?? 0);
     i++
   ) {
-    const initializer = constructor!.signature.parameters[i].initializer;
+    const initializer = constructorSignature!.parameters[i].initializer;
     if (
       initializer &&
-      constructor!.signature.parameters[i].type.hasGenericComponent(
+      constructorSignature!.parameters[i].type.hasGenericComponent(
         declaration.typeParameters,
       )
     ) {

@@ -378,6 +378,9 @@ function analyzeParameterPromotions(
     // make every caller allocate a view wrapper for a value it never reads.
     if (spanOwners.has(parameter.name.text)) return;
     if (representationOfType(parameter.type) !== "native") return;
+    // Omitted calls evaluate this initializer under the declared parameter
+    // type. Keep the parameter native until defaults are rewritten too.
+    if (parameter.initializer) return;
     const name = parameter.name.text;
     if (context.bindings.has(name)) return;
     let usedInDefault = false;
@@ -1007,7 +1010,8 @@ function expectedCallArgument(
     const expected = representationOfType(callArgumentType(callback, index));
     if (expected !== "unknown") return expected;
   }
-  if (isStrStaticCall(call)) return index === 0 ? "view" : "unknown";
+  if (isStrStaticCall(call))
+    return index === 0 && !call.typeArguments?.length ? "view" : "unknown";
   const property =
     call.expression instanceof PropertyAccessExpression
       ? call.expression
@@ -2469,6 +2473,37 @@ export function optimizeSources(
   // user source, or through a global declaration. Same-named identifiers
   // elsewhere resolve to that source's own bindings.
   const userPaths = new Set(userSources.map((source) => source.internalPath));
+  // A caller can reach an optimized declaration through one or more barrels.
+  // Build the reverse import/export closure before filtering excluded sources.
+  const exposedPaths = new Set(userPaths);
+  const moduleKey = (path: string): string =>
+    path.endsWith("/index") ? path.slice(0, -"/index".length) : path;
+  const importers = new Map<string, Source[]>();
+  for (const source of sources) {
+    for (const statement of source.statements) {
+      if (
+        !(statement instanceof ImportStatement) &&
+        !(statement instanceof ExportStatement)
+      )
+        continue;
+      if (statement.internalPath === null) continue;
+      const target = moduleKey(statement.internalPath);
+      const incoming = importers.get(target) ?? [];
+      incoming.push(source);
+      importers.set(target, incoming);
+    }
+  }
+  const exposedQueue = [...userPaths].map(moduleKey);
+  const exposedModules = new Set(exposedQueue);
+  for (let i = 0; i < exposedQueue.length; i++) {
+    for (const source of importers.get(exposedQueue[i]) ?? []) {
+      const sourceKey = moduleKey(source.internalPath);
+      if (exposedModules.has(sourceKey)) continue;
+      exposedModules.add(sourceKey);
+      exposedPaths.add(source.internalPath);
+      exposedQueue.push(sourceKey);
+    }
+  }
   const userGlobals = userSources.some((source) =>
     /@global\b/.test(source.text),
   );
@@ -2476,7 +2511,7 @@ export function optimizeSources(
     const userSource = userSources.includes(source);
     if (
       !userSource &&
-      ((!userGlobals && !importsAny(source, userPaths)) ||
+      ((!userGlobals && !importsAny(source, exposedPaths)) ||
         !mentionsAnyName(source.text, sharedSignatures))
     )
       continue;

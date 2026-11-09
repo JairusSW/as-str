@@ -81,6 +81,24 @@ await checkFixture("review-constructor-inference", {
   restExplicit: 2,
   inherited: 2,
   inheritedExplicit: 2,
+  inheritedGenericView: 2,
+  inheritedGenericNative: 2,
+});
+await checkFixture("review-default-parameter-promotion", {
+  run: 14,
+  explicitControl: 14,
+});
+await checkFixture("review-callback-property", {
+  runTrue: 3,
+  runFalse: 13,
+  typedTrue: 3,
+  typedFalse: 13,
+});
+await checkFixture("review-generic-static", {
+  unresolved: 1,
+  concreteControl: 1,
+  inferredControl: 1,
+  uppercaseControl: 1,
 });
 await checkFixture("review-accessor-write-type", {
   differentTypes: 2,
@@ -118,6 +136,17 @@ try {
 process.env.AS_STR_LIBRARY_PREFIXES = "~lib/review-shadowed-library";
 try {
   await checkFixture("review-shadowed-library", { run: 1 }, [
+    "--path",
+    `${repo}/transform/__tests__/fixtures/libraries`,
+  ]);
+} finally {
+  if (priorPrefixes === undefined) delete process.env.AS_STR_LIBRARY_PREFIXES;
+  else process.env.AS_STR_LIBRARY_PREFIXES = priorPrefixes;
+}
+
+process.env.AS_STR_LIBRARY_PREFIXES = "~lib/selected-api";
+try {
+  await checkFixture("review-wildcard-boundary", { run: 8 }, [
     "--path",
     `${repo}/transform/__tests__/fixtures/libraries`,
   ]);

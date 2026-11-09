@@ -13,6 +13,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Infer derived type arguments from the effective inherited constructor after
+  applying `extends` substitutions, while retaining defaults for unrelated
+  base parameters.
+- Keep defaulted native-string parameters native until their initializers can
+  be rewritten with the parameter declaration.
+- Follow transitive import and wildcard-export barrels when checking whether
+  excluded callers prevent an optimized library ABI change.
+- Prevent unresolved callback properties from borrowing unrelated free
+  function signatures by short name.
+- Preserve unknown lowercase-helper boundaries when explicit generic
+  arguments prevent the receiver type from being inferred as a view.
 - Preserve native string semantics through derived indexing and `isDefined`
   reflection, and propagate mutation effects from overloaded indexing.
 - Keep qualified calls source-compatible until their packed arguments can be
